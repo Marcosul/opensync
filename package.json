@@ -1,0 +1,22 @@
+{
+  "name": "opensync",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm dev:clean && turbo dev",
+    "dev:clean": "node ./scripts/dev-clean.mjs",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "dev:web": "turbo dev --filter=@opensync/web",
+    "dev:api": "turbo dev --filter=@opensync/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  },
+  "packageManager": "pnpm@10.30.1",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

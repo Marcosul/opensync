@@ -1,0 +1,19 @@
+{
+  "name": "@opensync/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "simple-git": "^3.0.0"
+  },
+  "devDependencies": {
+    "@opensync/config": "workspace:*",
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
