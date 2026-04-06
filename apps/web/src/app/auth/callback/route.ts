@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { ONBOARDING_COOKIE_NAME, isOnboardingCompleted } from "@/lib/onboarding";
 import { getSupabaseEnv } from "@/lib/supabase/env";
+import { isOnboardingCompleteInDatabase } from "@/lib/supabase/onboarding-status";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -28,9 +29,19 @@ export async function GET(request: Request) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  const onboardingDone = isOnboardingCompleted(
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.redirect(new URL("/sign-in", request.url));
+  }
+
+  const onboardingDoneFromCookie = isOnboardingCompleted(
     cookieStore.get(ONBOARDING_COOKIE_NAME)?.value,
   );
+  const onboardingDoneFromDb = await isOnboardingCompleteInDatabase(supabase, user.id);
+  const onboardingDone = onboardingDoneFromDb || onboardingDoneFromCookie;
 
   return NextResponse.redirect(
     new URL(onboardingDone ? "/dashboard" : "/onboarding", request.url),

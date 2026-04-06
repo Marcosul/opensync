@@ -29,6 +29,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [formData, setFormData] = useState<OnboardingData>({
     goals: [],
     usageContext: "",
@@ -42,12 +43,35 @@ export default function OnboardingPage() {
   }, [formData, step]);
 
   async function handleFinish() {
+    setSubmitError(null);
     setIsSubmitting(true);
-    await apiRequest<{ ok: boolean }>("/api/onboarding/complete", {
-      method: "POST",
-      body: formData,
-    });
-    router.replace("/dashboard");
+    try {
+      await apiRequest<{ ok: boolean }>("/api/onboarding/complete", {
+        method: "POST",
+        body: {
+          goals: formData.goals,
+          usageContext: formData.usageContext,
+          frequency: formData.frequency,
+        },
+      });
+      router.replace("/dashboard");
+    } catch (error) {
+      let message =
+        error instanceof Error
+          ? error.message
+          : "Nao foi possivel salvar o onboarding.";
+      try {
+        const parsed = JSON.parse(message) as { error?: string };
+        if (parsed.error) {
+          message = parsed.error;
+        }
+      } catch {
+        // keep raw message
+      }
+      setSubmitError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -103,6 +127,10 @@ export default function OnboardingPage() {
           />
         ) : null}
       </div>
+
+      {submitError ? (
+        <p className="mt-4 text-sm text-destructive">{submitError}</p>
+      ) : null}
 
       <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button

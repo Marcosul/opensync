@@ -14,6 +14,11 @@ model Profile {
   stripeCustomerId String?  @map("stripe_customer_id")
   createdAt        DateTime @default(now()) @map("created_at")
 
+  onboardingGoals          String[]  @default([]) @map("onboarding_goals")
+  onboardingUsageContext String?   @map("onboarding_usage_context")
+  onboardingFrequency    String?   @map("onboarding_frequency")
+  onboardingCompletedAt  DateTime? @map("onboarding_completed_at")
+
   vaults    Vault[]
   auditLogs AuditLog[]
 

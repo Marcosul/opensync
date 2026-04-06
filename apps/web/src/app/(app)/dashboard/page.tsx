@@ -1,17 +1,25 @@
-import { cookies } from "next/headers";
-
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
 export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
-  const cookieStore = await cookies();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const goals = cookieStore.get("opensync_goals")?.value;
-  const usageContext = cookieStore.get("opensync_usage_context")?.value;
-  const frequency = cookieStore.get("opensync_usage_frequency")?.value;
+  const { data: profile } = user
+    ? await supabase
+        .from("profiles")
+        .select("onboarding_goals, onboarding_usage_context, onboarding_frequency")
+        .eq("id", user.id)
+        .maybeSingle()
+    : { data: null };
+
+  const goals =
+    profile?.onboarding_goals?.length && profile.onboarding_goals.length > 0
+      ? profile.onboarding_goals.join(" · ")
+      : "Definir objetivo no onboarding";
+  const usageContext = profile?.onboarding_usage_context ?? "Nao informado";
+  const frequency = profile?.onboarding_frequency ?? "Nao informado";
 
   return (
     <section className="grid gap-4 pb-6 sm:grid-cols-2 xl:grid-cols-3">
@@ -22,18 +30,9 @@ export default async function DashboardPage() {
         </p>
       </article>
 
-      <DashboardCard
-        title="Objetivos escolhidos"
-        value={goals ?? "Definir objetivo no onboarding"}
-      />
-      <DashboardCard
-        title="Contexto de uso"
-        value={usageContext ?? "Nao informado"}
-      />
-      <DashboardCard
-        title="Frequencia esperada"
-        value={frequency ?? "Nao informado"}
-      />
+      <DashboardCard title="Objetivos escolhidos" value={goals} />
+      <DashboardCard title="Contexto de uso" value={usageContext} />
+      <DashboardCard title="Frequencia esperada" value={frequency} />
     </section>
   );
 }

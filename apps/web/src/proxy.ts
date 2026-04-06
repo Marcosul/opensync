@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { ONBOARDING_COOKIE_NAME, isOnboardingCompleted } from "@/lib/onboarding";
 import { createSupabaseProxyClient } from "@/lib/supabase/proxy-client";
+import { isOnboardingCompleteInDatabase } from "@/lib/supabase/onboarding-status";
 
 function isPrivatePath(pathname: string) {
   return pathname.startsWith("/dashboard") || pathname.startsWith("/onboarding");
@@ -23,16 +24,23 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const onboardingDone = isOnboardingCompleted(
+  let onboardingDone = isOnboardingCompleted(
     request.cookies.get(ONBOARDING_COOKIE_NAME)?.value,
   );
+
+  if (user) {
+    const fromDb = await isOnboardingCompleteInDatabase(supabase, user.id);
+    onboardingDone = fromDb || onboardingDone;
+  }
 
   if (isPrivatePath(pathname) && !user) {
     return NextResponse.redirect(new URL("/sign-in", request.url));
   }
 
   if (user && isAuthPath(pathname)) {
-    return NextResponse.redirect(new URL(onboardingDone ? "/dashboard" : "/onboarding", request.url));
+    return NextResponse.redirect(
+      new URL(onboardingDone ? "/dashboard" : "/onboarding", request.url),
+    );
   }
 
   if (user && pathname.startsWith("/dashboard") && !onboardingDone) {
