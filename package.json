@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prisma": "node ./scripts/prisma-menu.mjs",
     "dev": "pnpm dev:clean && pnpm exec turbo dev",
     "dev:clean": "node ./scripts/dev-clean.mjs",
     "build": "pnpm exec turbo build",

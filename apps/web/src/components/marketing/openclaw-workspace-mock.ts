@@ -157,3 +157,35 @@ export const DOCS: MockDoc[] = [
     wikilinks: ["AGENTS.md", "MEMORY.md"],
   },
 ];
+
+/** Markdown inicial equivalente ao mock (título H1 + corpo + wikilinks). */
+export function mockDocToMarkdown(doc: MockDoc): string {
+  const linkBlock =
+    doc.wikilinks.length > 0
+      ? `\n\n${doc.wikilinks.map((t) => `[[${t}]]`).join(" ")}`
+      : "";
+  return `# ${doc.id}\n\n${doc.body.trim()}${linkBlock}\n`;
+}
+
+/** Caminho tipo breadcrumb no explorer (ex.: `workspace`, `USER.md`). */
+export function findDocBreadcrumb(docId: string): string[] {
+  const segments: string[] = [];
+
+  function walk(entries: TreeEntry[], ancestors: string[]): boolean {
+    for (const entry of entries) {
+      if (entry.type === "dir") {
+        if (walk(entry.children, [...ancestors, entry.name])) return true;
+      } else if (entry.type === "file" && "docId" in entry && entry.docId === docId) {
+        segments.push(...ancestors, entry.name);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const root = OPENCLAW_TREE_ROOT;
+  if (root.type === "dir" && walk(root.children, [])) {
+    return segments;
+  }
+  return [docId];
+}

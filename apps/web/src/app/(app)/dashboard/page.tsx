@@ -1,3 +1,6 @@
+import { Cpu, FolderOpen, Plus, Wifi, WifiOff } from "lucide-react";
+import Link from "next/link";
+
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { cn } from "@/lib/utils";
 
@@ -10,75 +13,184 @@ export default async function DashboardPage() {
   const { data: profile } = user
     ? await supabase
         .from("profiles")
-        .select("onboarding_goals, onboarding_usage_context, onboarding_frequency, agent_connection")
+        .select("agent_connection, onboarding_completed_at")
         .eq("id", user.id)
         .maybeSingle()
     : { data: null };
 
-  const meta = user?.user_metadata ?? {};
+  const agentRaw =
+    profile?.agent_connection ?? user?.user_metadata?.opensync_agent_connection;
+  const hasAgent = agentRaw != null && typeof agentRaw === "object";
 
-  const goalsFromProfile =
-    profile?.onboarding_goals?.length && profile.onboarding_goals.length > 0
-      ? profile.onboarding_goals.join(" · ")
-      : null;
-  const goalsFromMeta = Array.isArray(meta.opensync_onboarding_goals)
-    ? (meta.opensync_onboarding_goals as string[]).join(" · ")
-    : null;
-  const goals = goalsFromProfile ?? goalsFromMeta ?? "Definir objetivo no onboarding";
-
-  const usageContext =
-    profile?.onboarding_usage_context ??
-    (typeof meta.opensync_onboarding_usage_context === "string"
-      ? meta.opensync_onboarding_usage_context
-      : null) ??
-    "Nao informado";
-
-  const frequency =
-    profile?.onboarding_frequency ??
-    (typeof meta.opensync_onboarding_frequency === "string"
-      ? meta.opensync_onboarding_frequency
-      : null) ??
-    "Nao informado";
-
-  const agentRaw = profile?.agent_connection ?? meta.opensync_agent_connection;
-  const agentPreview = formatAgentConnectionPreview(agentRaw);
-
-  const storageHint =
-    goalsFromProfile || profile?.onboarding_completed_at
-      ? null
-      : goalsFromMeta
-        ? "Dados salvos no perfil de autenticacao. Execute o SQL de public.profiles no Supabase para migrar para o banco."
-        : null;
+  const vaults: VaultItem[] = hasAgent
+    ? [
+        {
+          id: "main",
+          name: deriveVaultName(agentRaw as Record<string, unknown>),
+          description: formatAgentPreview(agentRaw as Record<string, unknown>),
+          connected: true,
+          agentMode: deriveAgentMode(agentRaw as Record<string, unknown>),
+          fileCount: 11,
+        },
+      ]
+    : [];
 
   return (
-    <section className="grid gap-4 pb-6 sm:grid-cols-2 xl:grid-cols-3">
-      <article className="rounded-2xl border bg-card p-5 shadow-sm sm:col-span-2 xl:col-span-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Sessao ativa para {user?.email ?? "usuario"}.
-        </p>
-        {storageHint ? (
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{storageHint}</p>
-        ) : null}
-      </article>
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Tab bar */}
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-card/30 px-4">
+        <span className="text-sm font-medium text-foreground/80">Vaults</span>
+        <Link
+          href="/onboarding"
+          className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          <Plus className="size-3.5" />
+          Novo vault
+        </Link>
+      </div>
 
-      <DashboardCard title="Objetivos escolhidos" value={goals} />
-      <DashboardCard title="Contexto de uso" value={usageContext} />
-      <DashboardCard title="Frequencia esperada" value={frequency} />
-      <DashboardCard
-        title="Conexao com o agente"
-        value={agentPreview}
-        className="sm:col-span-2 xl:col-span-3"
-      />
-    </section>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        {vaults.length === 0 ? (
+          <EmptyVaults />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {vaults.map((v) => (
+              <VaultCard key={v.id} vault={v} />
+            ))}
+            <AddVaultCard />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
-function formatAgentConnectionPreview(raw: unknown): string {
-  if (raw == null || typeof raw !== "object") {
-    return "Nao informado";
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type VaultItem = {
+  id: string;
+  name: string;
+  description: string;
+  connected: boolean;
+  agentMode: string;
+  fileCount: number;
+};
+
+// ─── Components ─────────────────────────────────────────────────────────────
+
+function VaultCard({ vault }: { vault: VaultItem }) {
+  return (
+    <Link
+      href="/vault"
+      className="group flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-muted/50">
+            <FolderOpen className="size-4 text-muted-foreground group-hover:text-primary transition-colors" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate font-medium text-sm text-foreground">{vault.name}</p>
+            <p className="truncate text-xs text-muted-foreground">{vault.fileCount} arquivos</p>
+          </div>
+        </div>
+
+        {/* Connection badge */}
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+            vault.connected
+              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+              : "bg-muted text-muted-foreground"
+          )}
+        >
+          {vault.connected ? (
+            <Wifi className="size-3" />
+          ) : (
+            <WifiOff className="size-3" />
+          )}
+          {vault.connected ? "Conectado" : "Offline"}
+        </div>
+      </div>
+
+      {/* Agent info */}
+      <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5">
+        <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
+        <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+          {vault.description}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+function AddVaultCard() {
+  return (
+    <Link
+      href="/onboarding"
+      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-transparent p-8 text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+    >
+      <div className="flex size-9 items-center justify-center rounded-lg border border-current/30">
+        <Plus className="size-4" />
+      </div>
+      <span className="text-sm font-medium">Adicionar vault</span>
+    </Link>
+  );
+}
+
+function EmptyVaults() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 py-24 text-center">
+      <div className="flex size-14 items-center justify-center rounded-2xl border border-border bg-muted/50">
+        <FolderOpen className="size-6 text-muted-foreground" />
+      </div>
+      <div className="space-y-1">
+        <p className="font-medium text-foreground">Nenhum vault conectado</p>
+        <p className="text-sm text-muted-foreground">
+          Configure seu agente para começar a sincronizar arquivos.
+        </p>
+      </div>
+      <Link
+        href="/onboarding"
+        className="mt-2 flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+      >
+        <Plus className="size-4" />
+        Conectar agente
+      </Link>
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function deriveVaultName(o: Record<string, unknown>): string {
+  const mode = o.mode;
+  if (mode === "gateway") {
+    const url = typeof o.gatewayUrl === "string" ? o.gatewayUrl : "";
+    try {
+      return new URL(url).hostname || "gateway-vault";
+    } catch {
+      return "gateway-vault";
+    }
   }
-  const o = raw as Record<string, unknown>;
+  if (mode === "ssh_key" || mode === "ssh_password") {
+    const host = typeof o.host === "string" ? o.host : "";
+    return host || "ssh-vault";
+  }
+  return "meu-vault";
+}
+
+function deriveAgentMode(o: Record<string, unknown>): string {
+  const mode = o.mode;
+  if (mode === "gateway") return "gateway";
+  if (mode === "ssh_key") return "ssh_key";
+  if (mode === "ssh_password") return "ssh_password";
+  return "unknown";
+}
+
+function formatAgentPreview(o: Record<string, unknown>): string {
   const mode = o.mode;
   if (mode === "gateway") {
     const url = typeof o.gatewayUrl === "string" ? o.gatewayUrl : "";
@@ -87,29 +199,12 @@ function formatAgentConnectionPreview(raw: unknown): string {
   if (mode === "ssh_key") {
     const host = typeof o.host === "string" ? o.host : "";
     const port = typeof o.port === "number" ? o.port : 22;
-    return host ? `SSH (chave): ${host}:${port}` : "SSH (chave) configurado";
+    return host ? `SSH (chave): ${host}:${port}` : "SSH com chave";
   }
   if (mode === "ssh_password") {
     const host = typeof o.host === "string" ? o.host : "";
     const port = typeof o.port === "number" ? o.port : 22;
-    return host ? `SSH (usuario e senha): ${host}:${port}` : "SSH (senha) configurado";
+    return host ? `SSH: ${host}:${port}` : "SSH com senha";
   }
   return "Configurado";
-}
-
-function DashboardCard({
-  title,
-  value,
-  className,
-}: {
-  title: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <article className={cn("rounded-2xl border bg-card p-5 shadow-sm", className)}>
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{title}</p>
-      <p className="mt-2 text-sm font-medium">{value}</p>
-    </article>
-  );
 }

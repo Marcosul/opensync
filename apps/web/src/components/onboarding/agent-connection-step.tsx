@@ -1,6 +1,8 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 import type { AgentConnectionForm, AgentConnectionMode } from "@/lib/onboarding-agent";
@@ -29,6 +31,8 @@ type AgentConnectionStepProps = {
 };
 
 export function AgentConnectionStep({ form, onChange }: AgentConnectionStepProps) {
+  const [showGatewayToken, setShowGatewayToken] = useState(false);
+
   function patch<K extends keyof AgentConnectionForm>(key: K, value: AgentConnectionForm[K]) {
     onChange({ ...form, [key]: value });
   }
@@ -75,15 +79,30 @@ export function AgentConnectionStep({ form, onChange }: AgentConnectionStepProps
             className={inputClass}
           />
           <FieldLabel htmlFor="gateway-token">Token</FieldLabel>
-          <input
-            id="gateway-token"
-            type="password"
-            autoComplete="off"
-            placeholder="Cole o token do agente"
-            value={form.gatewayToken}
-            onChange={(e) => patch("gatewayToken", e.target.value)}
-            className={inputClass}
-          />
+          <div className="relative mt-1">
+            <input
+              id="gateway-token"
+              type={showGatewayToken ? "text" : "password"}
+              autoComplete="off"
+              placeholder="Cole o token do agente"
+              value={form.gatewayToken}
+              onChange={(e) => patch("gatewayToken", e.target.value)}
+              className={cn(inputClass, "mt-0 pr-11")}
+            />
+            <button
+              type="button"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              aria-label={showGatewayToken ? "Ocultar token" : "Mostrar token"}
+              aria-pressed={showGatewayToken}
+              onClick={() => setShowGatewayToken((v) => !v)}
+            >
+              {showGatewayToken ? (
+                <EyeOff className="size-4 shrink-0" aria-hidden />
+              ) : (
+                <Eye className="size-4 shrink-0" aria-hidden />
+              )}
+            </button>
+          </div>
         </div>
       ) : null}
 

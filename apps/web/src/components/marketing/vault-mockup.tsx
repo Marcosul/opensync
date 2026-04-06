@@ -6,8 +6,6 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
@@ -93,7 +91,7 @@ function FileSidebar({
       </p>
       <nav aria-label="OpenClaw workspace tree">
         <TreeView
-          entries={OPENCLAW_TREE_ROOT.children}
+          entries={OPENCLAW_TREE_ROOT.type === "dir" ? OPENCLAW_TREE_ROOT.children : []}
           depth={0}
           expanded={expanded}
           toggle={toggle}
@@ -257,13 +255,18 @@ function shortGraphLabel(fileId: string) {
   return base.length > 6 ? base.slice(0, 6) : base;
 }
 
-type GraphNode = SimulationNodeDatum & {
+type GraphNode = {
   id: string;
   label: string;
   isCenter: boolean;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  index?: number;
 };
 
-type GraphLink = SimulationLinkDatum<GraphNode> & {
+type GraphLink = {
   source: string | GraphNode;
   target: string | GraphNode;
 };
@@ -338,19 +341,20 @@ function GraphPane({
     const simNodes = graph.nodes.map((node) => ({ ...node }));
     const simLinks = graph.links.map((link) => ({ ...link }));
 
-    const simulation = forceSimulation(simNodes)
-      .force("charge", forceManyBody<GraphNode>().strength(-280))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const simulation = (forceSimulation as any)(simNodes)
+      .force("charge", (forceManyBody as any)().strength(-280))
       .force(
         "link",
-        forceLink<GraphNode, GraphLink>(simLinks)
-          .id((node) => node.id)
-          .distance((link) => (((link.source as GraphNode).id === doc.id) ? 52 : 46))
+        (forceLink as any)(simLinks)
+          .id((node: GraphNode) => node.id)
+          .distance((link: GraphLink) => ((link.source as GraphNode).id === doc.id ? 52 : 46))
           .strength(1)
       )
-      .force("center", forceCenter(width / 2, height / 2))
+      .force("center", (forceCenter as any)(width / 2, height / 2))
       .force(
         "collide",
-        forceCollide<GraphNode>().radius((node) => (node.isCenter ? 14 : 10))
+        (forceCollide as any)().radius((node: GraphNode) => (node.isCenter ? 14 : 10))
       )
       .alpha(1)
       .alphaDecay(0.09);
@@ -378,15 +382,16 @@ function GraphPane({
     const svg = select(svgEl);
     const layer = select(layerEl);
 
-    const z = zoom<SVGSVGElement>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const z = (zoom as any)()
       .scaleExtent([0.55, 4])
-      .filter((event) => {
+      .filter((event: Event & { type: string; button: number; target: EventTarget }) => {
         if (event.type === "wheel") return true;
         const target = event.target as Element | null;
         if (target?.closest?.("[data-graph-node]")) return false;
-        return !event.button;
+        return !(event as MouseEvent).button;
       })
-      .on("zoom", (event) => {
+      .on("zoom", (event: { transform: { toString(): string } }) => {
         layer.attr("transform", event.transform.toString());
       });
 
