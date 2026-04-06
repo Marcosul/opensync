@@ -1,0 +1,13 @@
+model Agent {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId   String    @map("vault_id") @db.Uuid
+  name      String
+  tokenHash String    @map("token_hash")
+  lastSync  DateTime? @map("last_sync")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  vault   Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  commits Commit[]
+
+  @@map("agents")
+}

@@ -1,0 +1,13 @@
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  vaultId   String?  @map("vault_id") @db.Uuid
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  Profile? @relation(fields: [userId], references: [id])
+  vault Vault?   @relation(fields: [vaultId], references: [id])
+
+  @@map("audit_log")
+}

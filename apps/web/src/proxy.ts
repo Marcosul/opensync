@@ -29,7 +29,7 @@ export async function proxy(request: NextRequest) {
   );
 
   if (user) {
-    const fromDb = await isOnboardingCompleteInDatabase(supabase, user.id);
+    const fromDb = await isOnboardingCompleteInDatabase(supabase, user);
     onboardingDone = fromDb || onboardingDone;
   }
 

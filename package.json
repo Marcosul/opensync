@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm dev:clean && turbo dev",
+    "dev": "pnpm dev:clean && pnpm exec turbo dev",
     "dev:clean": "node ./scripts/dev-clean.mjs",
-    "build": "turbo build",
-    "lint": "turbo lint",
-    "test": "turbo test",
-    "dev:web": "turbo dev --filter=@opensync/web",
-    "dev:api": "turbo dev --filter=@opensync/api"
+    "build": "pnpm exec turbo build",
+    "lint": "pnpm exec turbo lint",
+    "test": "pnpm exec turbo test",
+    "dev:web": "pnpm exec turbo dev --filter=@opensync/web",
+    "dev:api": "pnpm exec turbo dev --filter=@opensync/api"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

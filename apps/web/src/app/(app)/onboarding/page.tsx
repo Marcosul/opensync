@@ -4,12 +4,31 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest } from "@/api/rest/generic";
+import { AgentConnectionStep } from "@/components/onboarding/agent-connection-step";
 import { Button } from "@/components/ui/button";
+import {
+  buildAgentConnectionPayload,
+  isAgentConnectionValid,
+  type AgentConnectionForm,
+} from "@/lib/onboarding-agent";
 
 type OnboardingData = {
   goals: string[];
   usageContext: string;
   frequency: string;
+} & AgentConnectionForm;
+
+const TOTAL_STEPS = 4;
+
+const defaultAgentFields: AgentConnectionForm = {
+  agentMode: "gateway",
+  gatewayUrl: "",
+  gatewayToken: "",
+  sshHost: "",
+  sshPort: "22",
+  sshUser: "",
+  sshPrivateKey: "",
+  sshPassword: "",
 };
 
 const goalOptions = [
@@ -34,24 +53,33 @@ export default function OnboardingPage() {
     goals: [],
     usageContext: "",
     frequency: "",
+    ...defaultAgentFields,
   });
 
   const canContinue = useMemo(() => {
     if (step === 1) return formData.goals.length > 0;
     if (step === 2) return Boolean(formData.usageContext);
-    return Boolean(formData.frequency);
+    if (step === 3) return Boolean(formData.frequency);
+    if (step === 4) return isAgentConnectionValid(formData);
+    return false;
   }, [formData, step]);
 
   async function handleFinish() {
     setSubmitError(null);
     setIsSubmitting(true);
     try {
+      const agentConnection = buildAgentConnectionPayload(formData);
+      if (!agentConnection) {
+        setSubmitError("Preencha os dados de conexao do agente.");
+        return;
+      }
       await apiRequest<{ ok: boolean }>("/api/onboarding/complete", {
         method: "POST",
         body: {
           goals: formData.goals,
           usageContext: formData.usageContext,
           frequency: formData.frequency,
+          agentConnection,
         },
       });
       router.replace("/dashboard");
@@ -77,13 +105,13 @@ export default function OnboardingPage() {
   return (
     <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Onboarding OpenClaw - Etapa {step} de 3
+        Onboarding OpenClaw - Etapa {step} de {TOTAL_STEPS}
       </p>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">
         Vamos configurar o OpenSync para o seu objetivo
       </h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        Responda 3 perguntas rapidas para personalizar sua experiencia.
+        Responda {TOTAL_STEPS} etapas rapidas para personalizar sua experiencia.
       </p>
 
       <div className="mt-6">
@@ -126,6 +154,18 @@ export default function OnboardingPage() {
             onSelect={(value) => setFormData((prev) => ({ ...prev, frequency: value }))}
           />
         ) : null}
+
+        {step === 4 ? (
+          <AgentConnectionStep
+            form={formData}
+            onChange={(next) =>
+              setFormData((prev) => ({
+                ...prev,
+                ...next,
+              }))
+            }
+          />
+        ) : null}
       </div>
 
       {submitError ? (
@@ -142,10 +182,10 @@ export default function OnboardingPage() {
           Voltar
         </Button>
 
-        {step < 3 ? (
+        {step < TOTAL_STEPS ? (
           <Button
             type="button"
-            onClick={() => setStep((prev) => Math.min(3, prev + 1))}
+            onClick={() => setStep((prev) => Math.min(TOTAL_STEPS, prev + 1))}
             disabled={!canContinue}
           >
             Continuar

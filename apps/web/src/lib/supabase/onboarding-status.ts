@@ -1,16 +1,26 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
+
+const META_COMPLETED_AT = "opensync_onboarding_completed_at";
+
+export function isOnboardingCompleteFromMetadata(user: User): boolean {
+  return Boolean(user.user_metadata?.[META_COMPLETED_AT]);
+}
 
 /**
- * True when onboarding was finished (persisted on public.profiles.onboarding_completed_at).
+ * Onboarding concluido se estiver em user_metadata (fallback) ou em public.profiles.
  */
 export async function isOnboardingCompleteInDatabase(
   supabase: SupabaseClient,
-  userId: string,
+  user: User,
 ): Promise<boolean> {
+  if (isOnboardingCompleteFromMetadata(user)) {
+    return true;
+  }
+
   const { data, error } = await supabase
     .from("profiles")
     .select("onboarding_completed_at")
-    .eq("id", userId)
+    .eq("id", user.id)
     .maybeSingle();
 
   if (error) {

@@ -1,0 +1,16 @@
+model Commit {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId      String   @map("vault_id") @db.Uuid
+  agentId      String?  @map("agent_id") @db.Uuid
+  hash         String
+  message      String
+  filesChanged Int      @default(0) @map("files_changed")
+  additions    Int      @default(0)
+  deletions    Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  vault Vault  @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  agent Agent? @relation(fields: [agentId], references: [id])
+
+  @@map("commits")
+}

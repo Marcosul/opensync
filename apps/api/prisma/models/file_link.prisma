@@ -1,0 +1,12 @@
+model FileLink {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId    String   @map("vault_id") @db.Uuid
+  sourceFile String   @map("source_file")
+  targetFile String   @map("target_file")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@unique([vaultId, sourceFile, targetFile])
+  @@map("file_links")
+}

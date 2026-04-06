@@ -11,7 +11,7 @@ import {
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
-import { ChevronDown, ChevronRight, Settings, WandSparkles } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -268,6 +268,40 @@ type GraphLink = SimulationLinkDatum<GraphNode> & {
   target: string | GraphNode;
 };
 
+function minDistanceToNearestNeighbor(nodes: GraphNode[], selfId: string): number {
+  const self = nodes.find((n) => n.id === selfId);
+  if (!self || self.x == null || self.y == null) return Infinity;
+  let min = Infinity;
+  for (const other of nodes) {
+    if (other.id === selfId || other.x == null || other.y == null) continue;
+    const d = Math.hypot(self.x - other.x, self.y - other.y);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+/** Fonte menor quando os nós estão mais próximos (evita sobreposição de rótulos). */
+function graphLabelFontSizePx(minDist: number): number {
+  if (!Number.isFinite(minDist)) return 6;
+  if (minDist < 24) return 3.75;
+  if (minDist < 32) return 4.25;
+  if (minDist < 42) return 4.75;
+  if (minDist < 54) return 5.25;
+  return 5.75;
+}
+
+function graphNodeLabelText(id: string, minDist: number): string {
+  const maxLen = minDist < 28 ? 12 : minDist < 40 ? 18 : 24;
+  if (id.length <= maxLen) return id;
+  const head = Math.max(4, Math.floor((maxLen - 1) / 2));
+  const tail = maxLen - 1 - head;
+  return `${id.slice(0, head)}…${id.slice(-tail)}`;
+}
+
+function labelOffsetYBelowNode(isCenter: boolean): number {
+  return isCenter ? 15 : 9.5;
+}
+
 function GraphPane({
   doc,
   onSelectFile,
@@ -372,52 +406,12 @@ function GraphPane({
     return map;
   }, [renderNodes]);
 
-  const backgroundGraph = useMemo(() => {
-    // Decorative low-opacity clusters to mimic Obsidian's dense background graph.
-    const rng = seededRandom(doc.id);
-    const clusters = [
-      { cx: 34, cy: 48, count: 12 },
-      { cx: 188, cy: 34, count: 10 },
-      { cx: 188, cy: 134, count: 12 },
-      { cx: 40, cy: 132, count: 9 },
-    ];
-
-    const points: { id: string; x: number; y: number }[] = [];
-    const links: { source: string; target: string }[] = [];
-
-    clusters.forEach((cluster, clusterIndex) => {
-      const centerId = `bg-center-${clusterIndex}`;
-      points.push({ id: centerId, x: cluster.cx, y: cluster.cy });
-      for (let i = 0; i < cluster.count; i += 1) {
-        const angle = rng() * Math.PI * 2;
-        const radius = 18 + rng() * 34;
-        const id = `bg-${clusterIndex}-${i}`;
-        points.push({
-          id,
-          x: cluster.cx + Math.cos(angle) * radius,
-          y: cluster.cy + Math.sin(angle) * radius,
-        });
-        links.push({ source: centerId, target: id });
-      }
-    });
-
-    return { points, links };
-  }, [doc.id]);
-
   return (
     <div className="bg-[#F8F9F8] p-3 sm:p-4">
       <p className="mb-2 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         GRAPH
       </p>
       <div className="relative flex min-h-[200px] items-center justify-center overflow-hidden rounded-lg border border-border/70 bg-[#FCFDFC] md:min-h-[240px]">
-        <div className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col gap-1">
-          <span className="inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground">
-            <Settings className="size-3.5" />
-          </span>
-          <span className="inline-flex size-6 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground">
-            <WandSparkles className="size-3.5" />
-          </span>
-        </div>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
@@ -426,35 +420,6 @@ function GraphPane({
           aria-label="File relation graph"
         >
           <g ref={layerRef}>
-            {backgroundGraph.links.map((link, index) => {
-              const source = backgroundGraph.points.find((p) => p.id === link.source);
-              const target = backgroundGraph.points.find((p) => p.id === link.target);
-              if (!source || !target) return null;
-              return (
-                <line
-                  key={`bg-link-${index}`}
-                  x1={source.x}
-                  y1={source.y}
-                  x2={target.x}
-                  y2={target.y}
-                  stroke="#d1d5db"
-                  strokeWidth="0.8"
-                  opacity="0.35"
-                />
-              );
-            })}
-
-            {backgroundGraph.points.map((point) => (
-              <circle
-                key={point.id}
-                cx={point.x}
-                cy={point.y}
-                r={point.id.includes("center") ? 3.5 : 2.4}
-                fill="#d1d5db"
-                opacity={point.id.includes("center") ? 0.7 : 0.55}
-              />
-            ))}
-
             {graph.links.map((link, index) => {
               const sourceId =
                 typeof link.source === "string" ? link.source : link.source.id;
@@ -481,6 +446,10 @@ function GraphPane({
               const x = node.x ?? width / 2;
               const y = node.y ?? height / 2;
               const radius = node.isCenter ? 9 : 5.5;
+              const minDist = minDistanceToNearestNeighbor(renderNodes, node.id);
+              const fontSize = graphLabelFontSizePx(minDist);
+              const labelText = graphNodeLabelText(node.id, minDist);
+              const labelY = labelOffsetYBelowNode(node.isCenter);
               return (
                 <g
                   key={node.id}
@@ -509,6 +478,17 @@ function GraphPane({
                     strokeWidth={node.isCenter ? 0 : 1}
                     className="pointer-events-all"
                   />
+                  <text
+                    x={0}
+                    y={labelY}
+                    textAnchor="middle"
+                    dominantBaseline="hanging"
+                    fontSize={fontSize}
+                    fill="#6b7280"
+                    className="pointer-events-none font-mono select-none"
+                  >
+                    {labelText}
+                  </text>
                 </g>
               );
             })}
@@ -517,16 +497,4 @@ function GraphPane({
       </div>
     </div>
   );
-}
-
-function seededRandom(seed: string) {
-  let state = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    state = (state << 5) - state + seed.charCodeAt(i);
-    state |= 0;
-  }
-  return () => {
-    state = (1664525 * state + 1013904223) | 0;
-    return ((state >>> 0) % 1000) / 1000;
-  };
 }

@@ -1,0 +1,18 @@
+model Vault {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  description String?
+  giteaRepo   String   @map("gitea_repo")
+  path        String   @default("./openclaw")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agents    Agent[]
+  commits   Commit[]
+  fileLinks FileLink[]
+  auditLogs AuditLog[]
+
+  @@map("vaults")
+}

@@ -40,7 +40,7 @@ export async function GET(request: Request) {
   const onboardingDoneFromCookie = isOnboardingCompleted(
     cookieStore.get(ONBOARDING_COOKIE_NAME)?.value,
   );
-  const onboardingDoneFromDb = await isOnboardingCompleteInDatabase(supabase, user.id);
+  const onboardingDoneFromDb = await isOnboardingCompleteInDatabase(supabase, user);
   const onboardingDone = onboardingDoneFromDb || onboardingDoneFromCookie;
 
   return NextResponse.redirect(
