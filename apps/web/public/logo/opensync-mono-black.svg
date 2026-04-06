@@ -1,0 +1,14 @@
+<svg width="200" height="44" viewBox="0 0 200 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="20" cy="14" r="6" fill="#1D1D1B" opacity=".15"/>
+  <circle cx="20" cy="14" r="4" fill="#1D1D1B"/>
+  <circle cx="5" cy="33" r="3.5" fill="#1D1D1B" opacity=".5"/>
+  <circle cx="35" cy="33" r="3.5" fill="#1D1D1B" opacity=".5"/>
+  <circle cx="20" cy="37" r="3" fill="#1D1D1B" opacity=".3"/>
+  <line x1="5" y1="31" x2="15" y2="20" stroke="#1D1D1B" stroke-width="1.5" stroke-linecap="round" opacity=".4"/>
+  <line x1="25" y1="20" x2="35" y2="31" stroke="#1D1D1B" stroke-width="1.5" stroke-linecap="round" opacity=".4"/>
+  <line x1="20" y1="18" x2="20" y2="34" stroke="#1D1D1B" stroke-width="1.2" stroke-linecap="round" opacity=".28"/>
+  <line x1="5" y1="33" x2="20" y2="37" stroke="#1D1D1B" stroke-width="1" stroke-linecap="round" opacity=".25"/>
+  <line x1="35" y1="33" x2="20" y2="37" stroke="#1D1D1B" stroke-width="1" stroke-linecap="round" opacity=".25"/>
+  <text x="52" y="20" font-family="system-ui, sans-serif" font-size="18" font-weight="600" fill="#1D1D1B" letter-spacing="-0.4">opensync</text>
+  <text x="53" y="36" font-family="system-ui, sans-serif" font-size="12" font-weight="400" fill="#888780" letter-spacing="0.7">.space</text>
+</svg>

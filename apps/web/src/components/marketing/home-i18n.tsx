@@ -1,0 +1,452 @@
+"use client";
+
+import { ChevronDown, Globe } from "lucide-react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+
+export type Locale =
+  | "en"
+  | "ar"
+  | "de"
+  | "es"
+  | "fr"
+  | "it"
+  | "ja"
+  | "ko"
+  | "pt-BR"
+  | "ru"
+  | "zh-CN";
+
+type Messages = {
+  nav: { features: string; pricing: string; createAgent: string; signIn: string };
+  hero: {
+    badge: string;
+    titleTop: string;
+    titleAccent: string;
+    bodyPrefix: string;
+    bodySuffix: string;
+    startFree: string;
+    seeHow: string;
+    scrollAria: string;
+  };
+  features: {
+    eyebrow: string;
+    title: string;
+    items: Array<{ title: string; description: string }>;
+  };
+  pricing: {
+    eyebrow: string;
+    title: string;
+    annual: string;
+    monthly: string;
+    save: string;
+    freeDescription: string;
+    proDescription: string;
+    teamDescription: string;
+    mostPopular: string;
+    startFree: string;
+    startTrial: string;
+    contactUs: string;
+    billedAnnualPro: string;
+    billedMonthly: string;
+    billedAnnualTeam: string;
+    freeFeatures: string[];
+    proFeatures: string[];
+    teamFeatures: string[];
+    compareHeaderFeature: string;
+    compareHeaderObsidian: string;
+    compareRows: Array<{ feature: string; opensync: string; other: string }>;
+    totalMonthly: string;
+  };
+};
+
+type I18nContextValue = {
+  locale: Locale;
+  setLocale: (next: Locale) => void;
+  messages: Messages;
+};
+
+const STORAGE_KEY = "opensync-locale";
+
+const BASE_EN: Messages = {
+  nav: {
+    features: "Features",
+    pricing: "Pricing",
+    createAgent: "Create your first agent",
+    signIn: "Sign in",
+  },
+  hero: {
+    badge: "built for OpenClaw agents",
+    titleTop: "Your agent's vault,",
+    titleAccent: "always safe. Always synced.",
+    bodyPrefix: "Version control, sync, and a beautiful editor for your",
+    bodySuffix: "workspace. Git-powered. Obsidian-inspired. Yours.",
+    startFree: "start free — no credit card",
+    seeHow: "see how it works ↓",
+    scrollAria: "Scroll to features",
+  },
+  features: {
+    eyebrow: "Features",
+    title: "Everything Obsidian Sync charges extra for",
+    items: [
+      {
+        title: "Git-powered versioning",
+        description:
+          "Every change becomes an automatic commit. One-click rollback. Full history.",
+      },
+      {
+        title: "Graph view",
+        description:
+          "Visualize file links and navigate your agent's knowledge graph.",
+      },
+      {
+        title: "Web editor with [[wikilinks]]",
+        description:
+          "Edit .md files anywhere with Obsidian-style internal links.",
+      },
+      {
+        title: "Multi-vault",
+        description:
+          "One vault per agent, multiple projects, each with its own Git repository.",
+      },
+      {
+        title: "OpenClaw plugin",
+        description:
+          "Install as skill or plugin with zero setup; the agent commits by itself.",
+      },
+      {
+        title: "Multilingual",
+        description:
+          "UI in multiple languages so global teams can collaborate smoothly.",
+      },
+    ],
+  },
+  pricing: {
+    eyebrow: "Pricing",
+    title: "Everything Obsidian charges separately, in one plan",
+    annual: "annual",
+    monthly: "monthly",
+    save: "save 20%",
+    freeDescription: "For testing. No credit card.",
+    proDescription: "For people using OpenClaw every day.",
+    teamDescription: "For teams running OpenClaw in production.",
+    mostPopular: "most popular",
+    startFree: "start free",
+    startTrial: "start 14-day trial",
+    contactUs: "contact us",
+    billedAnnualPro: "billed $60/year",
+    billedMonthly: "billed month-to-month",
+    billedAnnualTeam: "billed $144/user/year",
+    freeFeatures: [
+      "1 vault / 1 agent",
+      "50 retained commits",
+      "Read-only web editor",
+      "Graph view",
+      "Rollback",
+    ],
+    proFeatures: [
+      "Unlimited vaults",
+      "Full Git history",
+      "Interactive graph view",
+      "Web editor + rollback",
+      "Multi-device sync",
+    ],
+    teamFeatures: [
+      "Everything in Pro",
+      "Shared vaults",
+      "Full audit log",
+      "SSO / SAML",
+      "SLA + dedicated support",
+    ],
+    compareHeaderFeature: "feature",
+    compareHeaderObsidian: "Obsidian Sync — $4/mo + extras",
+    compareRows: [
+      { feature: "Cross-device sync", opensync: "included", other: "$4/mo" },
+      { feature: "Version history", opensync: "full Git", other: "limited" },
+      { feature: "Publish / web editor", opensync: "included", other: "+ $8/mo extra" },
+      { feature: "Graph view", opensync: "included", other: "app only" },
+      { feature: "AI agent integration", opensync: "native OpenClaw", other: "not available" },
+      { feature: "One-click rollback", opensync: "included", other: "manual" },
+    ],
+    totalMonthly: "monthly total",
+  },
+};
+
+const PT_BR: Messages = {
+  nav: {
+    features: "Features",
+    pricing: "Pricing",
+    createAgent: "Crie seu primeiro agente",
+    signIn: "Entrar",
+  },
+  hero: {
+    badge: "feito para agentes OpenClaw",
+    titleTop: "Seu vault de agentes,",
+    titleAccent: "sempre seguro. Sempre sincronizado.",
+    bodyPrefix: "Versionamento, sync e um editor elegante para seu",
+    bodySuffix: "workspace. Git-powered. Inspirado no Obsidian. Seu.",
+    startFree: "começar grátis — sem cartão",
+    seeHow: "ver como funciona ↓",
+    scrollAria: "Ir para seção de features",
+  },
+  features: {
+    eyebrow: "Features",
+    title: "Tudo que o Obsidian Sync cobra à parte",
+    items: [
+      {
+        title: "Versionamento com Git",
+        description:
+          "Cada mudança vira commit automático. Rollback em 1 clique. Histórico completo.",
+      },
+      {
+        title: "Graph view",
+        description:
+          "Visualize links entre arquivos e navegue pelo grafo de conhecimento do agente.",
+      },
+      {
+        title: "Editor web com [[wikilinks]]",
+        description:
+          "Edite arquivos .md de qualquer lugar com links entre notas como no Obsidian.",
+      },
+      {
+        title: "Multi-vault",
+        description:
+          "Um vault por agente, múltiplos projetos, cada um com seu próprio repositório Git.",
+      },
+      {
+        title: "Plugin OpenClaw",
+        description:
+          "Instale como skill ou plugin, sem configuração; o agente commita sozinho.",
+      },
+      {
+        title: "Multilíngue",
+        description:
+          "Interface em vários idiomas para times globais trabalharem sem atrito.",
+      },
+    ],
+  },
+  pricing: {
+    eyebrow: "Pricing",
+    title: "Tudo que o Obsidian cobra separado, num plano só",
+    annual: "anual",
+    monthly: "mensal",
+    save: "economize 20%",
+    freeDescription: "Para experimentar. Sem cartão.",
+    proDescription: "Para quem usa OpenClaw todos os dias.",
+    teamDescription: "Para times usando OpenClaw em produção.",
+    mostPopular: "mais popular",
+    startFree: "começar grátis",
+    startTrial: "iniciar teste de 14 dias",
+    contactUs: "falar com vendas",
+    billedAnnualPro: "cobrado $60/ano",
+    billedMonthly: "cobrado mês a mês",
+    billedAnnualTeam: "cobrado $144/usuário/ano",
+    freeFeatures: [
+      "1 vault / 1 agente",
+      "50 commits retidos",
+      "Editor web somente leitura",
+      "Graph view",
+      "Rollback",
+    ],
+    proFeatures: [
+      "Vaults ilimitados",
+      "Histórico Git completo",
+      "Graph view interativo",
+      "Editor web + rollback",
+      "Sync multi-máquina",
+    ],
+    teamFeatures: [
+      "Tudo do Pro",
+      "Vaults compartilhados",
+      "Audit log completo",
+      "SSO / SAML",
+      "SLA + suporte dedicado",
+    ],
+    compareHeaderFeature: "feature",
+    compareHeaderObsidian: "Obsidian Sync — $4/mo + extras",
+    compareRows: [
+      { feature: "Sync entre dispositivos", opensync: "incluído", other: "$4/mo" },
+      { feature: "Histórico de versões", opensync: "Git completo", other: "limitado" },
+      { feature: "Publish / editor web", opensync: "incluído", other: "+ $8/mo extra" },
+      { feature: "Graph view", opensync: "incluído", other: "só no app" },
+      { feature: "Integração com agentes IA", opensync: "nativo OpenClaw", other: "não existe" },
+      { feature: "Rollback 1 clique", opensync: "incluído", other: "manual" },
+    ],
+    totalMonthly: "total mensal",
+  },
+};
+
+const ES: Messages = {
+  ...BASE_EN,
+  nav: { ...BASE_EN.nav, features: "Funciones", pricing: "Precios", createAgent: "Crea tu primer agente", signIn: "Iniciar sesión" },
+  hero: {
+    ...BASE_EN.hero,
+    badge: "hecho para agentes OpenClaw",
+    titleTop: "La bóveda de tu agente,",
+    titleAccent: "siempre segura. Siempre sincronizada.",
+    bodyPrefix: "Control de versiones, sincronización y un editor elegante para tu",
+    startFree: "empieza gratis — sin tarjeta",
+    seeHow: "ver cómo funciona ↓",
+    scrollAria: "Ir a funciones",
+  },
+  features: { ...BASE_EN.features, eyebrow: "Funciones", title: "Todo lo que Obsidian Sync cobra por separado" },
+  pricing: {
+    ...BASE_EN.pricing,
+    eyebrow: "Precios",
+    title: "Todo lo que Obsidian cobra por separado, en un solo plan",
+    annual: "anual",
+    monthly: "mensual",
+    save: "ahorra 20%",
+    freeDescription: "Para probar. Sin tarjeta.",
+    proDescription: "Para quien usa OpenClaw todos los días.",
+    teamDescription: "Para equipos usando OpenClaw en producción.",
+    mostPopular: "más popular",
+    startFree: "empezar gratis",
+    startTrial: "iniciar prueba de 14 días",
+    contactUs: "contáctanos",
+    billedAnnualPro: "facturado $60/año",
+    billedMonthly: "facturación mensual",
+    billedAnnualTeam: "facturado $144/usuario/año",
+    totalMonthly: "total mensual",
+  },
+};
+
+const MESSAGES: Record<Locale, Messages> = {
+  "pt-BR": PT_BR,
+  en: BASE_EN,
+  es: ES,
+  ar: BASE_EN,
+  de: BASE_EN,
+  fr: BASE_EN,
+  it: BASE_EN,
+  ja: BASE_EN,
+  ko: BASE_EN,
+  ru: BASE_EN,
+  "zh-CN": BASE_EN,
+};
+
+const LANGUAGE_OPTIONS: Array<{ code: Locale; label: string }> = [
+  { code: "en", label: "English" },
+  { code: "ar", label: "العربية" },
+  { code: "de", label: "Deutsch" },
+  { code: "es", label: "Español" },
+  { code: "fr", label: "Français" },
+  { code: "it", label: "Italiano" },
+  { code: "ja", label: "日本語" },
+  { code: "ko", label: "한국어" },
+  { code: "pt-BR", label: "Português (Brasil)" },
+  { code: "ru", label: "Русский" },
+  { code: "zh-CN", label: "简体中文" },
+];
+
+const I18nContext = createContext<I18nContextValue | null>(null);
+
+function detectInitialLocale(): Locale {
+  if (typeof window === "undefined") return "pt-BR";
+  const saved = window.localStorage.getItem(STORAGE_KEY) as Locale | null;
+  if (saved && saved in MESSAGES) return saved;
+  const nav = window.navigator.language;
+  const exact = LANGUAGE_OPTIONS.find((item) => item.code === nav);
+  if (exact) return exact.code;
+  const short = nav.split("-")[0];
+  const shortMatch = LANGUAGE_OPTIONS.find((item) => item.code.startsWith(short));
+  return shortMatch?.code ?? "pt-BR";
+}
+
+export function HomeI18nProvider({ children }: { children: ReactNode }) {
+  const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
+
+  const updateLocale = useCallback((next: Locale) => {
+    setLocale(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_KEY, next);
+    }
+  }, []);
+
+  const value = useMemo<I18nContextValue>(() => {
+    return {
+      locale,
+      setLocale: updateLocale,
+      messages: MESSAGES[locale] ?? BASE_EN,
+    };
+  }, [locale, updateLocale]);
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useHomeI18n() {
+  const context = useContext(I18nContext);
+  if (!context) {
+    throw new Error("useHomeI18n must be used inside HomeI18nProvider");
+  }
+  return context;
+}
+
+export function LanguageDropdown() {
+  const { locale, setLocale } = useHomeI18n();
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(event: MouseEvent) {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex h-10 items-center gap-2 rounded-lg border border-border/80 bg-background px-3 text-sm text-foreground shadow-sm transition-colors hover:bg-muted"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Choose language"
+      >
+        <Globe className="size-4" aria-hidden />
+        <ChevronDown className="size-4" aria-hidden />
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 z-40 mt-2 w-56 rounded-xl border border-white/10 bg-[#1c1f22] p-2 shadow-2xl">
+          <ul role="listbox" className="max-h-80 space-y-0.5 overflow-auto pr-1">
+            {LANGUAGE_OPTIONS.map((option) => {
+              const active = option.code === locale;
+              return (
+                <li key={option.code}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => {
+                      setLocale(option.code);
+                      setOpen(false);
+                    }}
+                    className={
+                      active
+                        ? "flex w-full items-center rounded-md bg-white/10 px-3 py-2 text-left text-base text-white"
+                        : "flex w-full items-center rounded-md px-3 py-2 text-left text-base text-zinc-200 transition-colors hover:bg-white/5"
+                    }
+                  >
+                    {option.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}

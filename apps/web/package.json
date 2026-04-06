@@ -1,0 +1,39 @@
+{
+  "name": "@opensync/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "set -a; . ./.env; set +a; rm -f .next/dev/lock && next dev -p \"$PORT\"",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "verify:auth": "bash scripts/verify-supabase-auth.sh"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.3.0",
+    "@supabase/ssr": "^0.10.0",
+    "@supabase/supabase-js": "^2.101.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "d3-force": "^3.0.0",
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0",
+    "lucide-react": "^1.7.0",
+    "next": "16.2.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "shadcn": "^4.1.2",
+    "tailwind-merge": "^3.5.0",
+    "tw-animate-css": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
