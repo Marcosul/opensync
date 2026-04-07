@@ -185,6 +185,8 @@
   },
   "active": "0701bb0997c8b67e",
   "lastOpenFiles": [
+    "apps/web/src/components/app/sed5AivCn",
+    "apps/web/src/components/app/vault-explorer-tree-view.tsx",
     "apps/web/src/app/(app)/settings/page.tsx",
     "apps/web/src/app/(app)/settings",
     "docs/dev/fly-ionos-ssh.md"

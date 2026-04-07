@@ -40,6 +40,10 @@ import {
   useReducer,
   useRef,
   useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type MutableRefObject,
+  type PointerEvent,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -69,6 +73,15 @@ import {
   VaultExplorerContextMenu,
   type ExplorerCommand,
 } from "@/components/app/vault-explorer-context-menu";
+import {
+  VaultExplorerTreeView,
+  explorerRowKey,
+  explorerRefsForDragRow,
+  parseExplorerDragPayload,
+  rowToItemRef,
+  type ExplorerInlineRenameState,
+  type ExplorerVisibleRow,
+} from "@/components/app/vault-explorer-tree-view";
 import { VaultNoteEditor } from "@/components/app/vault-note-editor";
 import {
   addBaseToParent,
@@ -76,19 +89,22 @@ import {
   addFolderToParent,
   addNoteToParent,
   collectDocIdsFromTree,
-  collectDocIdsUnderDir,
-  deleteDirectory,
-  deleteFile,
+  deleteExplorerItems,
   duplicateFile,
   extractWikilinks,
+  filterTopLevelExplorerRefs,
   filterEntriesByNameQuery,
   findAncestorDirPathsForDoc,
   findDir,
+  findFileNameForDocId,
   getChildrenAtPath,
   moveDirectory,
+  moveExplorerItemsToParent,
   moveFile,
   renameDirectory,
   renameFile,
+  VAULT_EXPLORER_DRAG_MIME,
+  type ExplorerItemRef,
 } from "@/components/app/vault-tree-ops";
 import {
   DOCS,
@@ -232,6 +248,22 @@ function sortTreeEntries(entries: TreeEntry[], order: TreeSortOrder): TreeEntry[
   );
 }
 
+/** Linhas visíveis na ordem do explorador (respeita expand/collapse). */
+function flattenVisibleExplorerRows(entries: TreeEntry[], expandedPaths: Set<string>): ExplorerVisibleRow[] {
+  const out: ExplorerVisibleRow[] = [];
+  for (const e of entries) {
+    if (e.type === "dir") {
+      out.push({ kind: "folder", path: e.path, name: e.name });
+      if (expandedPaths.has(e.path)) {
+        out.push(...flattenVisibleExplorerRows(e.children, expandedPaths));
+      }
+    } else if (e.type === "file" && "docId" in e && !("disabled" in e && e.disabled)) {
+      out.push({ kind: "file", docId: e.docId, name: e.name });
+    }
+  }
+  return out;
+}
+
 function flattenTreeDocs(entries: TreeEntry[], prefix = ""): { docId: string; label: string }[] {
   const out: { docId: string; label: string }[] = [];
   for (const e of entries) {
@@ -248,6 +280,61 @@ const vaultChromeMenuItemClass = cn(
   "flex w-full cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none",
   "text-foreground data-highlighted:bg-muted"
 );
+
+function VaultExplorerDeleteConfirmDialog({
+  open,
+  title,
+  message,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/50 p-4" role="presentation">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default"
+        aria-label="Fechar"
+        onClick={onCancel}
+      />
+      <div
+        className="relative w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-xl"
+        role="alertdialog"
+        aria-labelledby="vault-explorer-delete-title"
+        aria-describedby="vault-explorer-delete-desc"
+      >
+        <h2 id="vault-explorer-delete-title" className="text-base font-semibold text-foreground">
+          {title}
+        </h2>
+        <p id="vault-explorer-delete-desc" className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
+          {message}
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="rounded-md px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={onCancel}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+            onClick={onConfirm}
+          >
+            Apagar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type VaultUiAction =
   | { type: "open"; id: string }
@@ -326,6 +413,11 @@ function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiStat
   }
 }
 
+const EXPLORER_INLINE_RENAME_ROW_CLASS =
+  "flex w-full items-center gap-1 rounded-md border border-primary/70 bg-card/80 px-1 py-0.5 shadow-sm ring-2 ring-primary/50 ring-offset-2 ring-offset-sidebar";
+const EXPLORER_INLINE_RENAME_INPUT_CLASS =
+  "min-w-0 flex-1 rounded-sm border-0 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-foreground outline-none selection:bg-primary/25 focus-visible:ring-0 dark:bg-primary/15";
+
 export function VaultView() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -349,6 +441,9 @@ export function VaultView() {
     { type: "file"; docId: string } | { type: "folder"; path: string } | null
   >(null);
   const [bookmarks, setBookmarks] = useState<VaultBookmark[]>(() => [...ssrBoot.snap.bookmarks]);
+  const [explorerInlineRename, setExplorerInlineRename] = useState<ExplorerInlineRenameState>(null);
+  const [explorerDeleteItems, setExplorerDeleteItems] = useState<ExplorerItemRef[] | null>(null);
+  const [explorerTreeNonce, setExplorerTreeNonce] = useState(0);
 
   useLayoutEffect(() => {
     const metas = readVaultMetas();
@@ -570,8 +665,17 @@ export function VaultView() {
     setEditorSourceMode(false);
   }, [activeTabId]);
 
-  const defaultNewItemParent =
-    activeVaultMeta?.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
+  useEffect(() => {
+    setExplorerInlineRename(null);
+  }, [activeVaultId]);
+
+  const defaultNewItemParent = useMemo(() => {
+    if (treeRoot.type !== "dir") return "openclaw-root";
+    if (activeVaultMeta?.kind === "openclaw") {
+      if (findDir(treeRoot.children, "openclaw/workspace")) return "openclaw/workspace";
+    }
+    return treeRoot.path;
+  }, [treeRoot, activeVaultMeta?.kind]);
 
   const browseSelectFile = useCallback(
     (id: string) => {
@@ -583,6 +687,144 @@ export function VaultView() {
     },
     [activeTabId]
   );
+
+  const migrateDocPrefixes = useCallback(
+    (from: string, to: string) => {
+      if (from === to) return;
+      setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
+      const openIds = [...new Set([...openTabs, activeTabId].filter(Boolean))];
+      const map = buildDocIdRemapFromPrefixes(from, to, openIds);
+      if (Object.keys(map).length > 0) dispatchUi({ type: "remapDocIds", map });
+    },
+    [openTabs, activeTabId]
+  );
+
+  const explorerRenameSessionRef = useRef(explorerInlineRename);
+  explorerRenameSessionRef.current = explorerInlineRename;
+
+  const commitExplorerInlineRename = useCallback(() => {
+    const session = explorerRenameSessionRef.current;
+    if (!session) return;
+    const trimmed = session.draft.trim();
+    if (!trimmed) {
+      setExplorerInlineRename(null);
+      return;
+    }
+    if (trimmed === session.initialName) {
+      setExplorerInlineRename(null);
+      return;
+    }
+    if (session.kind === "file") {
+      const r = renameFile(treeRoot, session.docId, trimmed);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      if (r.newDocId && r.newDocId !== session.docId) {
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          const v = next[session.docId];
+          if (v !== undefined) {
+            delete next[session.docId];
+            next[r.newDocId!] = v;
+          }
+          return next;
+        });
+        dispatchUi({ type: "replaceDoc", from: session.docId, to: r.newDocId });
+      }
+    } else {
+      const r = renameDirectory(treeRoot, session.treePath, trimmed);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+    }
+    setExplorerInlineRename(null);
+  }, [treeRoot, migrateDocPrefixes]);
+
+  const cancelExplorerInlineRename = useCallback(() => setExplorerInlineRename(null), []);
+
+  const setExplorerRenameDraft = useCallback((draft: string) => {
+    setExplorerInlineRename((prev) => (prev ? { ...prev, draft } : null));
+  }, []);
+
+  const skipExplorerRenameBlurCommitRef = useRef(false);
+
+  const bumpExplorerTree = useCallback(() => setExplorerTreeNonce((n) => n + 1), []);
+
+  const openExplorerDeleteDialog = useCallback((items: ExplorerItemRef[]) => {
+    if (items.length === 0) return;
+    setExplorerDeleteItems(items);
+  }, []);
+
+  const performExplorerMoveToFolder = useCallback(
+    (targetParentPath: string, items: ExplorerItemRef[]) => {
+      if (treeRoot.type !== "dir") return;
+      const r = moveExplorerItemsToParent(treeRoot, items, targetParentPath);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      for (const { from, to } of r.prefixMigrations) {
+        migrateDocPrefixes(from, to);
+      }
+      for (const { from, to } of r.docIdReplacements) {
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          const v = next[from];
+          if (v !== undefined) {
+            delete next[from];
+            next[to] = v;
+          }
+          return next;
+        });
+        dispatchUi({ type: "replaceDoc", from, to });
+      }
+      bumpExplorerTree();
+    },
+    [treeRoot, migrateDocPrefixes, bumpExplorerTree]
+  );
+
+  const confirmExplorerDeleteFromDialog = useCallback(() => {
+    if (!explorerDeleteItems || treeRoot.type !== "dir") return;
+    const r = deleteExplorerItems(treeRoot, explorerDeleteItems);
+    if (!r.ok) {
+      window.alert(r.reason);
+      return;
+    }
+    setTreeRoot(r.root);
+    dispatchUi({ type: "closeMany", ids: r.closedDocIds });
+    setNoteContents((prev) => {
+      const next = { ...prev };
+      for (const id of r.closedDocIds) delete next[id];
+      return next;
+    });
+    setExplorerDeleteItems(null);
+    bumpExplorerTree();
+  }, [explorerDeleteItems, treeRoot, bumpExplorerTree]);
+
+  const explorerDeleteDialogCopy = useMemo(() => {
+    if (!explorerDeleteItems?.length) return { title: "", body: "" };
+    const n = explorerDeleteItems.length;
+    const title = n === 1 ? "Apagar item?" : `Apagar ${n} itens?`;
+    const lines: string[] = [];
+    for (const it of explorerDeleteItems.slice(0, 10)) {
+      if (it.kind === "file") {
+        const name = findFileNameForDocId(treeChildren, it.docId) ?? it.docId;
+        lines.push(`• ${name}`);
+      } else {
+        const d = findDir(treeChildren, it.path);
+        lines.push(`• ${d?.name ?? it.path}`);
+      }
+    }
+    if (n > 10) lines.push(`… e mais ${n - 10}`);
+    const body = `${lines.join("\n")}\n\nEsta ação não pode ser desfeita.`;
+    return { title, body };
+  }, [explorerDeleteItems, treeChildren]);
 
   const goNavBack = useCallback(() => {
     if (histPast.length === 0) return;
@@ -632,15 +874,6 @@ export function VaultView() {
     (cmd: ExplorerCommand) => {
       if (treeRoot.type !== "dir") return;
 
-      const openIds = () => [...new Set([...openTabs, activeTabId].filter(Boolean))];
-
-      const migratePrefixes = (from: string, to: string) => {
-        if (from === to) return;
-        setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
-        const map = buildDocIdRemapFromPrefixes(from, to, openIds());
-        if (Object.keys(map).length > 0) dispatchUi({ type: "remapDocIds", map });
-      };
-
       switch (cmd.type) {
         case "new-note": {
           const r = addNoteToParent(treeRoot, cmd.parentTreePath);
@@ -658,11 +891,12 @@ export function VaultView() {
         }
         case "new-folder": {
           const r = addFolderToParent(treeRoot, cmd.parentTreePath);
-          if (!r.ok) window.alert(r.reason);
-          else {
-            setTreeRoot(r.root);
-            setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
           }
+          setTreeRoot(r.root);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
           break;
         }
         case "new-canvas": {
@@ -760,7 +994,7 @@ export function VaultView() {
             return;
           }
           setTreeRoot(r.root);
-          migratePrefixes(r.docPrefixFrom, r.docPrefixTo);
+          migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
           break;
         }
         case "search-in-folder": {
@@ -770,6 +1004,7 @@ export function VaultView() {
         }
         case "bookmark": {
           const t = cmd.target;
+          if (t.kind === "pane") return;
           if (t.kind === "file") {
             const b: VaultBookmark = { kind: "file", docId: t.docId, label: t.name };
             setBookmarks((prev) => {
@@ -787,6 +1022,7 @@ export function VaultView() {
         }
         case "show-in-folder": {
           const t = cmd.target;
+          if (t.kind === "pane") return;
           if (t.kind === "file") {
             setRevealTarget({ type: "file", docId: t.docId });
             const anc = findAncestorDirPathsForDoc(treeChildren, t.docId);
@@ -800,69 +1036,31 @@ export function VaultView() {
         }
         case "rename": {
           const t = cmd.target;
+          if (t.kind === "pane") return;
           if (t.kind === "file") {
-            const nextName = window.prompt("Novo nome do arquivo:", t.name);
-            if (nextName === null || !nextName.trim()) return;
-            const r = renameFile(treeRoot, t.docId, nextName.trim());
-            if (!r.ok) {
-              window.alert(r.reason);
-              return;
-            }
-            setTreeRoot(r.root);
-            if (r.newDocId && r.newDocId !== t.docId) {
-              setNoteContents((prev) => {
-                const next = { ...prev };
-                const v = next[t.docId];
-                if (v !== undefined) {
-                  delete next[t.docId];
-                  next[r.newDocId!] = v;
-                }
-                return next;
-              });
-              dispatchUi({ type: "replaceDoc", from: t.docId, to: r.newDocId });
-            }
+            setExplorerInlineRename({
+              kind: "file",
+              docId: t.docId,
+              draft: t.name,
+              initialName: t.name,
+            });
           } else {
-            const nextName = window.prompt("Novo nome da pasta:", t.name);
-            if (nextName === null || !nextName.trim()) return;
-            const r = renameDirectory(treeRoot, t.treePath, nextName.trim());
-            if (!r.ok) {
-              window.alert(r.reason);
-              return;
-            }
-            setTreeRoot(r.root);
-            migratePrefixes(r.docPrefixFrom, r.docPrefixTo);
+            setExplorerInlineRename({
+              kind: "folder",
+              treePath: t.treePath,
+              draft: t.name,
+              initialName: t.name,
+            });
           }
           break;
         }
         case "delete": {
           const t = cmd.target;
-          if (!window.confirm(`Apagar "${t.kind === "file" ? t.name : `${t.name}/`}"?`)) return;
+          if (t.kind === "pane") return;
           if (t.kind === "file") {
-            const r = deleteFile(treeRoot, t.docId);
-            if (!r.ok) window.alert(r.reason);
-            else {
-              setTreeRoot(r.root);
-              dispatchUi({ type: "closeMany", ids: [t.docId] });
-              setNoteContents((prev) => {
-                const next = { ...prev };
-                delete next[t.docId];
-                return next;
-              });
-            }
+            openExplorerDeleteDialog([{ kind: "file", docId: t.docId }]);
           } else {
-            const dir = findDir(treeRoot.children, t.treePath);
-            const ids = dir ? collectDocIdsUnderDir(dir) : [];
-            const r = deleteDirectory(treeRoot, t.treePath);
-            if (!r.ok) window.alert(r.reason);
-            else {
-              setTreeRoot(r.root);
-              dispatchUi({ type: "closeMany", ids });
-              setNoteContents((prev) => {
-                const next = { ...prev };
-                for (const id of ids) delete next[id];
-                return next;
-              });
-            }
+            openExplorerDeleteDialog([{ kind: "folder", path: t.treePath }]);
           }
           break;
         }
@@ -870,7 +1068,7 @@ export function VaultView() {
           break;
       }
     },
-    [treeRoot, noteContents, openTabs, activeTabId, treeChildren, browseSelectFile]
+    [treeRoot, noteContents, treeChildren, browseSelectFile, migrateDocPrefixes, openExplorerDeleteDialog]
   );
 
   const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
@@ -904,59 +1102,91 @@ export function VaultView() {
           </div>
         ) : (
           <FileTree
-          treeRootLabel={rootExplorerLabel}
-          treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
-          treeChildren={treeChildren}
-          selectedId={activeTabId || null}
-          onSelect={browseSelectFile}
-          expandedPaths={expandedPaths}
-          onToggleDir={(path) =>
-            setExpandedPaths((prev) => {
-              const next = new Set(prev);
-              if (next.has(path)) next.delete(path);
-              else next.add(path);
-              return next;
-            })
-          }
-          folderSearch={folderSearch}
-          onFolderSearchChange={setFolderSearch}
-          bookmarks={bookmarks}
-          onOpenBookmark={(b) => {
-            if (b.kind === "file") browseSelectFile(b.docId);
-            else {
-              setFolderSearch(null);
-              setRevealTarget({ type: "folder", path: b.path });
-              setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+            treeRootLabel={rootExplorerLabel}
+            treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
+            treeChildren={treeChildren}
+            selectedId={activeTabId || null}
+            onSelect={browseSelectFile}
+            expandedPaths={expandedPaths}
+            onToggleDir={(path) =>
+              setExpandedPaths((prev) => {
+                const next = new Set(prev);
+                if (next.has(path)) next.delete(path);
+                else next.add(path);
+                return next;
+              })
             }
-          }}
-          onRemoveBookmark={(b) => {
-            setBookmarks((prev) =>
-              prev.filter((x) =>
-                b.kind === "file"
-                  ? !(x.kind === "file" && x.docId === b.docId)
-                  : !(x.kind === "folder" && x.path === b.path)
-              )
-            );
-          }}
-          revealTarget={revealTarget}
-          onRevealHandled={clearRevealTarget}
-          onExplorerCommand={handleExplorerCommand}
-          vaultMetas={vaultMetas}
-          activeVaultId={activeVaultId}
-          activeVaultName={activeVaultMeta?.name ?? "cofre"}
-          vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
-          vaultStatsLine={vaultStatsLine}
-          onSelectVault={switchVault}
-          onOpenManageVaults={() => setManageVaultsOpen(true)}
-          sidebarMode={sidebarMode}
-          onSidebarModeChange={setSidebarMode}
-          treeSortOrder={treeSortOrder}
-          onCycleSort={cycleTreeSort}
-          onQuickNewNote={quickNewNoteFromToolbar}
-          onQuickNewFolder={quickNewFolderFromToolbar}
-          onCollapseAllFolders={collapseAllFolders}
-          onCollapseSidebar={() => setSidebarCollapsed(true)}
-        />
+            folderSearch={folderSearch}
+            onFolderSearchChange={setFolderSearch}
+            bookmarks={bookmarks}
+            onOpenBookmark={(b) => {
+              if (b.kind === "file") browseSelectFile(b.docId);
+              else {
+                setFolderSearch(null);
+                setRevealTarget({ type: "folder", path: b.path });
+                setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+              }
+            }}
+            onRemoveBookmark={(b) => {
+              setBookmarks((prev) =>
+                prev.filter((x) =>
+                  b.kind === "file"
+                    ? !(x.kind === "file" && x.docId === b.docId)
+                    : !(x.kind === "folder" && x.path === b.path)
+                )
+              );
+            }}
+            revealTarget={revealTarget}
+            onRevealHandled={clearRevealTarget}
+            onExplorerCommand={handleExplorerCommand}
+            vaultMetas={vaultMetas}
+            activeVaultId={activeVaultId}
+            activeVaultName={activeVaultMeta?.name ?? "cofre"}
+            vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
+            vaultStatsLine={vaultStatsLine}
+            onSelectVault={switchVault}
+            onOpenManageVaults={() => setManageVaultsOpen(true)}
+            sidebarMode={sidebarMode}
+            onSidebarModeChange={setSidebarMode}
+            treeSortOrder={treeSortOrder}
+            onCycleSort={cycleTreeSort}
+            onQuickNewNote={quickNewNoteFromToolbar}
+            onQuickNewFolder={quickNewFolderFromToolbar}
+            onCollapseAllFolders={collapseAllFolders}
+            onCollapseSidebar={() => setSidebarCollapsed(true)}
+            explorerInlineRename={explorerInlineRename}
+            onExplorerRenameDraftChange={setExplorerRenameDraft}
+            onExplorerRenameCommit={commitExplorerInlineRename}
+            onExplorerRenameCancel={cancelExplorerInlineRename}
+            skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
+            explorerTreeNonce={explorerTreeNonce}
+            vaultTreeRoot={treeRoot}
+            onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
+            onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
+            onExplorerNewNote={() =>
+              handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
+            }
+            onExplorerNewFolder={() =>
+              handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
+            }
+            onExplorerRenameRow={(row) => {
+              if (row.kind === "file") {
+                setExplorerInlineRename({
+                  kind: "file",
+                  docId: row.docId,
+                  draft: row.name,
+                  initialName: row.name,
+                });
+              } else {
+                setExplorerInlineRename({
+                  kind: "folder",
+                  treePath: row.path,
+                  draft: row.name,
+                  initialName: row.name,
+                });
+              }
+            }}
+          />
         )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1151,6 +1381,13 @@ export function VaultView() {
         activeId={activeVaultId}
         onSelectVault={(id) => switchVault(id)}
         onRemoveVault={removeVault}
+      />
+      <VaultExplorerDeleteConfirmDialog
+        open={explorerDeleteItems !== null}
+        title={explorerDeleteDialogCopy.title}
+        message={explorerDeleteDialogCopy.body}
+        onCancel={() => setExplorerDeleteItems(null)}
+        onConfirm={confirmExplorerDeleteFromDialog}
       />
     </>
   );
@@ -1584,6 +1821,18 @@ function FileTree({
   onQuickNewFolder,
   onCollapseAllFolders,
   onCollapseSidebar,
+  explorerInlineRename,
+  onExplorerRenameDraftChange,
+  onExplorerRenameCommit,
+  onExplorerRenameCancel,
+  skipExplorerRenameBlurCommitRef,
+  explorerTreeNonce,
+  vaultTreeRoot,
+  onOpenExplorerDeleteDialog,
+  onMoveExplorerItemsToFolder,
+  onExplorerNewNote,
+  onExplorerNewFolder,
+  onExplorerRenameRow,
 }: {
   treeRootLabel: string;
   /** Caminho da entrada raiz da árvore (`openclaw-root`, `vault-root`, …). */
@@ -1616,6 +1865,18 @@ function FileTree({
   onQuickNewFolder: () => void;
   onCollapseAllFolders: () => void;
   onCollapseSidebar: () => void;
+  explorerInlineRename: ExplorerInlineRenameState;
+  onExplorerRenameDraftChange: (draft: string) => void;
+  onExplorerRenameCommit: () => void;
+  onExplorerRenameCancel: () => void;
+  skipExplorerRenameBlurCommitRef: MutableRefObject<boolean>;
+  explorerTreeNonce: number;
+  vaultTreeRoot: TreeEntry;
+  onOpenExplorerDeleteDialog: (items: ExplorerItemRef[]) => void;
+  onMoveExplorerItemsToFolder: (targetParentPath: string, items: ExplorerItemRef[]) => void;
+  onExplorerNewNote: () => void;
+  onExplorerNewFolder: () => void;
+  onExplorerRenameRow: (row: ExplorerVisibleRow) => void;
 }) {
   const treeScrollRef = useRef<HTMLDivElement>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
@@ -1631,6 +1892,233 @@ function FileTree({
   const sortedEntries = useMemo(
     () => sortTreeEntries(displayEntries, treeSortOrder),
     [displayEntries, treeSortOrder]
+  );
+
+  const explorerFlatRows = useMemo(
+    () => flattenVisibleExplorerRows(sortedEntries, expandedPaths),
+    [sortedEntries, expandedPaths]
+  );
+
+  const explorerFlatIndexByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    explorerFlatRows.forEach((r, i) => m.set(explorerRowKey(r), i));
+    return m;
+  }, [explorerFlatRows]);
+
+  const [explorerSelKeys, setExplorerSelKeys] = useState(() => new Set<string>());
+  const [explorerAnchorIdx, setExplorerAnchorIdx] = useState<number | null>(null);
+  const [explorerFocusIdx, setExplorerFocusIdx] = useState<number | null>(null);
+  const [explorerDragOverPath, setExplorerDragOverPath] = useState<string | null>(null);
+  /** Alguns navegadores não listam MIME custom no `dragover`; o ref cobre o arrasto interno. */
+  const explorerInternalDragActiveRef = useRef(false);
+
+  useEffect(() => {
+    setExplorerSelKeys(new Set());
+    setExplorerAnchorIdx(null);
+    setExplorerFocusIdx(null);
+    setExplorerDragOverPath(null);
+  }, [explorerTreeNonce]);
+
+  useEffect(() => {
+    const onEnd = () => {
+      explorerInternalDragActiveRef.current = false;
+      setExplorerDragOverPath(null);
+    };
+    window.addEventListener("dragend", onEnd);
+    return () => window.removeEventListener("dragend", onEnd);
+  }, []);
+
+  const isVaultExplorerDragDataTransfer = useCallback((dt: DataTransfer) => {
+    if (explorerInternalDragActiveRef.current) return true;
+    return Array.from(dt.types).includes(VAULT_EXPLORER_DRAG_MIME);
+  }, []);
+
+  const handleExplorerRowPointerDown = useCallback(
+    (e: PointerEvent, row: ExplorerVisibleRow) => {
+      if (e.button !== 0) return;
+      const idx = explorerFlatIndexByKey.get(explorerRowKey(row));
+      if (idx === undefined) return;
+      const k = explorerRowKey(row);
+      if (e.shiftKey && explorerAnchorIdx !== null) {
+        const a = Math.min(explorerAnchorIdx, idx);
+        const b = Math.max(explorerAnchorIdx, idx);
+        const next = new Set<string>();
+        for (let i = a; i <= b; i++) next.add(explorerRowKey(explorerFlatRows[i]!));
+        setExplorerSelKeys(next);
+        setExplorerFocusIdx(idx);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        setExplorerSelKeys((prev) => {
+          const n = new Set(prev);
+          if (n.has(k)) n.delete(k);
+          else n.add(k);
+          return n;
+        });
+        setExplorerAnchorIdx(idx);
+        setExplorerFocusIdx(idx);
+        return;
+      }
+      setExplorerSelKeys(new Set([k]));
+      setExplorerAnchorIdx(idx);
+      setExplorerFocusIdx(idx);
+    },
+    [explorerAnchorIdx, explorerFlatIndexByKey, explorerFlatRows]
+  );
+
+  const handleExplorerDragStart = useCallback(
+    (e: DragEvent, row: ExplorerVisibleRow) => {
+      explorerInternalDragActiveRef.current = true;
+      const refs = explorerRefsForDragRow(row, explorerSelKeys, explorerFlatRows);
+      const payload = JSON.stringify(refs);
+      e.dataTransfer.setData(VAULT_EXPLORER_DRAG_MIME, payload);
+      // Alguns navegadores só liberam o drop se existir tipo “text/plain”.
+      e.dataTransfer.setData("text/plain", payload);
+      e.dataTransfer.effectAllowed = "move";
+    },
+    [explorerSelKeys, explorerFlatRows]
+  );
+
+  const handleFolderDragOver = useCallback(
+    (e: DragEvent, path: string) => {
+      if (!isVaultExplorerDragDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setExplorerDragOverPath(path);
+    },
+    [isVaultExplorerDragDataTransfer]
+  );
+
+  const handleFolderDrop = useCallback(
+    (e: DragEvent, path: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setExplorerDragOverPath(null);
+      const refs = parseExplorerDragPayload(e.dataTransfer);
+      if (!refs?.length) return;
+      onMoveExplorerItemsToFolder(path, refs);
+    },
+    [onMoveExplorerItemsToFolder]
+  );
+
+  const handleExplorerPaneDragOver = useCallback(
+    (e: DragEvent) => {
+      if (!isVaultExplorerDragDataTransfer(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setExplorerDragOverPath(listParentPath);
+    },
+    [listParentPath, isVaultExplorerDragDataTransfer]
+  );
+
+  const handleExplorerPaneDrop = useCallback(
+    (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setExplorerDragOverPath(null);
+      const refs = parseExplorerDragPayload(e.dataTransfer);
+      if (!refs?.length) return;
+      onMoveExplorerItemsToFolder(listParentPath, refs);
+    },
+    [listParentPath, onMoveExplorerItemsToFolder]
+  );
+
+  const handleExplorerTreeKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (vaultTreeRoot.type !== "dir") return;
+      const rows = explorerFlatRows;
+      if (rows.length === 0) return;
+
+      const renameEl = (e.target as HTMLElement).closest("[data-explorer-inline-rename]");
+      if (renameEl) return;
+
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key;
+
+      if (mod && key.toLowerCase() === "n") {
+        e.preventDefault();
+        if (e.shiftKey) onExplorerNewFolder();
+        else onExplorerNewNote();
+        return;
+      }
+
+      if (key === "F2") {
+        e.preventDefault();
+        let row: ExplorerVisibleRow | undefined;
+        if (explorerFocusIdx !== null) row = rows[explorerFocusIdx];
+        else if (selectedId) row = rows.find((r) => r.kind === "file" && r.docId === selectedId);
+        if (row) onExplorerRenameRow(row);
+        return;
+      }
+
+      if (key === "Delete" || key === "Backspace") {
+        e.preventDefault();
+        let refs: ExplorerItemRef[];
+        if (explorerSelKeys.size > 0) {
+          refs = rows.filter((r) => explorerSelKeys.has(explorerRowKey(r))).map(rowToItemRef);
+        } else if (explorerFocusIdx !== null) {
+          const r = rows[explorerFocusIdx];
+          refs = r ? [rowToItemRef(r)] : [];
+        } else if (selectedId) {
+          refs = [{ kind: "file", docId: selectedId }];
+        } else {
+          return;
+        }
+        const filtered = filterTopLevelExplorerRefs(vaultTreeRoot, refs);
+        if (filtered.length) onOpenExplorerDeleteDialog(filtered);
+        return;
+      }
+
+      if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+        e.preventDefault();
+        let next: number;
+        if (key === "Home") next = 0;
+        else if (key === "End") next = rows.length - 1;
+        else if (key === "ArrowDown") {
+          const cur = explorerFocusIdx ?? -1;
+          next = Math.min(cur + 1, rows.length - 1);
+        } else {
+          const cur = explorerFocusIdx ?? rows.length;
+          next = Math.max(cur - 1, 0);
+        }
+        if (next < 0 || next >= rows.length) return;
+
+        setExplorerFocusIdx(next);
+        if (e.shiftKey && explorerAnchorIdx !== null) {
+          const a = Math.min(explorerAnchorIdx, next);
+          const b = Math.max(explorerAnchorIdx, next);
+          const ns = new Set<string>();
+          for (let i = a; i <= b; i++) ns.add(explorerRowKey(rows[i]!));
+          setExplorerSelKeys(ns);
+        } else {
+          setExplorerAnchorIdx(next);
+          setExplorerSelKeys(new Set([explorerRowKey(rows[next]!)]));
+        }
+        return;
+      }
+
+      if (key === "Enter") {
+        const row = explorerFocusIdx !== null ? rows[explorerFocusIdx] : undefined;
+        if (!row) return;
+        e.preventDefault();
+        if (row.kind === "file") onSelect(row.docId);
+        else onToggleDir(row.path);
+      }
+    },
+    [
+      vaultTreeRoot,
+      explorerFlatRows,
+      explorerFocusIdx,
+      explorerAnchorIdx,
+      explorerSelKeys,
+      selectedId,
+      onExplorerNewNote,
+      onExplorerNewFolder,
+      onExplorerRenameRow,
+      onOpenExplorerDeleteDialog,
+      onSelect,
+      onToggleDir,
+    ]
   );
 
   const searchHits = useMemo(() => {
@@ -1790,26 +2278,60 @@ function FileTree({
 
       <div ref={treeScrollRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {sidebarMode === "files" && (
-          <>
-            <p
-              className="mb-1 truncate px-1 font-mono text-[10px] text-muted-foreground/60"
-              title={treeRootLabel}
-            >
-              {treeRootLabel}
-            </p>
-            <nav aria-label="workspace tree">
-              <VaultTreeView
-                entries={sortedEntries}
-                parentDirPath={listParentPath}
-                depth={0}
-                expandedPaths={expandedPaths}
-                onToggleDir={onToggleDir}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                onExplorerCommand={onExplorerCommand}
-              />
-            </nav>
-          </>
+          <VaultExplorerContextMenu
+            target={{ kind: "pane", parentTreePath: listParentPath, label: treeRootLabel }}
+            onCommand={onExplorerCommand}
+          >
+            <div className="flex min-h-[min(40vh,14rem)] flex-col">
+              <p
+                className="mb-1 truncate px-1 font-mono text-[10px] text-muted-foreground/60"
+                title={treeRootLabel}
+              >
+                {treeRootLabel}
+              </p>
+              <div
+                role="tree"
+                tabIndex={0}
+                aria-label="Árvore do cofre"
+                onKeyDown={handleExplorerTreeKeyDown}
+                onDragOver={handleExplorerPaneDragOver}
+                onDrop={handleExplorerPaneDrop}
+                className={cn(
+                  "min-h-0 flex-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                  explorerDragOverPath === listParentPath &&
+                    "bg-primary/10 ring-2 ring-primary/50 ring-offset-2 ring-offset-sidebar"
+                )}
+              >
+                <nav className="min-h-0" aria-label="workspace tree">
+                  <VaultExplorerTreeView
+                    entries={sortedEntries}
+                    parentDirPath={listParentPath}
+                    depth={0}
+                    expandedPaths={expandedPaths}
+                    onToggleDir={onToggleDir}
+                    selectedId={selectedId}
+                    onSelect={onSelect}
+                    onExplorerCommand={onExplorerCommand}
+                    inlineRename={explorerInlineRename}
+                    onRenameDraftChange={onExplorerRenameDraftChange}
+                    onRenameCommit={onExplorerRenameCommit}
+                    onRenameCancel={onExplorerRenameCancel}
+                    skipRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
+                    explorerSelKeys={explorerSelKeys}
+                    explorerFocusIdx={explorerFocusIdx}
+                    flatIndexByKey={explorerFlatIndexByKey}
+                    explorerDragOverPath={explorerDragOverPath}
+                    onExplorerRowPointerDown={handleExplorerRowPointerDown}
+                    onExplorerDragStart={handleExplorerDragStart}
+                    onFolderDragOver={handleFolderDragOver}
+                    onFolderDrop={handleFolderDrop}
+                    renameRowClass={EXPLORER_INLINE_RENAME_ROW_CLASS}
+                    renameInputClass={EXPLORER_INLINE_RENAME_INPUT_CLASS}
+                  />
+                </nav>
+              </div>
+            </div>
+          </VaultExplorerContextMenu>
         )}
 
         {sidebarMode === "search" && (
@@ -1893,122 +2415,3 @@ function FileTree({
   );
 }
 
-function VaultTreeView({
-  entries,
-  parentDirPath,
-  depth,
-  expandedPaths,
-  onToggleDir,
-  selectedId,
-  onSelect,
-  onExplorerCommand,
-}: {
-  entries: TreeEntry[];
-  parentDirPath: string;
-  depth: number;
-  expandedPaths: Set<string>;
-  onToggleDir: (path: string) => void;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onExplorerCommand: (cmd: ExplorerCommand) => void;
-}) {
-  return (
-    <ul className={cn("space-y-0.5", depth > 0 && "ml-2 border-l border-border/50 pl-2")}>
-      {entries.map((entry) => {
-        if (entry.type === "dir") {
-          const isOpen = expandedPaths.has(entry.path);
-          return (
-            <li key={entry.path}>
-              <VaultExplorerContextMenu
-                target={{ kind: "folder", treePath: entry.path, name: entry.name }}
-                onCommand={onExplorerCommand}
-              >
-                <button
-                  type="button"
-                  data-tree-dir={entry.path}
-                  onClick={() => onToggleDir(entry.path)}
-                  className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                >
-                  {isOpen ? (
-                    <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 opacity-60" />
-                  )}
-                  <span className="min-w-0 truncate">{entry.name}/</span>
-                </button>
-              </VaultExplorerContextMenu>
-              {isOpen && entry.children.length > 0 && (
-                <VaultTreeView
-                  entries={entry.children}
-                  parentDirPath={entry.path}
-                  depth={depth + 1}
-                  expandedPaths={expandedPaths}
-                  onToggleDir={onToggleDir}
-                  selectedId={selectedId}
-                  onSelect={onSelect}
-                  onExplorerCommand={onExplorerCommand}
-                />
-              )}
-              {isOpen && entry.children.length === 0 && (
-                <p className="px-5 py-1 font-mono text-[10px] italic text-muted-foreground/40">
-                  (vazio)
-                </p>
-              )}
-            </li>
-          );
-        }
-
-        if (entry.type === "file" && "disabled" in entry && entry.disabled) {
-          return (
-            <li key={`${entry.name}-disabled`}>
-              <span className="flex items-center gap-2 rounded px-2 py-1 font-mono text-[11px] text-muted-foreground/30">
-                <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/20" />
-                {entry.name}
-              </span>
-            </li>
-          );
-        }
-
-        if (entry.type === "file" && "docId" in entry) {
-          const active = selectedId !== null && entry.docId === selectedId;
-          return (
-            <li key={entry.docId}>
-              <VaultExplorerContextMenu
-                target={{
-                  kind: "file",
-                  docId: entry.docId,
-                  name: entry.name,
-                  parentTreePath: parentDirPath,
-                }}
-                onCommand={onExplorerCommand}
-              >
-                <button
-                  type="button"
-                  data-tree-doc={entry.docId}
-                  onClick={() => onSelect(entry.docId)}
-                  aria-current={active ? "true" : undefined}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                    active
-                      ? "bg-primary/12 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "size-1.5 shrink-0 rounded-full",
-                      active ? "bg-primary" : "bg-muted-foreground/35"
-                    )}
-                  />
-                  <span className="min-w-0 truncate">{entry.name}</span>
-                </button>
-              </VaultExplorerContextMenu>
-            </li>
-          );
-        }
-
-        return null;
-      })}
-    </ul>
-  );
-}

@@ -11,7 +11,7 @@ import {
   Settings,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { VaultMeta } from "@/components/app/vault-persistence";
 import { cn } from "@/lib/utils";
@@ -114,6 +114,67 @@ type VaultManageDialogProps = {
   onRemoveVault: (id: string) => void;
 };
 
+function VaultRemoveConfirmDialog({
+  open,
+  vaultName,
+  pathLabel,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  vaultName: string;
+  pathLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[330] flex items-center justify-center bg-black/50 p-4" role="presentation">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default"
+        aria-label="Fechar"
+        onClick={onCancel}
+      />
+      <div
+        className="relative w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-xl"
+        role="alertdialog"
+        aria-labelledby="vault-remove-confirm-title"
+        aria-describedby="vault-remove-confirm-desc"
+      >
+        <h2 id="vault-remove-confirm-title" className="text-base font-semibold text-foreground">
+          Deletar o cofre &quot;{vaultName}&quot;?
+        </h2>
+        <p id="vault-remove-confirm-desc" className="mt-2 text-sm text-muted-foreground">
+          O histórico e os dados locais deste cofre neste navegador serão apagados. Isto não apaga o
+          repositório remoto, apenas remove a referência e o cache local.
+        </p>
+        {pathLabel ? (
+          <p className="mt-2 truncate rounded-md border border-border/60 bg-muted/40 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+            {pathLabel}
+          </p>
+        ) : null}
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="rounded-md px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={onCancel}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+            onClick={onConfirm}
+          >
+            Deletar vault
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function VaultManageDialog({
   open,
   onClose,
@@ -122,6 +183,12 @@ export function VaultManageDialog({
   onSelectVault,
   onRemoveVault,
 }: VaultManageDialogProps) {
+  const [removeConfirmVault, setRemoveConfirmVault] = useState<VaultMeta | null>(null);
+
+  useEffect(() => {
+    if (!open) setRemoveConfirmVault(null);
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -142,8 +209,8 @@ export function VaultManageDialog({
             Gerenciar cofres
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Adicione um cofre novo ou remova da lista. Ao remover, os dados locais deste navegador
-            desse cofre serão apagados.
+            Adicione um cofre novo ou exclua um cofre da lista. Ao excluir, os dados locais deste
+            navegador desse cofre serão apagados.
           </p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2 [scrollbar-width:thin]">
@@ -173,7 +240,7 @@ export function VaultManageDialog({
               <VaultRowRemoveMenu
                 vaultName={v.name}
                 canRemove={vaults.length > 1 && v.deletable !== false}
-                onRemove={() => onRemoveVault(v.id)}
+                onRequestRemove={() => setRemoveConfirmVault(v)}
               />
             </li>
           ))}
@@ -196,6 +263,17 @@ export function VaultManageDialog({
           </button>
         </div>
       </div>
+
+      <VaultRemoveConfirmDialog
+        open={removeConfirmVault !== null}
+        vaultName={removeConfirmVault?.name ?? ""}
+        pathLabel={removeConfirmVault?.pathLabel ?? ""}
+        onCancel={() => setRemoveConfirmVault(null)}
+        onConfirm={() => {
+          if (removeConfirmVault) onRemoveVault(removeConfirmVault.id);
+          setRemoveConfirmVault(null);
+        }}
+      />
     </div>
   );
 }
@@ -203,26 +281,19 @@ export function VaultManageDialog({
 function VaultRowRemoveMenu({
   vaultName,
   canRemove,
-  onRemove,
+  onRequestRemove,
 }: {
   vaultName: string;
   canRemove: boolean;
-  onRemove: () => void;
+  onRequestRemove: () => void;
 }) {
-  const tryRemove = useCallback(() => {
+  const onRemoveClick = useCallback(() => {
     if (!canRemove) {
       window.alert("É preciso manter pelo menos um cofre na lista.");
       return;
     }
-    if (
-      !window.confirm(
-        `Remover "${vaultName}" da lista?\n\nO histórico deste cofre neste navegador será apagado.`
-      )
-    ) {
-      return;
-    }
-    onRemove();
-  }, [canRemove, vaultName, onRemove]);
+    onRequestRemove();
+  }, [canRemove, onRequestRemove]);
 
   return (
     <Menu.Root>
@@ -246,9 +317,9 @@ function VaultRowRemoveMenu({
                 "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
               )}
               disabled={!canRemove}
-              onClick={tryRemove}
+              onClick={onRemoveClick}
             >
-              Remover da lista…
+              Deletar vault
             </Menu.Item>
           </Menu.Popup>
         </Menu.Positioner>

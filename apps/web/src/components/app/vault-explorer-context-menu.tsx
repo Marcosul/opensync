@@ -22,7 +22,9 @@ import { cn } from "@/lib/utils";
 
 export type ExplorerContextTarget =
   | { kind: "folder"; treePath: string; name: string }
-  | { kind: "file"; docId: string; name: string; parentTreePath: string };
+  | { kind: "file"; docId: string; name: string; parentTreePath: string }
+  /** Área vazia do explorador: mesmas ações de criação/busca da pasta listada. */
+  | { kind: "pane"; parentTreePath: string; label: string };
 
 export type ExplorerCommand =
   | { type: "new-note"; parentTreePath: string }
@@ -88,6 +90,7 @@ async function copyText(text: string): Promise<void> {
 
 function parentForNewItem(target: ExplorerContextTarget): string {
   if (target.kind === "folder") return target.treePath;
+  if (target.kind === "pane") return target.parentTreePath;
   return target.parentTreePath;
 }
 
@@ -100,17 +103,24 @@ export function VaultExplorerContextMenu({
   children: ReactNode;
   onCommand: (cmd: ExplorerCommand) => void;
 }) {
-  const fullPath =
-    target.kind === "folder"
-      ? vaultFsPathForDir(target.treePath)
-      : vaultFsPathForDoc(target.docId);
-  const fileName = target.kind === "file" ? target.name : `${target.name}/`;
+  const isPane = target.kind === "pane";
   const isFolder = target.kind === "folder";
+  const isFile = target.kind === "file";
+
+  const fullPath =
+    target.kind === "file"
+      ? vaultFsPathForDoc(target.docId)
+      : vaultFsPathForDir(isPane ? target.parentTreePath : target.treePath);
+  const fileName =
+    target.kind === "file" ? target.name : isPane ? target.label : `${target.name}/`;
   const parentPath = parentForNewItem(target);
 
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger className="w-full outline-none [&:focus-visible]:ring-2 [&:focus-visible]:ring-primary/40">
+      <ContextMenu.Trigger
+        className={cn("outline-none [&:focus-visible]:ring-2 [&:focus-visible]:ring-primary/40", isPane && "h-full min-h-0 w-full")}
+        onContextMenu={isPane ? undefined : (e) => e.stopPropagation()}
+      >
         {children}
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
@@ -133,7 +143,7 @@ export function VaultExplorerContextMenu({
             <ContextMenu.Item
               className={itemClass}
               onClick={() => onCommand({ type: "new-folder", parentTreePath: parentPath })}
-              disabled={!isFolder}
+              disabled={isFile}
             >
               <MenuIcon>
                 <FolderPlus className="size-3.5 stroke-[1.5]" />
@@ -166,7 +176,7 @@ export function VaultExplorerContextMenu({
               onClick={() =>
                 target.kind === "file" ? onCommand({ type: "duplicate", docId: target.docId }) : undefined
               }
-              disabled={isFolder}
+              disabled={!isFile}
             >
               <MenuIcon>
                 <Copy className="size-3.5 stroke-[1.5]" />
@@ -175,11 +185,12 @@ export function VaultExplorerContextMenu({
             </ContextMenu.Item>
             <ContextMenu.Item
               className={itemClass}
-              onClick={() =>
-                isFolder
-                  ? onCommand({ type: "move-folder", treePath: target.treePath })
-                  : onCommand({ type: "move-file", docId: target.docId })
-              }
+              disabled={isPane}
+              onClick={() => {
+                if (isPane) return;
+                if (isFolder) onCommand({ type: "move-folder", treePath: target.treePath });
+                else onCommand({ type: "move-file", docId: target.docId });
+              }}
             >
               <MenuIcon>
                 <FolderInput className="size-3.5 stroke-[1.5]" />
@@ -198,9 +209,15 @@ export function VaultExplorerContextMenu({
               <MenuIcon>
                 <FolderSearch className="size-3.5 stroke-[1.5]" />
               </MenuIcon>
-              {isFolder ? "Pesquisa na pasta" : "Buscar no arquivo"}
+              {isFolder || isPane ? "Pesquisa na pasta" : "Buscar no arquivo"}
             </ContextMenu.Item>
-            <ContextMenu.Item className={itemClass} onClick={() => onCommand({ type: "bookmark", target })}>
+            <ContextMenu.Item
+              className={itemClass}
+              disabled={isPane}
+              onClick={() => {
+                if (!isPane) onCommand({ type: "bookmark", target });
+              }}
+            >
               <MenuIcon>
                 <Bookmark className="size-3.5 stroke-[1.5]" />
               </MenuIcon>
@@ -231,7 +248,7 @@ export function VaultExplorerContextMenu({
                       Caminho completo
                     </ContextMenu.Item>
                     <ContextMenu.Item className={itemClass} onClick={() => copyText(fileName)}>
-                      {isFolder ? "Nome da pasta" : "Nome do arquivo"}
+                      {isFile ? "Nome do arquivo" : "Nome da pasta"}
                     </ContextMenu.Item>
                   </ContextMenu.Popup>
                 </ContextMenu.Positioner>
@@ -240,7 +257,13 @@ export function VaultExplorerContextMenu({
 
             <ContextMenu.Separator className="my-1 h-px bg-border" />
 
-            <ContextMenu.Item className={itemClass} onClick={() => onCommand({ type: "show-in-folder", target })}>
+            <ContextMenu.Item
+              className={itemClass}
+              disabled={isPane}
+              onClick={() => {
+                if (!isPane) onCommand({ type: "show-in-folder", target });
+              }}
+            >
               <MenuIcon>
                 <ExternalLink className="size-3.5 stroke-[1.5]" />
               </MenuIcon>
@@ -249,7 +272,13 @@ export function VaultExplorerContextMenu({
 
             <ContextMenu.Separator className="my-1 h-px bg-border" />
 
-            <ContextMenu.Item className={itemClass} onClick={() => onCommand({ type: "rename", target })}>
+            <ContextMenu.Item
+              className={itemClass}
+              disabled={isPane}
+              onClick={() => {
+                if (!isPane) onCommand({ type: "rename", target });
+              }}
+            >
               <MenuIcon>
                 <Pencil className="size-3.5 stroke-[1.5]" />
               </MenuIcon>
@@ -257,7 +286,10 @@ export function VaultExplorerContextMenu({
             </ContextMenu.Item>
             <ContextMenu.Item
               className={destructiveItemClass}
-              onClick={() => onCommand({ type: "delete", target })}
+              disabled={isPane}
+              onClick={() => {
+                if (!isPane) onCommand({ type: "delete", target });
+              }}
             >
               <MenuIcon destructive>
                 <Trash2 className="size-3.5 stroke-[1.5]" />

@@ -70,7 +70,7 @@ function sanitizeFileName(raw: string): string | null {
 /** Nome base padrão para novas notas, alinhado ao Obsidian (`Untitled.md`, `Untitled 2.md`, …). */
 const DEFAULT_MARKDOWN_NOTE_BASENAME = "Untitled";
 
-function findFileNameForDocId(entries: TreeEntry[], docId: string): string | null {
+export function findFileNameForDocId(entries: TreeEntry[], docId: string): string | null {
   for (const e of entries) {
     if (e.type === "file" && "docId" in e && e.docId === docId) return e.name;
     if (e.type === "dir") {
@@ -528,7 +528,7 @@ export function renameDirectory(root: TreeEntry, dirPath: string, newNameRaw: st
 }
 
 export type MoveDirectoryResult =
-  | { ok: true; root: TreeEntry; docPrefixFrom: string; docPrefixTo: string }
+  | { ok: true; root: TreeEntry; docPrefixFrom: string; docPrefixTo: string; newPath: string }
   | { ok: false; reason: string };
 
 function isUnderPath(candidate: string, ancestor: string): boolean {
@@ -625,7 +625,155 @@ export function moveDirectory(root: TreeEntry, dirPath: string, targetParentPath
     root: { ...root, children: placed },
     docPrefixFrom: oldDocP,
     docPrefixTo: newDocP,
+    newPath,
   };
+}
+
+/** Referência a arquivo ou pasta no explorador (arrastar, apagar em lote). */
+export type ExplorerItemRef =
+  | { kind: "file"; docId: string }
+  | { kind: "folder"; path: string };
+
+export const VAULT_EXPLORER_DRAG_MIME = "application/x-opensync-explorer";
+
+function fileParentIsUnderFolder(root: TreeEntry, docId: string, folderPath: string): boolean {
+  const p = getParentTreePathForDoc(root, docId);
+  return p !== null && isUnderPath(p, folderPath);
+}
+
+/** Remove itens redundantes (ex.: arquivo dentro de pasta já selecionada). */
+export function filterTopLevelExplorerRefs(root: TreeEntry, items: ExplorerItemRef[]): ExplorerItemRef[] {
+  const folders = items.filter((i): i is { kind: "folder"; path: string } => i.kind === "folder");
+  const files = items.filter((i): i is { kind: "file"; docId: string } => i.kind === "file");
+
+  const folderPaths = [...new Set(folders.map((f) => f.path))].sort((a, b) => b.length - a.length);
+  const keptFolderPaths: string[] = [];
+  for (const p of folderPaths) {
+    if (keptFolderPaths.some((k) => isUnderPath(p, k))) continue;
+    keptFolderPaths.push(p);
+  }
+
+  const filteredFiles = files.filter(
+    (f) => !keptFolderPaths.some((fp) => fileParentIsUnderFolder(root, f.docId, fp))
+  );
+
+  const folderRefs: ExplorerItemRef[] = keptFolderPaths.map((path) => ({ kind: "folder", path }));
+  return [...filteredFiles, ...folderRefs];
+}
+
+function applyExplorerPathRemaps(path: string, remaps: { from: string; to: string }[]): string {
+  let out = path;
+  for (const { from, to } of remaps) {
+    if (out === from || out.startsWith(`${from}/`)) {
+      out = to + out.slice(from.length);
+    }
+  }
+  return out;
+}
+
+export type MoveExplorerBatchResult =
+  | {
+      ok: true;
+      root: TreeEntry;
+      docIdReplacements: { from: string; to: string }[];
+      prefixMigrations: { from: string; to: string }[];
+    }
+  | { ok: false; reason: string };
+
+/** Move vários arquivos/pastas para a mesma pasta pai (estilo VS Code). */
+export function moveExplorerItemsToParent(
+  root: TreeEntry,
+  items: ExplorerItemRef[],
+  targetParentPath: string
+): MoveExplorerBatchResult {
+  if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
+
+  const top = filterTopLevelExplorerRefs(root, items);
+  if (top.length === 0) return { ok: false, reason: "Nada para mover" };
+
+  const targetDir =
+    targetParentPath === root.path ? root : findDir(root.children, targetParentPath);
+  if (!targetDir || targetDir.type !== "dir") return { ok: false, reason: "Pasta de destino não encontrada" };
+
+  for (const it of top) {
+    if (it.kind === "folder") {
+      if (it.path === targetParentPath || isUnderPath(targetParentPath, it.path)) {
+        return { ok: false, reason: "Não é possível mover para este destino." };
+      }
+    }
+  }
+
+  const files = top.filter((i): i is { kind: "file"; docId: string } => i.kind === "file");
+  const folderItems = top.filter((i): i is { kind: "folder"; path: string } => i.kind === "folder");
+  const foldersSorted = [...folderItems].sort((a, b) => b.path.length - a.path.length);
+
+  let currentRoot = root;
+  const docIdReplacements: { from: string; to: string }[] = [];
+  const prefixMigrations: { from: string; to: string }[] = [];
+  const pathRemaps: { from: string; to: string }[] = [];
+
+  for (const f of files) {
+    const parent = getParentTreePathForDoc(currentRoot, f.docId);
+    if (parent === null) return { ok: false, reason: "Arquivo não encontrado" };
+    if (parent === targetParentPath) continue;
+    const r = moveFile(currentRoot, f.docId, targetParentPath);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    currentRoot = r.root;
+    if (r.newDocId && r.newDocId !== f.docId) {
+      docIdReplacements.push({ from: f.docId, to: r.newDocId });
+    }
+  }
+
+  for (const fo of foldersSorted) {
+    const currentPath = applyExplorerPathRemaps(fo.path, pathRemaps);
+    const parentOfFolder = currentPath.slice(0, Math.max(0, currentPath.lastIndexOf("/")));
+    if (parentOfFolder === targetParentPath) continue;
+
+    if (!findDir(currentRoot.children, currentPath)) {
+      continue;
+    }
+
+    const r = moveDirectory(currentRoot, currentPath, targetParentPath);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    currentRoot = r.root;
+    prefixMigrations.push({ from: r.docPrefixFrom, to: r.docPrefixTo });
+    pathRemaps.push({ from: currentPath, to: r.newPath });
+  }
+
+  return { ok: true, root: currentRoot, docIdReplacements, prefixMigrations };
+}
+
+export type DeleteExplorerBatchResult =
+  | { ok: true; root: TreeEntry; closedDocIds: string[] }
+  | { ok: false; reason: string };
+
+export function deleteExplorerItems(root: TreeEntry, items: ExplorerItemRef[]): DeleteExplorerBatchResult {
+  const top = filterTopLevelExplorerRefs(root, items);
+  let currentRoot = root;
+  const closedDocIds: string[] = [];
+
+  const files = top.filter((i): i is { kind: "file"; docId: string } => i.kind === "file");
+  const folders = top.filter((i): i is { kind: "folder"; path: string } => i.kind === "folder");
+  const foldersSorted = [...folders].sort((a, b) => b.path.length - a.path.length);
+
+  for (const f of files) {
+    const r = deleteFile(currentRoot, f.docId);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    currentRoot = r.root;
+    closedDocIds.push(f.docId);
+  }
+
+  for (const fo of foldersSorted) {
+    const dir = findDir(currentRoot.children, fo.path);
+    if (!dir) continue;
+    const ids = collectDocIdsUnderDir(dir);
+    const r = deleteDirectory(currentRoot, fo.path);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    currentRoot = r.root;
+    closedDocIds.push(...ids);
+  }
+
+  return { ok: true, root: currentRoot, closedDocIds };
 }
 
 export function duplicateFile(root: TreeEntry, docId: string): TreeOpResult & { newDocId?: string } {
