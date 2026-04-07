@@ -1,0 +1,14 @@
+# Gitea for opensync vault Git storage (VISION.md).
+# Data: ./gitea-data → repos under gitea-data/git/repositories/
+services:
+  gitea:
+    image: gitea/gitea:1.22.6
+    container_name: opensync-gitea
+    restart: unless-stopped
+    env_file:
+      - ./gitea.env
+    volumes:
+      - ./gitea-data:/data
+    ports:
+      - "3000:3000"
+      - "2222:22"

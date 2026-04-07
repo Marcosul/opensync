@@ -168,11 +168,11 @@ export function mockDocToMarkdown(doc: MockDoc): string {
 }
 
 /** Caminho tipo breadcrumb no explorer (ex.: `workspace`, `USER.md`). */
-export function findDocBreadcrumb(docId: string): string[] {
+export function findDocBreadcrumbFromEntries(entries: TreeEntry[], docId: string): string[] {
   const segments: string[] = [];
 
-  function walk(entries: TreeEntry[], ancestors: string[]): boolean {
-    for (const entry of entries) {
+  function walk(tree: TreeEntry[], ancestors: string[]): boolean {
+    for (const entry of tree) {
       if (entry.type === "dir") {
         if (walk(entry.children, [...ancestors, entry.name])) return true;
       } else if (entry.type === "file" && "docId" in entry && entry.docId === docId) {
@@ -183,9 +183,13 @@ export function findDocBreadcrumb(docId: string): string[] {
     return false;
   }
 
+  if (walk(entries, [])) return segments;
+  return [docId];
+}
+
+/** Caminho tipo breadcrumb no explorer (ex.: `workspace`, `USER.md`). */
+export function findDocBreadcrumb(docId: string): string[] {
   const root = OPENCLAW_TREE_ROOT;
-  if (root.type === "dir" && walk(root.children, [])) {
-    return segments;
-  }
+  if (root.type === "dir") return findDocBreadcrumbFromEntries(root.children, docId);
   return [docId];
 }

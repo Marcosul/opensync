@@ -292,47 +292,49 @@ function HeadingMirrorTextarea({
   const rows = Math.min(24, Math.max(1, value.split("\n").length));
 
   return (
-    <div
-      className={cn(
-        "m-0 grid w-full [grid-template-columns:minmax(0,1fr)]",
-        "[&>*]:col-start-1 [&>*]:row-start-1"
-      )}
-    >
+    <div className="flex min-w-0 gap-1">
+      <div className="pointer-events-none flex shrink-0 flex-col pt-1.5" aria-hidden>
+        <ChevronDown
+          className="size-4 text-muted-foreground/45"
+          strokeWidth={2}
+          aria-hidden
+        />
+      </div>
       <div
-        className={cn("pointer-events-none min-w-0 whitespace-pre-wrap p-0", typo)}
-        aria-hidden
+        className={cn(
+          "m-0 min-w-0 flex-1 grid [grid-template-columns:minmax(0,1fr)]",
+          "[&>*]:col-start-1 [&>*]:row-start-1",
+        )}
       >
-        <span className="inline-flex flex-wrap items-baseline gap-1">
-          <ChevronDown
-            className="relative top-px size-4 shrink-0 text-muted-foreground/45"
-            strokeWidth={2}
-            aria-hidden
-          />
+        <div
+          className={cn("pointer-events-none min-w-0 whitespace-pre-wrap p-0", typo)}
+          aria-hidden
+        >
           {marker ? (
-            <>
-              <span className="font-mono font-normal text-muted-foreground/65">{marker}</span>
+            <span className="inline-block whitespace-pre-wrap">
+              <span className="font-normal text-muted-foreground/65">{marker}</span>
               <span className="text-foreground">{bodyOnFirst}</span>
-            </>
+            </span>
           ) : (
             <span className="text-foreground/90">{firstLine}</span>
           )}
-        </span>
-        {tail ? <span className="block text-foreground/85">{tail}</span> : null}
+          {tail ? <span className="block text-foreground/85">{tail}</span> : null}
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={value}
+          rows={rows}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
+          spellCheck
+          className={cn(
+            "m-0 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 text-transparent caret-foreground outline-none selection:bg-primary/25 focus-visible:ring-0",
+            typo,
+          )}
+          aria-label="Editar título"
+        />
       </div>
-      <textarea
-        ref={textareaRef}
-        value={value}
-        rows={rows}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-        spellCheck
-        className={cn(
-          "m-0 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 text-transparent caret-foreground outline-none selection:bg-primary/25 focus-visible:ring-0",
-          typo
-        )}
-        aria-label="Editar título"
-      />
     </div>
   );
 }
@@ -343,6 +345,11 @@ export type VaultNoteEditorProps = {
   onChange: (next: string) => void;
   breadcrumb: string[];
   onSelectFile: (id: string) => void;
+  /** Esconde a faixa superior (breadcrumb + alternância de modo); use a barra externa no layout Obsidian. */
+  hideTopChrome?: boolean;
+  /** Modo fonte controlado pelo pai (com `onSourceModeChange`). */
+  sourceMode?: boolean;
+  onSourceModeChange?: (next: boolean) => void;
 };
 
 const markdownComponents = (
@@ -412,8 +419,13 @@ export function VaultNoteEditor({
   onChange,
   breadcrumb,
   onSelectFile,
+  hideTopChrome = false,
+  sourceMode: sourceModeProp,
+  onSourceModeChange,
 }: VaultNoteEditorProps) {
-  const [sourceMode, setSourceMode] = useState(false);
+  const [internalSourceMode, setInternalSourceMode] = useState(false);
+  const sourceMode = sourceModeProp ?? internalSourceMode;
+  const setSourceMode = onSourceModeChange ?? setInternalSourceMode;
   const [editingBlock, setEditingBlock] = useState<{ start: number; end: number } | null>(null);
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -559,30 +571,32 @@ export function VaultNoteEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-6">
-        <p
-          className="min-w-0 flex-1 truncate text-center font-mono text-[11px] text-muted-foreground sm:text-xs"
-          title={breadcrumbLabel}
-        >
-          {breadcrumbLabel}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            setSourceMode((v) => !v);
-            setHeadingEditSession(false);
-            setEditingBlock(null);
-          }}
-          className={cn(
-            "rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-            sourceMode && "bg-muted text-foreground"
-          )}
-          title={sourceMode ? "Modo blocos (clique para editar)" : "Modo fonte (Markdown completo)"}
-          aria-pressed={sourceMode}
-        >
-          <FileCode2 className="size-4" />
-        </button>
-      </div>
+      {!hideTopChrome && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-6">
+          <p
+            className="min-w-0 flex-1 truncate text-center font-mono text-[11px] text-muted-foreground sm:text-xs"
+            title={breadcrumbLabel}
+          >
+            {breadcrumbLabel}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setSourceMode(!sourceMode);
+              setHeadingEditSession(false);
+              setEditingBlock(null);
+            }}
+            className={cn(
+              "rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              sourceMode && "bg-muted text-foreground"
+            )}
+            title={sourceMode ? "Modo blocos (clique para editar)" : "Modo fonte (Markdown completo)"}
+            aria-pressed={sourceMode}
+          >
+            <FileCode2 className="size-4" />
+          </button>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {sourceMode ? (

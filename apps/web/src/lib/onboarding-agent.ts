@@ -21,6 +21,11 @@ export type AgentConnectionPayload =
       password: string;
     };
 
+/** JSON gravado em `profiles.agent_connection` (inclui nome opcional definido pelo usuario). */
+export type AgentConnectionStored = AgentConnectionPayload & {
+  vaultName?: string;
+};
+
 export type AgentConnectionForm = {
   agentMode: AgentConnectionMode;
   gatewayUrl: string;
@@ -62,4 +67,13 @@ export function buildAgentConnectionPayload(
 
 export function isAgentConnectionValid(form: AgentConnectionForm): boolean {
   return buildAgentConnectionPayload(form) !== null;
+}
+
+export function toStoredAgentConnection(
+  connection: AgentConnectionPayload,
+  vaultName: string | undefined,
+): AgentConnectionStored {
+  const trimmed = vaultName?.trim() ?? "";
+  if (!trimmed) return connection;
+  return { ...connection, vaultName: trimmed };
 }

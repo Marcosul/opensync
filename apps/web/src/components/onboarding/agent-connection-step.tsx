@@ -28,9 +28,11 @@ const modeOptions: { id: AgentConnectionMode; label: string; hint: string }[] = 
 type AgentConnectionStepProps = {
   form: AgentConnectionForm;
   onChange: (next: AgentConnectionForm) => void;
+  /** Oculta titulo e texto introdutorio (quando o pai ja exibe o cabecalho da etapa). */
+  hideIntro?: boolean;
 };
 
-export function AgentConnectionStep({ form, onChange }: AgentConnectionStepProps) {
+export function AgentConnectionStep({ form, onChange, hideIntro = false }: AgentConnectionStepProps) {
   const [showGatewayToken, setShowGatewayToken] = useState(false);
 
   function patch<K extends keyof AgentConnectionForm>(key: K, value: AgentConnectionForm[K]) {
@@ -39,13 +41,15 @@ export function AgentConnectionStep({ form, onChange }: AgentConnectionStepProps
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-base font-medium">Como o OpenSync deve acessar seu agente?</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Escolha uma opcao. Os dados sao usados para conectar ao seu ambiente; em producao,
-          prefira segredos e variaveis de ambiente no servidor.
-        </p>
-      </div>
+      {hideIntro ? null : (
+        <div>
+          <h2 className="text-base font-medium">Como o OpenSync deve acessar seu agente?</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Escolha uma opcao. Os dados sao usados para conectar ao seu ambiente; em producao,
+            prefira segredos e variaveis de ambiente no servidor.
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-2 sm:grid-cols-1">
         {modeOptions.map((opt) => (

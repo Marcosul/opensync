@@ -1,7 +1,10 @@
 import { Cpu, FolderOpen, Plus, Wifi, WifiOff } from "lucide-react";
 import Link from "next/link";
 
+import { AddVaultCard } from "@/components/dashboard/add-vault-card";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { deriveAgentMode, deriveVaultName, formatAgentPreview } from "@/lib/vault-display";
+import { parseSavedVaults } from "@/lib/saved-vaults";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
@@ -13,7 +16,7 @@ export default async function DashboardPage() {
   const { data: profile } = user
     ? await supabase
         .from("profiles")
-        .select("agent_connection, onboarding_completed_at")
+        .select("agent_connection, onboarding_completed_at, saved_vaults")
         .eq("id", user.id)
         .maybeSingle()
     : { data: null };
@@ -22,31 +25,42 @@ export default async function DashboardPage() {
     profile?.agent_connection ?? user?.user_metadata?.opensync_agent_connection;
   const hasAgent = agentRaw != null && typeof agentRaw === "object";
 
-  const vaults: VaultItem[] = hasAgent
-    ? [
-        {
-          id: "main",
-          name: deriveVaultName(agentRaw as Record<string, unknown>),
-          description: formatAgentPreview(agentRaw as Record<string, unknown>),
-          connected: true,
-          agentMode: deriveAgentMode(agentRaw as Record<string, unknown>),
-          fileCount: 11,
-        },
-      ]
-    : [];
+  const savedList = parseSavedVaults(
+    profile?.saved_vaults ?? user?.user_metadata?.opensync_saved_vaults,
+  );
+
+  const savedVaultItems: VaultItem[] = savedList.map((s) => ({
+    id: s.id,
+    name: s.name,
+    description: "Vault vazio · guardado na conta",
+    connected: false,
+    agentMode: "empty",
+    isEmpty: true,
+    fileCount: 0,
+  }));
+
+  const agentVaultItems: VaultItem[] =
+    hasAgent && user
+      ? [
+          {
+            id: `profile-${user.id}`,
+            name: deriveVaultName(agentRaw as Record<string, unknown>),
+            description: formatAgentPreview(agentRaw as Record<string, unknown>),
+            connected: true,
+            agentMode: deriveAgentMode(agentRaw as Record<string, unknown>),
+            fileCount: 11,
+            isEmpty: false,
+          },
+        ]
+      : [];
+
+  const vaults: VaultItem[] = [...savedVaultItems, ...agentVaultItems];
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Tab bar */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-card/30 px-4">
+      <div className="flex h-10 shrink-0 items-center border-b border-border bg-card/30 px-4">
         <span className="text-sm font-medium text-foreground/80">Vaults</span>
-        <Link
-          href="/onboarding"
-          className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-        >
-          <Plus className="size-3.5" />
-          Novo vault
-        </Link>
       </div>
 
       {/* Content */}
@@ -75,6 +89,7 @@ type VaultItem = {
   connected: boolean;
   agentMode: string;
   fileCount: number;
+  isEmpty?: boolean;
 };
 
 // ─── Components ─────────────────────────────────────────────────────────────
@@ -82,8 +97,8 @@ type VaultItem = {
 function VaultCard({ vault }: { vault: VaultItem }) {
   return (
     <Link
-      href="/vault"
-      className="group flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+      href={`/vault?vault=${encodeURIComponent(vault.id)}`}
+      className="group relative z-0 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
@@ -93,7 +108,9 @@ function VaultCard({ vault }: { vault: VaultItem }) {
           </div>
           <div className="min-w-0">
             <p className="truncate font-medium text-sm text-foreground">{vault.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{vault.fileCount} arquivos</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {vault.isEmpty ? "Sem agente" : `${vault.fileCount} arquivos`}
+            </p>
           </div>
         </div>
 
@@ -115,27 +132,17 @@ function VaultCard({ vault }: { vault: VaultItem }) {
         </div>
       </div>
 
-      {/* Agent info */}
+      {/* Agent / detalhe */}
       <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5">
-        <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
+        {vault.isEmpty ? (
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
           {vault.description}
         </p>
       </div>
-    </Link>
-  );
-}
-
-function AddVaultCard() {
-  return (
-    <Link
-      href="/onboarding"
-      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-transparent p-8 text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-    >
-      <div className="flex size-9 items-center justify-center rounded-lg border border-current/30">
-        <Plus className="size-4" />
-      </div>
-      <span className="text-sm font-medium">Adicionar vault</span>
     </Link>
   );
 }
@@ -149,62 +156,17 @@ function EmptyVaults() {
       <div className="space-y-1">
         <p className="font-medium text-foreground">Nenhum vault conectado</p>
         <p className="text-sm text-muted-foreground">
-          Configure seu agente para começar a sincronizar arquivos.
+          Crie um vault vazio ou conecte um agente para ver seus cofres aqui.
         </p>
       </div>
       <Link
-        href="/onboarding"
+        href="/dashboard/vaults/new"
         className="mt-2 flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         <Plus className="size-4" />
-        Conectar agente
+        Novo Vault
       </Link>
     </div>
   );
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function deriveVaultName(o: Record<string, unknown>): string {
-  const mode = o.mode;
-  if (mode === "gateway") {
-    const url = typeof o.gatewayUrl === "string" ? o.gatewayUrl : "";
-    try {
-      return new URL(url).hostname || "gateway-vault";
-    } catch {
-      return "gateway-vault";
-    }
-  }
-  if (mode === "ssh_key" || mode === "ssh_password") {
-    const host = typeof o.host === "string" ? o.host : "";
-    return host || "ssh-vault";
-  }
-  return "meu-vault";
-}
-
-function deriveAgentMode(o: Record<string, unknown>): string {
-  const mode = o.mode;
-  if (mode === "gateway") return "gateway";
-  if (mode === "ssh_key") return "ssh_key";
-  if (mode === "ssh_password") return "ssh_password";
-  return "unknown";
-}
-
-function formatAgentPreview(o: Record<string, unknown>): string {
-  const mode = o.mode;
-  if (mode === "gateway") {
-    const url = typeof o.gatewayUrl === "string" ? o.gatewayUrl : "";
-    return url ? `Gateway: ${url}` : "Gateway configurado";
-  }
-  if (mode === "ssh_key") {
-    const host = typeof o.host === "string" ? o.host : "";
-    const port = typeof o.port === "number" ? o.port : 22;
-    return host ? `SSH (chave): ${host}:${port}` : "SSH com chave";
-  }
-  if (mode === "ssh_password") {
-    const host = typeof o.host === "string" ? o.host : "";
-    const port = typeof o.port === "number" ? o.port : 22;
-    return host ? `SSH: ${host}:${port}` : "SSH com senha";
-  }
-  return "Configurado";
-}

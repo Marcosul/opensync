@@ -1,0 +1,23 @@
+opensync — layout de repositórios (vaults) no Gitea
+==================================================
+
+O Gitea guarda os bare repos em disco em:
+  /opt/opensync/gitea-data/git/repositories/<owner>/<repo>.git
+
+Recomendação (alinhada ao VISION: user-id/agent-name):
+
+1) Criar uma organização Gitea, ex.: "opensync" (UI: New Organization).
+
+2) Por vault, criar repositório sob essa org:
+   Nome sugerido:  <user_uuid_curto>/<slug_do_vault>
+   Ex.:            a1b2c3d4/me-openclaw
+
+   Alternativa (um nível):  vault-<uuid_do_vault>
+
+3) API/admin: gerar token em Gitea para a API NestJS (GITEA_ADMIN_TOKEN no .env da API).
+
+4) Git remoto para o plugin/cliente (quando o proxy existir):
+   HTTPS via API opensync, ou SSH:
+   ssh://git@<PUBLIC_HOST>:2222/opensync/<repo>.git
+
+Primeiro arranque: abrir http://<PUBLIC_HOST>:3000/ e concluir o assistente de instalação.

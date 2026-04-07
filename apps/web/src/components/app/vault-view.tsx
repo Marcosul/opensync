@@ -9,22 +9,92 @@ import {
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
-import { ChevronDown, ChevronRight, GitBranch, Tag, X } from "lucide-react";
+import { Menu } from "@base-ui/react/menu";
+import {
+  ArrowDownAZ,
+  BookOpen,
+  Bookmark,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsDownUp,
+  Columns,
+  FileCode2,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  MoreVertical,
+  PanelLeft,
+  Plus,
+  Search,
+  SquarePen,
+  Tag,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
 } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
+import { apiRequest } from "@/api/rest/generic";
+import {
+  applyMissionMarkdownToSnapshot,
+  clearPendingActiveVaultId,
+  countTreeStats,
+  getHydrationSafeVaultBoot,
+  loadSnapshot,
+  peekPendingActiveVaultId,
+  readActiveVaultId,
+  readAndConsumePendingAgentProject,
+  readVaultMetas,
+  saveSnapshot,
+  vaultSnapshotKey,
+  writeActiveVaultId,
+  writeVaultMetas,
+  type VaultBookmark,
+  type VaultMeta,
+  type VaultSnapshotV1,
+  type VaultUiState,
+  type ViewMode,
+} from "@/components/app/vault-persistence";
+import { VaultManageDialog, VaultSidebarFooter } from "@/components/app/vault-switcher";
+import {
+  VaultExplorerContextMenu,
+  type ExplorerCommand,
+} from "@/components/app/vault-explorer-context-menu";
 import { VaultNoteEditor } from "@/components/app/vault-note-editor";
+import {
+  addBaseToParent,
+  addCanvasToParent,
+  addFolderToParent,
+  addNoteToParent,
+  collectDocIdsFromTree,
+  collectDocIdsUnderDir,
+  deleteDirectory,
+  deleteFile,
+  duplicateFile,
+  extractWikilinks,
+  filterEntriesByNameQuery,
+  findAncestorDirPathsForDoc,
+  findDir,
+  getChildrenAtPath,
+  moveDirectory,
+  moveFile,
+  renameDirectory,
+  renameFile,
+} from "@/components/app/vault-tree-ops";
 import {
   DOCS,
   OPENCLAW_ROOT_LABEL,
   OPENCLAW_TREE_ROOT,
-  findDocBreadcrumb,
+  findDocBreadcrumbFromEntries,
   mockDocToMarkdown,
   type MockDoc,
   type TreeEntry,
@@ -33,36 +103,161 @@ import { cn } from "@/lib/utils";
 
 const DOC_BY_ID = Object.fromEntries(DOCS.map((d) => [d.id, d])) as Record<string, MockDoc>;
 
-// Derive a "tag" count from how many docs reference each doc (inbound links)
-const INBOUND_COUNTS: Record<string, number> = {};
-for (const doc of DOCS) {
-  for (const target of doc.wikilinks) {
-    INBOUND_COUNTS[target] = (INBOUND_COUNTS[target] ?? 0) + 1;
+function treePathAncestors(path: string): string[] {
+  const out: string[] = [];
+  let p = path;
+  while (true) {
+    const i = p.lastIndexOf("/");
+    if (i <= 0) break;
+    p = p.slice(0, i);
+    out.push(p);
   }
+  return out.reverse();
 }
-const TOP_TAGS = Object.entries(INBOUND_COUNTS)
-  .sort((a, b) => b[1] - a[1])
-  .slice(0, 14);
 
-type ViewMode = "graph" | "editor";
+function noteMarkdown(docId: string, noteContents: Record<string, string>): string {
+  return (
+    noteContents[docId] ??
+    (DOC_BY_ID[docId] ? mockDocToMarkdown(DOC_BY_ID[docId]) : "")
+  );
+}
 
-type VaultUiState = {
-  viewMode: ViewMode;
-  openTabs: string[];
-  activeTabId: string;
+type GNode = {
+  id: string;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  index?: number;
+  degree: number;
 };
+type GLink = { source: string | GNode; target: string | GNode };
+
+function buildGraphFromVault(tree: TreeEntry, noteContents: Record<string, string>) {
+  const rootChildren = tree.type === "dir" ? tree.children : [];
+  const ids = new Set(collectDocIdsFromTree(rootChildren));
+  const linkMap = new Map<string, Set<string>>();
+
+  for (const id of [...ids]) {
+    const md = noteMarkdown(id, noteContents);
+    for (const t of extractWikilinks(md)) {
+      if (!linkMap.has(id)) linkMap.set(id, new Set());
+      linkMap.get(id)!.add(t);
+    }
+  }
+
+  for (const tgts of linkMap.values()) {
+    for (const t of tgts) ids.add(t);
+  }
+
+  const degreeMap: Record<string, number> = {};
+  for (const id of ids) degreeMap[id] = 0;
+  for (const [src, tgts] of linkMap) {
+    for (const t of tgts) {
+      if (ids.has(t)) {
+        degreeMap[src] = (degreeMap[src] ?? 0) + 1;
+        degreeMap[t] = (degreeMap[t] ?? 0) + 1;
+      }
+    }
+  }
+
+  const nodes: GNode[] = [...ids].map((id) => ({ id, degree: degreeMap[id] ?? 0 }));
+  const links: GLink[] = [];
+  for (const [src, tgts] of linkMap) {
+    for (const t of tgts) {
+      if (ids.has(t)) links.push({ source: src, target: t });
+    }
+  }
+  return { nodes, links };
+}
+
+function computeTopTags(tree: TreeEntry, noteContents: Record<string, string>): [string, number][] {
+  const rootChildren = tree.type === "dir" ? tree.children : [];
+  const counts: Record<string, number> = {};
+  for (const id of collectDocIdsFromTree(rootChildren)) {
+    const md = noteMarkdown(id, noteContents);
+    for (const t of extractWikilinks(md)) {
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 14);
+}
+
+function applyNoteContentsDocPrefixMigration(
+  prev: Record<string, string>,
+  from: string,
+  to: string
+): Record<string, string> {
+  if (from === to || from === "") return prev;
+  const next = { ...prev };
+  for (const key of Object.keys(prev)) {
+    if (key.startsWith(from)) {
+      const nk = to + key.slice(from.length);
+      next[nk] = next[key]!;
+      delete next[key];
+    }
+  }
+  return next;
+}
+
+function buildDocIdRemapFromPrefixes(from: string, to: string, ids: readonly string[]): Record<string, string> {
+  const m: Record<string, string> = {};
+  if (from === to || from === "") return m;
+  for (const id of ids) {
+    if (id.startsWith(from)) m[id] = to + id.slice(from.length);
+  }
+  return m;
+}
+
+type SidebarMode = "files" | "search" | "bookmarks";
+type TreeSortOrder = "default" | "name" | "name-desc";
+
+function compareTreeEntries(a: TreeEntry, b: TreeEntry): number {
+  const aDir = a.type === "dir" ? 0 : 1;
+  const bDir = b.type === "dir" ? 0 : 1;
+  if (aDir !== bDir) return aDir - bDir;
+  return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
+}
+
+function sortTreeEntries(entries: TreeEntry[], order: TreeSortOrder): TreeEntry[] {
+  const sorted = [...entries].sort((a, b) => {
+    if (order === "default") return compareTreeEntries(a, b);
+    if (order === "name") return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
+    return b.name.localeCompare(a.name, "pt-BR", { sensitivity: "base" });
+  });
+  return sorted.map((e) =>
+    e.type === "dir" ? { ...e, children: sortTreeEntries(e.children, order) } : e
+  );
+}
+
+function flattenTreeDocs(entries: TreeEntry[], prefix = ""): { docId: string; label: string }[] {
+  const out: { docId: string; label: string }[] = [];
+  for (const e of entries) {
+    if (e.type === "dir") {
+      out.push(...flattenTreeDocs(e.children, `${prefix}${e.name}/`));
+    } else if (e.type === "file" && "docId" in e) {
+      out.push({ docId: e.docId, label: `${prefix}${e.name}` });
+    }
+  }
+  return out;
+}
+
+const vaultChromeMenuItemClass = cn(
+  "flex w-full cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none",
+  "text-foreground data-highlighted:bg-muted"
+);
 
 type VaultUiAction =
   | { type: "open"; id: string }
   | { type: "activate"; id: string }
   | { type: "close"; id: string }
+  | { type: "closeMany"; ids: string[] }
+  | { type: "replaceDoc"; from: string; to: string }
+  | { type: "remapDocIds"; map: Record<string, string> }
+  | { type: "reset"; state: VaultUiState }
   | { type: "showGraph" };
-
-const initialVaultUi: VaultUiState = {
-  viewMode: "graph",
-  openTabs: ["AGENTS.md"],
-  activeTabId: "AGENTS.md",
-};
 
 function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiState {
   switch (action.type) {
@@ -95,6 +290,35 @@ function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiStat
       const viewMode: ViewMode = openTabs.length === 0 ? "graph" : state.viewMode;
       return { ...state, openTabs, activeTabId, viewMode };
     }
+    case "closeMany": {
+      const drop = new Set(action.ids);
+      const openTabs = state.openTabs.filter((t) => !drop.has(t));
+      let activeTabId = state.activeTabId;
+      if (drop.has(activeTabId)) {
+        const idx = state.openTabs.indexOf(activeTabId);
+        activeTabId =
+          openTabs.length === 0
+            ? ""
+            : (openTabs[Math.max(0, idx - 1)] ?? openTabs[0] ?? "");
+      }
+      const viewMode: ViewMode = openTabs.length === 0 ? "graph" : state.viewMode;
+      return { ...state, openTabs, activeTabId, viewMode };
+    }
+    case "replaceDoc": {
+      const openTabs = [...new Set(state.openTabs.map((t) => (t === action.from ? action.to : t)))];
+      const activeTabId = state.activeTabId === action.from ? action.to : state.activeTabId;
+      return { ...state, openTabs, activeTabId };
+    }
+    case "remapDocIds": {
+      const map = action.map;
+      if (Object.keys(map).length === 0) return state;
+      const openTabs = [...new Set(state.openTabs.map((t) => map[t] ?? t))];
+      const activeTabId = map[state.activeTabId] ?? state.activeTabId;
+      const safeActive = openTabs.includes(activeTabId) ? activeTabId : (openTabs[0] ?? "");
+      return { ...state, openTabs, activeTabId: safeActive };
+    }
+    case "reset":
+      return action.state;
     case "showGraph":
       return { ...state, viewMode: "graph" };
     default:
@@ -103,15 +327,282 @@ function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiStat
 }
 
 export function VaultView() {
-  const [ui, dispatchUi] = useReducer(vaultUiReducer, initialVaultUi);
-  const [noteContents, setNoteContents] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    for (const d of DOCS) initial[d.id] = mockDocToMarkdown(d);
-    return initial;
-  });
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const ssrBoot = useMemo(() => getHydrationSafeVaultBoot(), []);
+
+  const [vaultMetas, setVaultMetas] = useState<VaultMeta[]>(() => ssrBoot.metas);
+  const [activeVaultId, setActiveVaultId] = useState(() => ssrBoot.id);
+  const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
+
+  const [ui, dispatchUi] = useReducer(vaultUiReducer, ssrBoot.snap.ui);
+  const [treeRoot, setTreeRoot] = useState<TreeEntry>(() => ssrBoot.snap.tree);
+  const [noteContents, setNoteContents] = useState<Record<string, string>>(
+    () => ({ ...ssrBoot.snap.noteContents })
+  );
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(ssrBoot.snap.expandedPaths)
+  );
+  const [folderSearch, setFolderSearch] = useState<{ path: string; query: string } | null>(null);
+  const [revealTarget, setRevealTarget] = useState<
+    { type: "file"; docId: string } | { type: "folder"; path: string } | null
+  >(null);
+  const [bookmarks, setBookmarks] = useState<VaultBookmark[]>(() => [...ssrBoot.snap.bookmarks]);
+
+  useLayoutEffect(() => {
+    const metas = readVaultMetas();
+    const id = readActiveVaultId(metas);
+    const meta = metas.find((m) => m.id === id);
+    const snap = loadSnapshot(id, meta);
+    setVaultMetas(metas);
+    setActiveVaultId(id);
+    setTreeRoot(snap.tree);
+    setNoteContents({ ...snap.noteContents });
+    setExpandedPaths(new Set(snap.expandedPaths));
+    setBookmarks([...snap.bookmarks]);
+    dispatchUi({ type: "reset", state: snap.ui });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let metas = readVaultMetas();
+      let activeId = readActiveVaultId(metas);
+
+      try {
+        const { vaults } = await apiRequest<{ vaults: VaultMeta[] }>("/api/vaults/list");
+        if (!cancelled && vaults.length > 0) {
+          metas = vaults;
+          writeVaultMetas(vaults);
+          activeId = readActiveVaultId(vaults);
+          const preferredId = peekPendingActiveVaultId();
+          if (preferredId && vaults.some((m) => m.id === preferredId)) {
+            activeId = preferredId;
+            clearPendingActiveVaultId();
+          }
+          writeActiveVaultId(activeId);
+          setVaultMetas(vaults);
+          setActiveVaultId(activeId);
+          const meta = vaults.find((m) => m.id === activeId);
+          const snap = loadSnapshot(activeId, meta);
+          setTreeRoot(snap.tree);
+          setNoteContents({ ...snap.noteContents });
+          setExpandedPaths(new Set(snap.expandedPaths));
+          setBookmarks([...snap.bookmarks]);
+          dispatchUi({ type: "reset", state: snap.ui });
+        }
+      } catch {
+        /* mantem estado inicial (localStorage / migracao) */
+      }
+
+      if (cancelled) return;
+      const pending = readAndConsumePendingAgentProject();
+      if (pending?.projectType === "agent_squad" && pending.squadMission?.trim()) {
+        const meta = metas.find((m) => m.id === activeId);
+        if (meta) {
+          const parentPath = meta.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
+          const snap = loadSnapshot(activeId, meta);
+          const md = `# Missão da equipe — ${pending.vaultName}\n\n${pending.squadMission.trim()}\n`;
+          const next = applyMissionMarkdownToSnapshot(snap, parentPath, md);
+          saveSnapshot(activeId, next);
+          setTreeRoot(next.tree);
+          setNoteContents((prev) => ({ ...prev, ...next.noteContents }));
+          setExpandedPaths((p) => {
+            const n = new Set(p);
+            n.add(parentPath);
+            for (const anc of treePathAncestors(parentPath)) {
+              n.add(anc);
+            }
+            return n;
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const snap: VaultSnapshotV1 = {
+      v: 1,
+      tree: treeRoot,
+      noteContents,
+      expandedPaths: [...expandedPaths],
+      bookmarks,
+      ui,
+    };
+    saveSnapshot(activeVaultId, snap);
+  }, [activeVaultId, treeRoot, noteContents, expandedPaths, bookmarks, ui]);
+
+  const activeVaultMeta = useMemo(
+    () => vaultMetas.find((m) => m.id === activeVaultId),
+    [vaultMetas, activeVaultId]
+  );
+
+  const switchVault = useCallback(
+    (nextId: string) => {
+      if (nextId === activeVaultId) return;
+      const fromSnap: VaultSnapshotV1 = {
+        v: 1,
+        tree: treeRoot,
+        noteContents,
+        expandedPaths: [...expandedPaths],
+        bookmarks,
+        ui,
+      };
+      saveSnapshot(activeVaultId, fromSnap);
+      const nextMeta = vaultMetas.find((m) => m.id === nextId);
+      const snap = loadSnapshot(nextId, nextMeta);
+      setActiveVaultId(nextId);
+      writeActiveVaultId(nextId);
+      setTreeRoot(snap.tree);
+      setNoteContents({ ...snap.noteContents });
+      setExpandedPaths(new Set(snap.expandedPaths));
+      setBookmarks([...snap.bookmarks]);
+      dispatchUi({ type: "reset", state: snap.ui });
+      setFolderSearch(null);
+      setRevealTarget(null);
+    },
+    [
+      activeVaultId,
+      treeRoot,
+      noteContents,
+      expandedPaths,
+      bookmarks,
+      ui,
+      vaultMetas,
+    ]
+  );
+
+  const removeVault = useCallback(
+    async (id: string) => {
+      const target = vaultMetas.find((m) => m.id === id);
+      if (target?.deletable === false) {
+        window.alert(
+          "Este cofre esta ligado ao agente no seu perfil. Para alterar, atualize a conexao no dashboard.",
+        );
+        return;
+      }
+      if (vaultMetas.length <= 1) {
+        window.alert("É preciso manter pelo menos um cofre.");
+        return;
+      }
+      if (target?.managedByProfile && target.deletable) {
+        try {
+          await apiRequest(`/api/vaults/saved?id=${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+        } catch {
+          window.alert("Nao foi possivel remover este vault no servidor.");
+          return;
+        }
+      }
+      const nextMetas = vaultMetas.filter((m) => m.id !== id);
+      writeVaultMetas(nextMetas);
+      setVaultMetas(nextMetas);
+      try {
+        localStorage.removeItem(vaultSnapshotKey(id));
+      } catch {
+        /* ignore */
+      }
+
+      if (id === activeVaultId) {
+        const nextId = nextMetas[0].id;
+        const nextMeta = nextMetas[0];
+        setActiveVaultId(nextId);
+        writeActiveVaultId(nextId);
+        const snap = loadSnapshot(nextId, nextMeta);
+        setTreeRoot(snap.tree);
+        setNoteContents({ ...snap.noteContents });
+        setExpandedPaths(new Set(snap.expandedPaths));
+        setBookmarks([...snap.bookmarks]);
+        dispatchUi({ type: "reset", state: snap.ui });
+        setFolderSearch(null);
+        setRevealTarget(null);
+      }
+    },
+    [vaultMetas, activeVaultId]
+  );
+
+  useEffect(() => {
+    const vid = searchParams.get("vault");
+    if (!vid) return;
+    if (!vaultMetas.some((m) => m.id === vid)) return;
+    if (vid === activeVaultId) {
+      router.replace("/vault", { scroll: false });
+      return;
+    }
+    switchVault(vid);
+    router.replace("/vault", { scroll: false });
+  }, [searchParams, vaultMetas, activeVaultId, switchVault, router]);
+
+  const treeChildren = treeRoot.type === "dir" ? treeRoot.children : [];
+  const treeStats = useMemo(() => countTreeStats(treeChildren), [treeChildren]);
+  const rootExplorerLabel =
+    activeVaultMeta?.kind === "openclaw" ? OPENCLAW_ROOT_LABEL : (activeVaultMeta?.pathLabel ?? "~");
+  const graphData = useMemo(
+    () => buildGraphFromVault(treeRoot, noteContents),
+    [treeRoot, noteContents]
+  );
+  const topTags = useMemo(
+    () => computeTopTags(treeRoot, noteContents),
+    [treeRoot, noteContents]
+  );
 
   const { viewMode, openTabs, activeTabId } = ui;
   const activeDoc = activeTabId ? DOC_BY_ID[activeTabId] : undefined;
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
+  const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
+  const [histPast, setHistPast] = useState<string[]>([]);
+  const [histFuture, setHistFuture] = useState<string[]>([]);
+  const [editorSourceMode, setEditorSourceMode] = useState(false);
+
+  useEffect(() => {
+    setHistPast([]);
+    setHistFuture([]);
+  }, [activeVaultId]);
+
+  useEffect(() => {
+    setEditorSourceMode(false);
+  }, [activeTabId]);
+
+  const defaultNewItemParent =
+    activeVaultMeta?.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
+
+  const browseSelectFile = useCallback(
+    (id: string) => {
+      if (id !== activeTabId && activeTabId) {
+        setHistPast((p) => [...p, activeTabId]);
+        setHistFuture([]);
+      }
+      dispatchUi({ type: "open", id });
+    },
+    [activeTabId]
+  );
+
+  const goNavBack = useCallback(() => {
+    if (histPast.length === 0) return;
+    const prev = histPast[histPast.length - 1];
+    setHistPast((p) => p.slice(0, -1));
+    if (activeTabId) setHistFuture((f) => [activeTabId, ...f]);
+    dispatchUi({ type: "open", id: prev });
+  }, [histPast, activeTabId]);
+
+  const goNavForward = useCallback(() => {
+    if (histFuture.length === 0) return;
+    const next = histFuture[0];
+    setHistFuture((f) => f.slice(1));
+    if (activeTabId) setHistPast((p) => [...p, activeTabId]);
+    dispatchUi({ type: "open", id: next });
+  }, [histFuture, activeTabId]);
+
+  const cycleTreeSort = useCallback(() => {
+    setTreeSortOrder((o) => (o === "default" ? "name" : o === "name" ? "name-desc" : "default"));
+  }, []);
 
   const selectFile = useCallback((id: string) => {
     dispatchUi({ type: "open", id });
@@ -131,20 +622,341 @@ export function VaultView() {
 
   const graphHighlightId = activeTabId || null;
 
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* ── Left: file tree ── */}
-      <FileTree selectedId={activeTabId || null} onSelect={selectFile} />
+  const editorBreadcrumb = useMemo(
+    () => findDocBreadcrumbFromEntries(treeChildren, activeTabId || ""),
+    [treeChildren, activeTabId]
+  );
+  const editorBreadcrumbLabel = editorBreadcrumb.join(" / ");
 
-      {/* ── Center panel ── */}
+  const handleExplorerCommand = useCallback(
+    (cmd: ExplorerCommand) => {
+      if (treeRoot.type !== "dir") return;
+
+      const openIds = () => [...new Set([...openTabs, activeTabId].filter(Boolean))];
+
+      const migratePrefixes = (from: string, to: string) => {
+        if (from === to) return;
+        setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
+        const map = buildDocIdRemapFromPrefixes(from, to, openIds());
+        if (Object.keys(map).length > 0) dispatchUi({ type: "remapDocIds", map });
+      };
+
+      switch (cmd.type) {
+        case "new-note": {
+          const r = addNoteToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const title = r.fileName.replace(/\.md$/i, "");
+          const body = `# ${title}\n\n`;
+          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "new-folder": {
+          const r = addFolderToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) window.alert(r.reason);
+          else {
+            setTreeRoot(r.root);
+            setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
+          }
+          break;
+        }
+        case "new-canvas": {
+          const r = addCanvasToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const body = '{\n  "nodes": [],\n  "edges": []\n}\n';
+          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "new-base": {
+          const r = addBaseToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          setNoteContents((prev) => ({ ...prev, [r.docId]: "{}\n" }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "duplicate": {
+          const r = duplicateFile(treeRoot, cmd.docId);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const src = noteMarkdown(cmd.docId, noteContents);
+          const copyId = r.newDocId;
+          if (!copyId) break;
+          setNoteContents((prev) => ({ ...prev, [copyId]: src }));
+          browseSelectFile(copyId);
+          break;
+        }
+        case "move-file": {
+          const dest = window.prompt(
+            "Caminho da pasta de destino (ex.: openclaw/workspace/skills):",
+            "openclaw/workspace"
+          );
+          if (dest === null || !dest.trim()) return;
+          const targetPath = dest.trim();
+          if (!findDir(treeRoot.children, targetPath)) {
+            window.alert("Pasta não encontrada. Use um caminho como openclaw/workspace/memory.");
+            return;
+          }
+          const r = moveFile(treeRoot, cmd.docId, targetPath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          if (r.newDocId && r.newDocId !== cmd.docId) {
+            setNoteContents((prev) => {
+              const next = { ...prev };
+              const v = next[cmd.docId];
+              if (v !== undefined) {
+                delete next[cmd.docId];
+                next[r.newDocId!] = v;
+              }
+              return next;
+            });
+            dispatchUi({ type: "replaceDoc", from: cmd.docId, to: r.newDocId });
+          }
+          break;
+        }
+        case "move-folder": {
+          const dest = window.prompt(
+            "Caminho da pasta pai de destino (ex.: openclaw/workspace):",
+            "openclaw/workspace"
+          );
+          if (dest === null || !dest.trim()) return;
+          const targetPath = dest.trim();
+          if (!findDir(treeRoot.children, targetPath)) {
+            window.alert("Pasta de destino não encontrada.");
+            return;
+          }
+          const r = moveDirectory(treeRoot, cmd.treePath, targetPath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          migratePrefixes(r.docPrefixFrom, r.docPrefixTo);
+          break;
+        }
+        case "search-in-folder": {
+          setFolderSearch({ path: cmd.treePath, query: "" });
+          setExpandedPaths((p) => new Set([...p, ...treePathAncestors(cmd.treePath), cmd.treePath]));
+          break;
+        }
+        case "bookmark": {
+          const t = cmd.target;
+          if (t.kind === "file") {
+            const b: VaultBookmark = { kind: "file", docId: t.docId, label: t.name };
+            setBookmarks((prev) => {
+              if (prev.some((x) => x.kind === "file" && x.docId === t.docId)) return prev;
+              return [...prev, b];
+            });
+          } else {
+            const b: VaultBookmark = { kind: "folder", path: t.treePath, label: t.name };
+            setBookmarks((prev) => {
+              if (prev.some((x) => x.kind === "folder" && x.path === t.treePath)) return prev;
+              return [...prev, b];
+            });
+          }
+          break;
+        }
+        case "show-in-folder": {
+          const t = cmd.target;
+          if (t.kind === "file") {
+            setRevealTarget({ type: "file", docId: t.docId });
+            const anc = findAncestorDirPathsForDoc(treeChildren, t.docId);
+            setExpandedPaths((p) => new Set([...p, ...anc]));
+          } else {
+            setRevealTarget({ type: "folder", path: t.treePath });
+            setExpandedPaths((p) => new Set([...p, ...treePathAncestors(t.treePath), t.treePath]));
+          }
+          setFolderSearch(null);
+          break;
+        }
+        case "rename": {
+          const t = cmd.target;
+          if (t.kind === "file") {
+            const nextName = window.prompt("Novo nome do arquivo:", t.name);
+            if (nextName === null || !nextName.trim()) return;
+            const r = renameFile(treeRoot, t.docId, nextName.trim());
+            if (!r.ok) {
+              window.alert(r.reason);
+              return;
+            }
+            setTreeRoot(r.root);
+            if (r.newDocId && r.newDocId !== t.docId) {
+              setNoteContents((prev) => {
+                const next = { ...prev };
+                const v = next[t.docId];
+                if (v !== undefined) {
+                  delete next[t.docId];
+                  next[r.newDocId!] = v;
+                }
+                return next;
+              });
+              dispatchUi({ type: "replaceDoc", from: t.docId, to: r.newDocId });
+            }
+          } else {
+            const nextName = window.prompt("Novo nome da pasta:", t.name);
+            if (nextName === null || !nextName.trim()) return;
+            const r = renameDirectory(treeRoot, t.treePath, nextName.trim());
+            if (!r.ok) {
+              window.alert(r.reason);
+              return;
+            }
+            setTreeRoot(r.root);
+            migratePrefixes(r.docPrefixFrom, r.docPrefixTo);
+          }
+          break;
+        }
+        case "delete": {
+          const t = cmd.target;
+          if (!window.confirm(`Apagar "${t.kind === "file" ? t.name : `${t.name}/`}"?`)) return;
+          if (t.kind === "file") {
+            const r = deleteFile(treeRoot, t.docId);
+            if (!r.ok) window.alert(r.reason);
+            else {
+              setTreeRoot(r.root);
+              dispatchUi({ type: "closeMany", ids: [t.docId] });
+              setNoteContents((prev) => {
+                const next = { ...prev };
+                delete next[t.docId];
+                return next;
+              });
+            }
+          } else {
+            const dir = findDir(treeRoot.children, t.treePath);
+            const ids = dir ? collectDocIdsUnderDir(dir) : [];
+            const r = deleteDirectory(treeRoot, t.treePath);
+            if (!r.ok) window.alert(r.reason);
+            else {
+              setTreeRoot(r.root);
+              dispatchUi({ type: "closeMany", ids });
+              setNoteContents((prev) => {
+                const next = { ...prev };
+                for (const id of ids) delete next[id];
+                return next;
+              });
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [treeRoot, noteContents, openTabs, activeTabId, treeChildren, browseSelectFile]
+  );
+
+  const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
+
+  const quickNewNoteFromToolbar = useCallback(() => {
+    handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent });
+  }, [handleExplorerCommand, defaultNewItemParent]);
+
+  const quickNewFolderFromToolbar = useCallback(() => {
+    handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent });
+  }, [handleExplorerCommand, defaultNewItemParent]);
+
+  const collapseAllFolders = useCallback(() => setExpandedPaths(new Set()), []);
+
+  const vaultStatsLine = `${treeStats.files} arquivos, ${treeStats.folders} pastas`;
+
+  return (
+    <>
+      <div className="flex h-full overflow-hidden">
+        {sidebarCollapsed ? (
+          <div className="flex w-8 shrink-0 flex-col border-r border-border bg-sidebar/30 py-1">
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(false)}
+              className="mx-auto flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Mostrar explorador de arquivos"
+              aria-label="Mostrar explorador de arquivos"
+            >
+              <PanelLeft className="size-4" />
+            </button>
+          </div>
+        ) : (
+          <FileTree
+          treeRootLabel={rootExplorerLabel}
+          treeChildren={treeChildren}
+          selectedId={activeTabId || null}
+          onSelect={browseSelectFile}
+          expandedPaths={expandedPaths}
+          onToggleDir={(path) =>
+            setExpandedPaths((prev) => {
+              const next = new Set(prev);
+              if (next.has(path)) next.delete(path);
+              else next.add(path);
+              return next;
+            })
+          }
+          folderSearch={folderSearch}
+          onFolderSearchChange={setFolderSearch}
+          bookmarks={bookmarks}
+          onOpenBookmark={(b) => {
+            if (b.kind === "file") browseSelectFile(b.docId);
+            else {
+              setFolderSearch(null);
+              setRevealTarget({ type: "folder", path: b.path });
+              setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+            }
+          }}
+          onRemoveBookmark={(b) => {
+            setBookmarks((prev) =>
+              prev.filter((x) =>
+                b.kind === "file"
+                  ? !(x.kind === "file" && x.docId === b.docId)
+                  : !(x.kind === "folder" && x.path === b.path)
+              )
+            );
+          }}
+          revealTarget={revealTarget}
+          onRevealHandled={clearRevealTarget}
+          onExplorerCommand={handleExplorerCommand}
+          vaultMetas={vaultMetas}
+          activeVaultId={activeVaultId}
+          activeVaultName={activeVaultMeta?.name ?? "cofre"}
+          vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
+          vaultStatsLine={vaultStatsLine}
+          onSelectVault={switchVault}
+          onOpenManageVaults={() => setManageVaultsOpen(true)}
+          sidebarMode={sidebarMode}
+          onSidebarModeChange={setSidebarMode}
+          treeSortOrder={treeSortOrder}
+          onCycleSort={cycleTreeSort}
+          onQuickNewNote={quickNewNoteFromToolbar}
+          onQuickNewFolder={quickNewFolderFromToolbar}
+          onCollapseAllFolders={collapseAllFolders}
+          onCollapseSidebar={() => setSidebarCollapsed(true)}
+        />
+        )}
+
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Tab bar */}
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-card/30 px-2">
+        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
           <TabButton active={viewMode === "graph"} onClick={openGraph}>
             <GitBranch className="size-3.5" />
             Grafo
           </TabButton>
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1 [scrollbar-width:thin]">
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
             {openTabs.map((id) => (
               <FileTab
                 key={id}
@@ -155,11 +967,132 @@ export function VaultView() {
               />
             ))}
           </div>
+          <button
+            type="button"
+            title="Nova nota (nova aba)"
+            onClick={quickNewNoteFromToolbar}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Nova aba"
+          >
+            <Plus className="size-4" />
+          </button>
+          <Menu.Root>
+            <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+              <ChevronDown className="size-4" aria-label="Lista de abas" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                <Menu.Popup
+                  className={cn(
+                    "min-w-[200px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                    "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                  )}
+                >
+                  {openTabs.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">Nenhuma aba</div>
+                  ) : (
+                    openTabs.map((id) => (
+                      <Menu.Item
+                        key={id}
+                        className={vaultChromeMenuItemClass}
+                        onClick={() => activateTab(id)}
+                      >
+                        <span className="min-w-0 truncate font-mono text-xs">{id}</span>
+                        {id === activeTabId && <Check className="ml-auto size-3.5 shrink-0" aria-hidden />}
+                      </Menu.Item>
+                    ))
+                  )}
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+          <button
+            type="button"
+            disabled
+            title="Dividir editor (em breve)"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
+            aria-label="Dividir editor"
+          >
+            <Columns className="size-4" />
+          </button>
         </div>
 
-        {/* View */}
+        {viewMode === "editor" && activeTabId ? (
+          <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card/20 px-1">
+            <button
+              type="button"
+              disabled={histPast.length === 0}
+              onClick={goNavBack}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              title="Voltar"
+              aria-label="Voltar"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <button
+              type="button"
+              disabled={histFuture.length === 0}
+              onClick={goNavForward}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              title="Avançar"
+              aria-label="Avançar"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+            <span
+              className="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground sm:text-[11px]"
+              title={editorBreadcrumbLabel}
+            >
+              {editorBreadcrumbLabel}
+            </span>
+            <button
+              type="button"
+              disabled
+              title="Modo leitura (em breve)"
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
+              aria-label="Modo leitura"
+            >
+              <BookOpen className="size-4" />
+            </button>
+            <Menu.Root>
+              <Menu.Trigger className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+                <MoreVertical className="size-4" aria-label="Mais opções" />
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                  <Menu.Popup
+                    className={cn(
+                      "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                      "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                    )}
+                  >
+                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => quickNewNoteFromToolbar()}>
+                      Nova nota
+                    </Menu.Item>
+                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => openGraph()}>
+                      Abrir grafo
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
+            <button
+              type="button"
+              onClick={() => setEditorSourceMode((v) => !v)}
+              className={cn(
+                "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                editorSourceMode && "bg-muted text-foreground"
+              )}
+              title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
+              aria-pressed={editorSourceMode}
+            >
+              <FileCode2 className="size-4" />
+            </button>
+          </div>
+        ) : null}
+
         {viewMode === "graph" ? (
-          <FullGraph onSelectFile={selectFile} highlightId={graphHighlightId} />
+          <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
         ) : openTabs.length === 0 || !activeTabId ? (
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
@@ -175,16 +1108,18 @@ export function VaultView() {
             onChange={(next) =>
               setNoteContents((prev) => ({ ...prev, [activeTabId]: next }))
             }
-            breadcrumb={findDocBreadcrumb(activeTabId)}
-            onSelectFile={selectFile}
+            breadcrumb={editorBreadcrumb}
+            onSelectFile={browseSelectFile}
+            hideTopChrome
+            sourceMode={editorSourceMode}
+            onSourceModeChange={setEditorSourceMode}
           />
         )}
       </div>
 
-      {/* ── Right panel ── */}
       <div className="flex w-[200px] shrink-0 flex-col border-l border-border bg-sidebar/30">
         {viewMode === "graph" ? (
-          <TagsPanel onSelect={selectFile} />
+          <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
         ) : openTabs.length === 0 || !activeTabId ? (
           <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
             Abra um arquivo para ver backlinks.
@@ -192,12 +1127,23 @@ export function VaultView() {
         ) : (
           <BacklinksPanel
             docId={activeTabId}
+            treeChildren={treeChildren}
             noteContents={noteContents}
-            onSelect={selectFile}
+            onSelect={browseSelectFile}
           />
         )}
       </div>
     </div>
+
+      <VaultManageDialog
+        open={manageVaultsOpen}
+        onClose={() => setManageVaultsOpen(false)}
+        vaults={vaultMetas}
+        activeId={activeVaultId}
+        onSelectVault={(id) => switchVault(id)}
+        onRemoveVault={removeVault}
+      />
+    </>
   );
 }
 
@@ -277,21 +1223,12 @@ function TabButton({
 
 // ─── Full-screen graph (main Obsidian view) ────────────────────────────────
 
-type GNode = {
-  id: string;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  index?: number;
-  degree: number;
-};
-type GLink = { source: string | GNode; target: string | GNode };
-
 function FullGraph({
+  graph,
   onSelectFile,
   highlightId,
 }: {
+  graph: { nodes: GNode[]; links: GLink[] };
   onSelectFile: (id: string) => void;
   highlightId: string | null;
 }) {
@@ -301,25 +1238,6 @@ function FullGraph({
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [renderNodes, setRenderNodes] = useState<GNode[]>([]);
   const [hoverId, setHoverId] = useState<string | null>(null);
-
-  // All DOCS as nodes + links from wikilinks
-  const graph = useMemo(() => {
-    const degreeMap: Record<string, number> = {};
-    for (const doc of DOCS) {
-      degreeMap[doc.id] = (degreeMap[doc.id] ?? 0) + doc.wikilinks.length;
-      for (const t of doc.wikilinks) {
-        if (t in DOC_BY_ID) degreeMap[t] = (degreeMap[t] ?? 0) + 1;
-      }
-    }
-    const nodes: GNode[] = DOCS.map((d) => ({ id: d.id, degree: degreeMap[d.id] ?? 0 }));
-    const links: GLink[] = [];
-    for (const doc of DOCS) {
-      for (const t of doc.wikilinks) {
-        if (t in DOC_BY_ID) links.push({ source: doc.id, target: t });
-      }
-    }
-    return { nodes, links };
-  }, []);
 
   // Observe container size
   useEffect(() => {
@@ -366,7 +1284,7 @@ function FullGraph({
 
     return () => sim.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h]);
+  }, [size.w, size.h, graph]);
 
   // Zoom & pan
   useEffect(() => {
@@ -538,7 +1456,13 @@ function shortLabel(id: string): string {
 
 // ─── Tags panel (graph mode right sidebar) ─────────────────────────────────
 
-function TagsPanel({ onSelect }: { onSelect: (id: string) => void }) {
+function TagsPanel({
+  topTags,
+  onSelect,
+}: {
+  topTags: [string, number][];
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="flex flex-col overflow-hidden">
       <div className="flex h-10 items-center gap-2 border-b border-border px-3">
@@ -548,7 +1472,7 @@ function TagsPanel({ onSelect }: { onSelect: (id: string) => void }) {
         </span>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {TOP_TAGS.map(([id, count]) => (
+        {topTags.map(([id, count]) => (
           <button
             key={id}
             type="button"
@@ -570,19 +1494,20 @@ function TagsPanel({ onSelect }: { onSelect: (id: string) => void }) {
 
 function BacklinksPanel({
   docId,
+  treeChildren,
   noteContents,
   onSelect,
 }: {
   docId: string;
+  treeChildren: TreeEntry[];
   noteContents: Record<string, string>;
   onSelect: (id: string) => void;
 }) {
   const needle = `[[${docId}]]`;
   const backlinks = useMemo(() => {
-    return DOCS.filter(
-      (d) => d.id !== docId && (noteContents[d.id] ?? "").includes(needle)
-    );
-  }, [docId, noteContents, needle]);
+    const ids = collectDocIdsFromTree(treeChildren).filter((id) => id !== docId);
+    return ids.filter((id) => noteMarkdown(id, noteContents).includes(needle));
+  }, [docId, treeChildren, noteContents, needle]);
 
   return (
     <div className="flex flex-col overflow-hidden">
@@ -598,15 +1523,15 @@ function BacklinksPanel({
           </p>
         ) : (
           <ul className="space-y-0.5">
-            {backlinks.map((doc) => (
-              <li key={doc.id}>
+            {backlinks.map((id) => (
+              <li key={id}>
                 <button
                   type="button"
-                  onClick={() => onSelect(doc.id)}
+                  onClick={() => onSelect(id)}
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
                 >
                   <span className="size-1.5 shrink-0 rounded-full bg-primary/60" aria-hidden />
-                  <span className="min-w-0 truncate">{doc.id}</span>
+                  <span className="min-w-0 truncate">{id}</span>
                 </button>
               </li>
             ))}
@@ -620,90 +1545,396 @@ function BacklinksPanel({
 // ─── File tree ─────────────────────────────────────────────────────────────
 
 function FileTree({
+  treeRootLabel,
+  treeChildren,
   selectedId,
   onSelect,
+  expandedPaths,
+  onToggleDir,
+  folderSearch,
+  onFolderSearchChange,
+  bookmarks,
+  onOpenBookmark,
+  onRemoveBookmark,
+  revealTarget,
+  onRevealHandled,
+  onExplorerCommand,
+  vaultMetas,
+  activeVaultId,
+  activeVaultName,
+  vaultPathTooltip,
+  vaultStatsLine,
+  onSelectVault,
+  onOpenManageVaults,
+  sidebarMode,
+  onSidebarModeChange,
+  treeSortOrder,
+  onCycleSort,
+  onQuickNewNote,
+  onQuickNewFolder,
+  onCollapseAllFolders,
+  onCollapseSidebar,
 }: {
+  treeRootLabel: string;
+  treeChildren: TreeEntry[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  expandedPaths: Set<string>;
+  onToggleDir: (path: string) => void;
+  folderSearch: { path: string; query: string } | null;
+  onFolderSearchChange: (v: { path: string; query: string } | null) => void;
+  bookmarks: VaultBookmark[];
+  onOpenBookmark: (b: VaultBookmark) => void;
+  onRemoveBookmark: (b: VaultBookmark) => void;
+  revealTarget: { type: "file"; docId: string } | { type: "folder"; path: string } | null;
+  onRevealHandled: () => void;
+  onExplorerCommand: (cmd: ExplorerCommand) => void;
+  vaultMetas: VaultMeta[];
+  activeVaultId: string;
+  activeVaultName: string;
+  vaultPathTooltip: string;
+  vaultStatsLine: string;
+  onSelectVault: (id: string) => void;
+  onOpenManageVaults: () => void;
+  sidebarMode: SidebarMode;
+  onSidebarModeChange: (m: SidebarMode) => void;
+  treeSortOrder: TreeSortOrder;
+  onCycleSort: () => void;
+  onQuickNewNote: () => void;
+  onQuickNewFolder: () => void;
+  onCollapseAllFolders: () => void;
+  onCollapseSidebar: () => void;
 }) {
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+
+  const baseEntries = folderSearch
+    ? (getChildrenAtPath(treeChildren, folderSearch.path) ?? [])
+    : treeChildren;
+  const displayEntries = folderSearch?.query.trim()
+    ? filterEntriesByNameQuery(baseEntries, folderSearch.query)
+    : baseEntries;
+  const listParentPath = folderSearch?.path ?? "openclaw-root";
+
+  const sortedEntries = useMemo(
+    () => sortTreeEntries(displayEntries, treeSortOrder),
+    [displayEntries, treeSortOrder]
+  );
+
+  const searchHits = useMemo(() => {
+    const q = sidebarSearchQuery.trim().toLowerCase();
+    const all = flattenTreeDocs(treeChildren);
+    if (!q) return all;
+    return all.filter(
+      (f) => f.label.toLowerCase().includes(q) || f.docId.toLowerCase().includes(q)
+    );
+  }, [treeChildren, sidebarSearchQuery]);
+
+  const sortTooltip =
+    treeSortOrder === "default"
+      ? "Ordenar: pastas primeiro, A–Z (clique para alternar)"
+      : treeSortOrder === "name"
+        ? "Ordenar: nome A–Z"
+        : "Ordenar: nome Z–A";
+
+  useLayoutEffect(() => {
+    if (!revealTarget) return;
+    const root = treeScrollRef.current;
+    if (!root) {
+      onRevealHandled();
+      return;
+    }
+    const sel =
+      revealTarget.type === "file"
+        ? `[data-tree-doc="${CSS.escape(revealTarget.docId)}"]`
+        : `[data-tree-dir="${CSS.escape(revealTarget.path)}"]`;
+    const el = root.querySelector(sel);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    onRevealHandled();
+  }, [revealTarget, onRevealHandled]);
+
+  const iconBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground";
+
   return (
     <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">
-      <div className="flex h-10 items-center justify-between border-b border-border px-3">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Arquivos
-        </span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-1.5">
-        <p
-          className="mb-1 truncate px-1 font-mono text-[10px] text-muted-foreground/60"
-          title={OPENCLAW_ROOT_LABEL}
+      <div className="flex shrink-0 items-center justify-center gap-0.5 border-b border-border px-1 py-1">
+        <button
+          type="button"
+          className={cn(iconBtn, sidebarMode === "files" && "bg-muted text-foreground")}
+          title="Explorador de arquivos"
+          aria-label="Explorador de arquivos"
+          aria-pressed={sidebarMode === "files"}
+          onClick={() => onSidebarModeChange("files")}
         >
-          {OPENCLAW_ROOT_LABEL}
-        </p>
-        <nav aria-label="workspace tree">
-          <VaultTreeView
-            entries={OPENCLAW_TREE_ROOT.type === "dir" ? OPENCLAW_TREE_ROOT.children : []}
-            depth={0}
-            initialExpanded={new Set(["openclaw/workspace", "openclaw/workspace/memory"])}
-            selectedId={selectedId}
-            onSelect={onSelect}
-          />
-        </nav>
+          <Folder className="size-4" />
+        </button>
+        <button
+          type="button"
+          className={cn(iconBtn, sidebarMode === "search" && "bg-muted text-foreground")}
+          title="Buscar no cofre"
+          aria-label="Buscar no cofre"
+          aria-pressed={sidebarMode === "search"}
+          onClick={() => onSidebarModeChange("search")}
+        >
+          <Search className="size-4" />
+        </button>
+        <button
+          type="button"
+          className={cn(iconBtn, sidebarMode === "bookmarks" && "bg-muted text-foreground")}
+          title="Marcadores"
+          aria-label="Marcadores"
+          aria-pressed={sidebarMode === "bookmarks"}
+          onClick={() => onSidebarModeChange("bookmarks")}
+        >
+          <Bookmark className="size-4" />
+        </button>
       </div>
+
+      <div className="flex shrink-0 items-center justify-between gap-0.5 border-b border-border px-1 py-1">
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className={iconBtn}
+            title="Nova nota"
+            aria-label="Nova nota"
+            onClick={onQuickNewNote}
+          >
+            <SquarePen className="size-4" />
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            title="Nova pasta"
+            aria-label="Nova pasta"
+            onClick={onQuickNewFolder}
+          >
+            <FolderPlus className="size-4" />
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            title={sortTooltip}
+            aria-label={sortTooltip}
+            onClick={onCycleSort}
+          >
+            <ArrowDownAZ className="size-4" />
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            title="Recolher todas as pastas"
+            aria-label="Recolher todas as pastas"
+            onClick={onCollapseAllFolders}
+          >
+            <ChevronsDownUp className="size-4" />
+          </button>
+        </div>
+        <button
+          type="button"
+          className={iconBtn}
+          title="Ocultar barra lateral"
+          aria-label="Ocultar barra lateral"
+          onClick={onCollapseSidebar}
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+
+      {sidebarMode === "search" && (
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
+          <input
+            type="search"
+            value={sidebarSearchQuery}
+            onChange={(e) => setSidebarSearchQuery(e.target.value)}
+            placeholder="Buscar no cofre…"
+            className="w-full rounded border border-border bg-background px-1.5 py-1 font-mono text-[10px] outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+          />
+        </div>
+      )}
+
+      {sidebarMode === "files" && folderSearch && (
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
+          <div className="mb-1 flex items-center justify-between gap-1">
+            <span className="truncate font-mono text-[9px] text-muted-foreground" title={folderSearch.path}>
+              Busca em {folderSearch.path.split("/").pop() ?? folderSearch.path}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 font-mono text-[9px] text-primary hover:underline"
+              onClick={() => onFolderSearchChange(null)}
+            >
+              Voltar
+            </button>
+          </div>
+          <input
+            type="search"
+            value={folderSearch.query}
+            onChange={(e) => onFolderSearchChange({ ...folderSearch, query: e.target.value })}
+            placeholder="Filtrar nome…"
+            className="w-full rounded border border-border bg-background px-1.5 py-1 font-mono text-[10px] outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+          />
+        </div>
+      )}
+
+      <div ref={treeScrollRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        {sidebarMode === "files" && (
+          <>
+            <p
+              className="mb-1 truncate px-1 font-mono text-[10px] text-muted-foreground/60"
+              title={treeRootLabel}
+            >
+              {treeRootLabel}
+            </p>
+            <nav aria-label="workspace tree">
+              <VaultTreeView
+                entries={sortedEntries}
+                parentDirPath={listParentPath}
+                depth={0}
+                expandedPaths={expandedPaths}
+                onToggleDir={onToggleDir}
+                selectedId={selectedId}
+                onSelect={onSelect}
+                onExplorerCommand={onExplorerCommand}
+              />
+            </nav>
+          </>
+        )}
+
+        {sidebarMode === "search" && (
+          <ul className="space-y-0.5" aria-label="Resultados da busca">
+            {searchHits.length === 0 ? (
+              <li className="px-1 py-2 font-mono text-[10px] italic text-muted-foreground/60">
+                Nenhum arquivo
+              </li>
+            ) : (
+              searchHits.map((f) => (
+                <li key={f.docId}>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(f.docId)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-[11px] transition-colors",
+                      selectedId === f.docId
+                        ? "bg-primary/12 font-medium text-primary"
+                        : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+                    )}
+                  >
+                    <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/35" aria-hidden />
+                    <span className="min-w-0 truncate">{f.label}</span>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+
+        {sidebarMode === "bookmarks" && (
+          <>
+            <p className="mb-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground/80">
+              Marcadores
+            </p>
+            {bookmarks.length === 0 ? (
+              <p className="px-1 py-2 font-mono text-[10px] italic text-muted-foreground/50">
+                Nenhum marcador. Use o menu de contexto em um arquivo ou pasta.
+              </p>
+            ) : (
+              <ul className="space-y-0.5">
+                {bookmarks.map((b) => (
+                  <li
+                    key={b.kind === "file" ? `f-${b.docId}` : `d-${b.path}`}
+                    className="flex items-center gap-0.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onOpenBookmark(b)}
+                      className="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left font-mono text-[11px] text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+                      title={b.kind === "file" ? b.docId : b.path}
+                    >
+                      {b.label}
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded px-0.5 font-mono text-[10px] text-muted-foreground/50 hover:text-destructive"
+                      aria-label="Remover marcador"
+                      onClick={() => onRemoveBookmark(b)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </div>
+
+      <VaultSidebarFooter
+        vaults={vaultMetas}
+        activeId={activeVaultId}
+        activeName={activeVaultName}
+        pathTooltip={vaultPathTooltip}
+        statsLine={vaultStatsLine}
+        onSelectVault={onSelectVault}
+        onOpenManageVaults={onOpenManageVaults}
+      />
     </div>
   );
 }
 
 function VaultTreeView({
   entries,
+  parentDirPath,
   depth,
-  initialExpanded,
+  expandedPaths,
+  onToggleDir,
   selectedId,
   onSelect,
+  onExplorerCommand,
 }: {
   entries: TreeEntry[];
+  parentDirPath: string;
   depth: number;
-  initialExpanded: Set<string>;
+  expandedPaths: Set<string>;
+  onToggleDir: (path: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onExplorerCommand: (cmd: ExplorerCommand) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(initialExpanded);
-
-  const toggle = useCallback((path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
   return (
     <ul className={cn("space-y-0.5", depth > 0 && "ml-2 border-l border-border/50 pl-2")}>
       {entries.map((entry) => {
         if (entry.type === "dir") {
-          const isOpen = expanded.has(entry.path);
+          const isOpen = expandedPaths.has(entry.path);
           return (
             <li key={entry.path}>
-              <button
-                type="button"
-                onClick={() => toggle(entry.path)}
-                className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              <VaultExplorerContextMenu
+                target={{ kind: "folder", treePath: entry.path, name: entry.name }}
+                onCommand={onExplorerCommand}
               >
-                {isOpen ? (
-                  <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-                ) : (
-                  <ChevronRight className="size-3.5 shrink-0 opacity-60" />
-                )}
-                <span className="min-w-0 truncate">{entry.name}/</span>
-              </button>
+                <button
+                  type="button"
+                  data-tree-dir={entry.path}
+                  onClick={() => onToggleDir(entry.path)}
+                  className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  {isOpen ? (
+                    <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+                  ) : (
+                    <ChevronRight className="size-3.5 shrink-0 opacity-60" />
+                  )}
+                  <span className="min-w-0 truncate">{entry.name}/</span>
+                </button>
+              </VaultExplorerContextMenu>
               {isOpen && entry.children.length > 0 && (
                 <VaultTreeView
                   entries={entry.children}
+                  parentDirPath={entry.path}
                   depth={depth + 1}
-                  initialExpanded={initialExpanded}
+                  expandedPaths={expandedPaths}
+                  onToggleDir={onToggleDir}
                   selectedId={selectedId}
                   onSelect={onSelect}
+                  onExplorerCommand={onExplorerCommand}
                 />
               )}
               {isOpen && entry.children.length === 0 && (
@@ -730,25 +1961,36 @@ function VaultTreeView({
           const active = selectedId !== null && entry.docId === selectedId;
           return (
             <li key={entry.docId}>
-              <button
-                type="button"
-                onClick={() => onSelect(entry.docId)}
-                aria-current={active ? "true" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                  active
-                    ? "bg-primary/12 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
-                )}
+              <VaultExplorerContextMenu
+                target={{
+                  kind: "file",
+                  docId: entry.docId,
+                  name: entry.name,
+                  parentTreePath: parentDirPath,
+                }}
+                onCommand={onExplorerCommand}
               >
-                <span
+                <button
+                  type="button"
+                  data-tree-doc={entry.docId}
+                  onClick={() => onSelect(entry.docId)}
+                  aria-current={active ? "true" : undefined}
                   className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    active ? "bg-primary" : "bg-muted-foreground/35"
+                    "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    active
+                      ? "bg-primary/12 text-primary font-medium"
+                      : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                   )}
-                />
-                <span className="min-w-0 truncate">{entry.name}</span>
-              </button>
+                >
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      active ? "bg-primary" : "bg-muted-foreground/35"
+                    )}
+                  />
+                  <span className="min-w-0 truncate">{entry.name}</span>
+                </button>
+              </VaultExplorerContextMenu>
             </li>
           );
         }

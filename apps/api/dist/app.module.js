@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const throttler_1 = require("@nestjs/throttler");
+const ionos_module_1 = require("./ionos/ionos.module");
 const auth_module_1 = require("./auth/auth.module");
 const vaults_module_1 = require("./vaults/vaults.module");
 const sync_module_1 = require("./sync/sync.module");
@@ -23,6 +24,7 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             throttler_1.ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+            ionos_module_1.IonosModule,
             auth_module_1.AuthModule,
             vaults_module_1.VaultsModule,
             sync_module_1.SyncModule,
