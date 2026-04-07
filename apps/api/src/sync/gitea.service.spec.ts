@@ -18,7 +18,7 @@ describe('GiteaService', () => {
   it('reutiliza repo em conflito 409', async () => {
     const svc = new GiteaService();
     const fetchMock = jest
-      .spyOn(global, 'fetch' as never)
+      .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
         new Response(JSON.stringify({}), { status: 200 }),
       )
@@ -33,7 +33,7 @@ describe('GiteaService', () => {
   it('lança BadGateway quando gitea falha no create', async () => {
     const svc = new GiteaService();
     jest
-      .spyOn(global, 'fetch' as never)
+      .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
         new Response(JSON.stringify({}), { status: 200 }),
       )

@@ -2,14 +2,18 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Fly build context is apps/api only: no monorepo ../../packages — use self-contained tsconfig.
+ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build?schema=public"
+
 COPY package.json ./
-COPY tsconfig.json ./
+COPY tsconfig.docker.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 COPY src ./src
 
 RUN npm install
 RUN npx prisma generate
-RUN npm run build
+RUN npx nest build -p tsconfig.docker.json
 RUN npm prune --omit=dev
 
 FROM node:20-bookworm-slim AS runner

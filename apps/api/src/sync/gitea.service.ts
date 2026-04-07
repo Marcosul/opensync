@@ -37,7 +37,7 @@ export class GiteaService {
     }
   }
 
-  private get headers(): HeadersInit {
+  private get headers(): Record<string, string> {
     return {
       Authorization: `token ${this.token}`,
       'Content-Type': 'application/json',
