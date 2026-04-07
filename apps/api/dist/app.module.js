@@ -17,11 +17,13 @@ const commits_module_1 = require("./commits/commits.module");
 const graph_module_1 = require("./graph/graph.module");
 const plans_module_1 = require("./plans/plans.module");
 const billing_module_1 = require("./billing/billing.module");
+const health_controller_1 = require("./health.controller");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
+        controllers: [health_controller_1.HealthController],
         imports: [
             throttler_1.ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
             ionos_module_1.IonosModule,

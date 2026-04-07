@@ -8,8 +8,10 @@ import { CommitsModule } from './commits/commits.module';
 import { GraphModule } from './graph/graph.module';
 import { PlansModule } from './plans/plans.module';
 import { BillingModule } from './billing/billing.module';
+import { HealthController } from './health.controller';
 
 @Module({
+  controllers: [HealthController],
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     IonosModule,
