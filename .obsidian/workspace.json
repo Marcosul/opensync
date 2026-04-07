@@ -182,14 +182,21 @@
   },
   "active": "3a272238c815df43",
   "lastOpenFiles": [
+    "apps/api/src/sync/vault-git-sync.service.spec.ts",
+    "apps/web/src/app/api/vaults/[id]/sync/route.ts",
+    "apps/web/src/app/api/vaults/[id]/sync",
+    "apps/web/src/app/api/vaults/[id]",
+    "apps/web/src/lib/vault-sync-flatten.ts",
+    "apps/api/dist/vaults/dto/sync-vault.dto.d.ts",
+    "apps/api/dist/vaults/dto/sync-vault.dto.js",
+    "apps/api/src/vaults/dto/sync-vault.dto.ts",
+    "apps/api/dist/sync/vault-git-sync.service.d.ts",
+    "apps/api/dist/sync/vault-git-sync.service.js",
+    "apps/api/src/sync/vault-git-sync.service.ts",
     "dddd   ddd.md",
     "docs/dev/gitea-ionos-first-install.md",
     "docs/dev/README.md",
     "docs/dev/gitea-supabase-postgres.md",
-    "apps/web/src/components/app/sed5AivCn",
-    "apps/web/src/components/app/vault-explorer-tree-view.tsx",
-    "apps/web/src/app/(app)/settings/page.tsx",
-    "apps/web/src/app/(app)/settings",
     "docs/dev/fly-ionos-ssh.md"
   ]
 }

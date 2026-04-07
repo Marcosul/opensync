@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsDownUp,
+  CloudUpload,
   Columns,
   FileCode2,
   Folder,
@@ -115,6 +116,10 @@ import {
   type MockDoc,
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
+import {
+  flattenVaultTreeToSyncFiles,
+  isBackendSyncVaultId,
+} from "@/lib/vault-sync-flatten";
 import { cn } from "@/lib/utils";
 
 const DOC_BY_ID = Object.fromEntries(DOCS.map((d) => [d.id, d])) as Record<string, MockDoc>;
@@ -329,7 +334,7 @@ function VaultExplorerDeleteConfirmDialog({
           </button>
           <button
             type="button"
-            className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+            className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-muted/80 dark:text-red-400"
             onClick={onConfirm}
           >
             Apagar
@@ -448,6 +453,44 @@ export function VaultView() {
   const [explorerInlineRename, setExplorerInlineRename] = useState<ExplorerInlineRenameState>(null);
   const [explorerDeleteItems, setExplorerDeleteItems] = useState<ExplorerItemRef[] | null>(null);
   const [explorerTreeNonce, setExplorerTreeNonce] = useState(0);
+  const [giteaSyncStatus, setGiteaSyncStatus] = useState<
+    "idle" | "syncing" | "synced" | "error"
+  >("idle");
+
+  const treeRootRef = useRef(treeRoot);
+  const noteContentsRef = useRef(noteContents);
+  treeRootRef.current = treeRoot;
+  noteContentsRef.current = noteContents;
+
+  const syncAbortRef = useRef<AbortController | null>(null);
+
+  const runVaultGiteaSync = useCallback(async (vaultId: string) => {
+    if (!isBackendSyncVaultId(vaultId)) return;
+    syncAbortRef.current?.abort();
+    const ac = new AbortController();
+    syncAbortRef.current = ac;
+    setGiteaSyncStatus("syncing");
+    try {
+      const files = flattenVaultTreeToSyncFiles(
+        treeRootRef.current,
+        noteContentsRef.current,
+      );
+      await apiRequest<{ ok: boolean; commitHash: string }>(
+        `/api/vaults/${encodeURIComponent(vaultId)}/sync`,
+        {
+          method: "POST",
+          body: { files },
+          signal: ac.signal,
+        },
+      );
+      if (ac.signal.aborted) return;
+      setGiteaSyncStatus("synced");
+    } catch (err) {
+      if (ac.signal.aborted) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setGiteaSyncStatus("error");
+    }
+  }, []);
 
   useLayoutEffect(() => {
     const metas = readVaultMetas();
@@ -534,6 +577,24 @@ export function VaultView() {
     };
     saveSnapshot(activeVaultId, snap);
   }, [activeVaultId, treeRoot, noteContents, expandedPaths, bookmarks, ui]);
+
+  useEffect(() => {
+    if (!isBackendSyncVaultId(activeVaultId)) {
+      syncAbortRef.current?.abort();
+      setGiteaSyncStatus("idle");
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void runVaultGiteaSync(activeVaultId);
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [treeRoot, noteContents, activeVaultId, runVaultGiteaSync]);
+
+  useEffect(() => {
+    return () => {
+      syncAbortRef.current?.abort();
+    };
+  }, []);
 
   const activeVaultMeta = useMemo(
     () => vaultMetas.find((m) => m.id === activeVaultId),
@@ -1238,6 +1299,33 @@ export function VaultView() {
             <GitBranch className="size-3.5" />
             Grafo
           </TabButton>
+          {isBackendSyncVaultId(activeVaultId) ? (
+            <div className="flex shrink-0 items-center gap-1 border-l border-border/60 pl-1.5">
+              <span
+                className={cn(
+                  "hidden max-w-[9rem] truncate text-[10px] text-muted-foreground sm:inline",
+                  giteaSyncStatus === "error" && "text-destructive",
+                  giteaSyncStatus === "synced" && "text-emerald-600 dark:text-emerald-500",
+                )}
+                title={activeVaultMeta?.pathLabel ?? ""}
+              >
+                {giteaSyncStatus === "idle" && "Gitea"}
+                {giteaSyncStatus === "syncing" && "A sincronizar…"}
+                {giteaSyncStatus === "synced" && "Sincronizado"}
+                {giteaSyncStatus === "error" && "Erro sync"}
+              </span>
+              <button
+                type="button"
+                title="Sincronizar agora com o Gitea"
+                onClick={() => void runVaultGiteaSync(activeVaultId)}
+                disabled={giteaSyncStatus === "syncing"}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                aria-label="Sincronizar agora"
+              >
+                <CloudUpload className="size-4" />
+              </button>
+            </div>
+          ) : null}
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
             {openTabs.map((id) => (
               <FileTab

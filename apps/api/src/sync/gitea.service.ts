@@ -163,6 +163,30 @@ export class GiteaService {
     throw new BadGatewayException(`Falha ao criar repo no Gitea: ${body}`);
   }
 
+  /**
+   * URL de clone HTTP(S) com token para uso em `simple-git` (oauth2 + token no password).
+   */
+  buildAuthenticatedCloneUrl(repoFullName: string): string {
+    this.ensureConfigured();
+    const [owner, repo] = repoFullName.split('/').map((s) => s.trim());
+    if (!owner || !repo) {
+      throw new InternalServerErrorException('giteaRepo invalido (esperado owner/repo)');
+    }
+    const base = this.baseUrl.includes('://')
+      ? this.baseUrl
+      : `http://${this.baseUrl}`;
+    let u: URL;
+    try {
+      u = new URL(base);
+    } catch {
+      throw new InternalServerErrorException('GITEA_URL invalido');
+    }
+    const user = 'oauth2';
+    const pass = encodeURIComponent(this.token);
+    const pathPrefix = u.pathname.replace(/\/$/, '');
+    return `${u.protocol}//${user}:${pass}@${u.host}${pathPrefix}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}.git`;
+  }
+
   async deleteRepo(repoFullName: string): Promise<void> {
     this.ensureConfigured();
     const [owner, repo] = repoFullName.split('/');

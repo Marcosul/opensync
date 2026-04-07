@@ -167,10 +167,12 @@ export function VaultExplorerTreeView({
     const k = explorerRowKey(row);
     const picked = explorerSelKeys.has(k) || (explorerSelKeys.size === 0 && row.kind === "file" && row.docId === selectedId);
     const focused = explorerFocusIdx !== null && flatIndexByKey.get(k) === explorerFocusIdx;
+    const isFolder = row.kind === "folder";
     return cn(
-      picked && "bg-primary/12 text-primary",
+      picked &&
+        (isFolder ? "bg-muted/50 text-foreground" : "bg-primary/12 text-primary"),
       !picked && "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-      focused && "ring-1 ring-primary/50 ring-offset-1 ring-offset-sidebar",
+      focused && "ring-1 ring-border/80 ring-offset-1 ring-offset-sidebar",
       fileActive && picked && "font-medium"
     );
   };
@@ -252,8 +254,7 @@ export function VaultExplorerTreeView({
                   onDrop={(e) => onFolderDrop(e, entry.path)}
                   className={cn(
                     "flex w-full items-center gap-0.5 rounded-md px-0.5 transition-[background-color,box-shadow] duration-100",
-                    dropActive &&
-                      "bg-primary/25 ring-2 ring-primary/70 ring-offset-2 ring-offset-sidebar"
+                    dropActive && "bg-muted/45 ring-1 ring-border"
                   )}
                 >
                   <button
@@ -276,12 +277,16 @@ export function VaultExplorerTreeView({
                     draggable
                     data-tree-dir={entry.path}
                     onPointerDown={(e) => onExplorerRowPointerDown(e, folderRow)}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                      onToggleDir(entry.path);
+                    }}
                     onDragStart={(e) => {
                       onExplorerDragStart(e, folderRow);
                       e.currentTarget.blur();
                     }}
                     className={cn(
-                      "min-w-0 flex-1 rounded px-1 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                      "min-w-0 flex-1 rounded px-1 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border",
                       rowVisual(folderRow, false)
                     )}
                   >
@@ -384,7 +389,7 @@ export function VaultExplorerTreeView({
                   onClick={() => onSelect(entry.docId)}
                   aria-current={active ? "true" : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border",
                     rowVisual(fileRow, active)
                   )}
                 >

@@ -5,6 +5,7 @@ type RequestOptions = {
   body?: unknown;
   headers?: HeadersInit;
   cache?: RequestCache;
+  signal?: AbortSignal;
 };
 
 /**
@@ -24,7 +25,7 @@ export async function apiRequest<TResponse>(
   path: string,
   options: RequestOptions = {},
 ) {
-  const { method = "GET", body, headers, cache = "no-store" } = options;
+  const { method = "GET", body, headers, cache = "no-store", signal } = options;
 
   const response = await fetch(getRequestUrl(path), {
     method,
@@ -34,6 +35,7 @@ export async function apiRequest<TResponse>(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache,
+    signal,
   });
 
   if (!response.ok) {

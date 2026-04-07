@@ -32,6 +32,10 @@ export function docIdPrefixFromDirPath(dirPath: string): string {
   ) {
     return "";
   }
+  /** Pastas do cofre em branco: `vault-root/projeto1/...` -> caminhos relativos no repo. */
+  if (dirPath.startsWith("vault-root/")) {
+    return `${dirPath.slice("vault-root/".length)}/`;
+  }
   if (dirPath.startsWith("openclaw/workspace/")) {
     return `${dirPath.slice("openclaw/workspace/".length)}/`;
   }

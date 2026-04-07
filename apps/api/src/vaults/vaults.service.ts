@@ -88,6 +88,16 @@ export class VaultsService {
     }
   }
 
+  async getVaultForUser(
+    userId: string,
+    vaultId: string,
+  ): Promise<{ id: string; giteaRepo: string } | null> {
+    return this.prisma.vault.findFirst({
+      where: { id: vaultId, userId, isActive: true },
+      select: { id: true, giteaRepo: true },
+    });
+  }
+
   async listVaultsForUser(userId: string) {
     const vaults = await this.prisma.vault.findMany({
       where: { userId, isActive: true },
