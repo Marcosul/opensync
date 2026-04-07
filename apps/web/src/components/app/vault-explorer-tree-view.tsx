@@ -15,11 +15,11 @@ import { VAULT_EXPLORER_DRAG_MIME } from "@/components/app/vault-tree-ops";
 import { cn } from "@/lib/utils";
 
 export type ExplorerVisibleRow =
-  | { kind: "file"; docId: string; name: string }
+  | { kind: "file"; docId: string; name: string; parentTreePath: string }
   | { kind: "folder"; path: string; name: string };
 
 export function explorerRowKey(row: ExplorerVisibleRow): string {
-  return row.kind === "file" ? `f:${row.docId}` : `d:${row.path}`;
+  return row.kind === "file" ? `f:${row.parentTreePath}:${row.docId}` : `d:${row.path}`;
 }
 
 export function rowToItemRef(row: ExplorerVisibleRow): ExplorerItemRef {
@@ -65,7 +65,7 @@ export function parseExplorerDragPayload(dt: DataTransfer): ExplorerItemRef[] | 
 
 export type ExplorerInlineRenameState =
   | null
-  | { kind: "file"; docId: string; draft: string; initialName: string }
+  | { kind: "file"; docId: string; parentTreePath: string; draft: string; initialName: string }
   | { kind: "folder"; treePath: string; draft: string; initialName: string };
 
 export type VaultExplorerTreeViewProps = {
@@ -186,12 +186,14 @@ export function VaultExplorerTreeView({
           if (inlineRename?.kind === "folder" && inlineRename.treePath === entry.path) {
             const session = inlineRename;
             return (
-              <li
-                key={entry.path}
-                onDragOverCapture={(e) => onFolderDragOver(e, entry.path)}
-                onDrop={(e) => onFolderDrop(e, entry.path)}
-              >
-                <div className={cn(renameRowClass)} data-explorer-inline-rename>
+              <li key={entry.path} onDrop={(e) => onFolderDrop(e, entry.path)}>
+                <div
+                  className={cn(renameRowClass)}
+                  data-explorer-inline-rename
+                  data-explorer-folder-drop-target=""
+                  onDragOver={(e) => onFolderDragOver(e, entry.path)}
+                  onDrop={(e) => onFolderDrop(e, entry.path)}
+                >
                   <button
                     type="button"
                     data-tree-dir={entry.path}
@@ -239,16 +241,15 @@ export function VaultExplorerTreeView({
           }
 
           return (
-            <li
-              key={entry.path}
-              onDragOverCapture={(e) => onFolderDragOver(e, entry.path)}
-              onDrop={(e) => onFolderDrop(e, entry.path)}
-            >
+            <li key={entry.path} onDrop={(e) => onFolderDrop(e, entry.path)}>
               <VaultExplorerContextMenu
                 target={{ kind: "folder", treePath: entry.path, name: entry.name }}
                 onCommand={onExplorerCommand}
               >
                 <div
+                  data-explorer-folder-drop-target=""
+                  onDragOver={(e) => onFolderDragOver(e, entry.path)}
+                  onDrop={(e) => onFolderDrop(e, entry.path)}
                   className={cn(
                     "flex w-full items-center gap-0.5 rounded-md px-0.5 transition-[background-color,box-shadow] duration-100",
                     dropActive &&
@@ -261,8 +262,6 @@ export function VaultExplorerTreeView({
                       ev.stopPropagation();
                       onToggleDir(entry.path);
                     }}
-                    onDragOver={(e) => onFolderDragOver(e, entry.path)}
-                    onDrop={(e) => onFolderDrop(e, entry.path)}
                     className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                     aria-label={isOpen ? "Recolher pasta" : "Expandir pasta"}
                   >
@@ -277,9 +276,10 @@ export function VaultExplorerTreeView({
                     draggable
                     data-tree-dir={entry.path}
                     onPointerDown={(e) => onExplorerRowPointerDown(e, folderRow)}
-                    onDragStart={(e) => onExplorerDragStart(e, folderRow)}
-                    onDragOver={(e) => onFolderDragOver(e, entry.path)}
-                    onDrop={(e) => onFolderDrop(e, entry.path)}
+                    onDragStart={(e) => {
+                      onExplorerDragStart(e, folderRow);
+                      e.currentTarget.blur();
+                    }}
                     className={cn(
                       "min-w-0 flex-1 rounded px-1 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                       rowVisual(folderRow, false)
@@ -324,9 +324,18 @@ export function VaultExplorerTreeView({
 
         if (entry.type === "file" && "docId" in entry) {
           const active = selectedId !== null && entry.docId === selectedId;
-          const fileRow: ExplorerVisibleRow = { kind: "file", docId: entry.docId, name: entry.name };
+          const fileRow: ExplorerVisibleRow = {
+            kind: "file",
+            docId: entry.docId,
+            name: entry.name,
+            parentTreePath: parentDirPath,
+          };
 
-          if (inlineRename?.kind === "file" && inlineRename.docId === entry.docId) {
+          if (
+            inlineRename?.kind === "file" &&
+            inlineRename.docId === entry.docId &&
+            inlineRename.parentTreePath === parentDirPath
+          ) {
             const session = inlineRename;
             return (
               <li key={entry.docId}>
@@ -368,7 +377,10 @@ export function VaultExplorerTreeView({
                   draggable
                   data-tree-doc={entry.docId}
                   onPointerDown={(e) => onExplorerRowPointerDown(e, fileRow)}
-                  onDragStart={(e) => onExplorerDragStart(e, fileRow)}
+                  onDragStart={(e) => {
+                    onExplorerDragStart(e, fileRow);
+                    e.currentTarget.blur();
+                  }}
                   onClick={() => onSelect(entry.docId)}
                   aria-current={active ? "true" : undefined}
                   className={cn(

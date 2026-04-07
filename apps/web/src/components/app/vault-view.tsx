@@ -249,16 +249,20 @@ function sortTreeEntries(entries: TreeEntry[], order: TreeSortOrder): TreeEntry[
 }
 
 /** Linhas visíveis na ordem do explorador (respeita expand/collapse). */
-function flattenVisibleExplorerRows(entries: TreeEntry[], expandedPaths: Set<string>): ExplorerVisibleRow[] {
+function flattenVisibleExplorerRows(
+  entries: TreeEntry[],
+  expandedPaths: Set<string>,
+  parentTreePath: string
+): ExplorerVisibleRow[] {
   const out: ExplorerVisibleRow[] = [];
   for (const e of entries) {
     if (e.type === "dir") {
       out.push({ kind: "folder", path: e.path, name: e.name });
       if (expandedPaths.has(e.path)) {
-        out.push(...flattenVisibleExplorerRows(e.children, expandedPaths));
+        out.push(...flattenVisibleExplorerRows(e.children, expandedPaths, e.path));
       }
     } else if (e.type === "file" && "docId" in e && !("disabled" in e && e.disabled)) {
-      out.push({ kind: "file", docId: e.docId, name: e.name });
+      out.push({ kind: "file", docId: e.docId, name: e.name, parentTreePath });
     }
   }
   return out;
@@ -414,9 +418,9 @@ function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiStat
 }
 
 const EXPLORER_INLINE_RENAME_ROW_CLASS =
-  "flex w-full items-center gap-1 rounded-md border border-primary/70 bg-card/80 px-1 py-0.5 shadow-sm ring-2 ring-primary/50 ring-offset-2 ring-offset-sidebar";
+  "flex w-full items-center gap-1 rounded-md border border-border bg-muted/40 px-1 py-0.5 shadow-sm";
 const EXPLORER_INLINE_RENAME_INPUT_CLASS =
-  "min-w-0 flex-1 rounded-sm border-0 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-foreground outline-none selection:bg-primary/25 focus-visible:ring-0 dark:bg-primary/15";
+  "min-w-0 flex-1 rounded-sm border border-border/80 bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground outline-none selection:bg-muted focus-visible:ring-1 focus-visible:ring-border dark:bg-background";
 
 export function VaultView() {
   const router = useRouter();
@@ -753,6 +757,35 @@ export function VaultView() {
 
   const skipExplorerRenameBlurCommitRef = useRef(false);
 
+  const explorerRenameTargetKey = useMemo(() => {
+    if (!explorerInlineRename) return null;
+    return explorerInlineRename.kind === "file"
+      ? `f:${explorerInlineRename.parentTreePath}:${explorerInlineRename.docId}`
+      : `d:${explorerInlineRename.treePath}`;
+  }, [explorerInlineRename]);
+
+  /** Evita commit no blur disparado ao fechar o menu de contexto / restauração de foco. */
+  useEffect(() => {
+    if (explorerRenameTargetKey === null) return;
+    skipExplorerRenameBlurCommitRef.current = true;
+    let cancelled = false;
+    const id1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        skipExplorerRenameBlurCommitRef.current = false;
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id1);
+    };
+  }, [explorerRenameTargetKey]);
+
+  const openExplorerInlineRename = useCallback((session: NonNullable<ExplorerInlineRenameState>) => {
+    queueMicrotask(() => setExplorerInlineRename(session));
+  }, []);
+
   const bumpExplorerTree = useCallback(() => setExplorerTreeNonce((n) => n + 1), []);
 
   const openExplorerDeleteDialog = useCallback((items: ExplorerItemRef[]) => {
@@ -1038,14 +1071,15 @@ export function VaultView() {
           const t = cmd.target;
           if (t.kind === "pane") return;
           if (t.kind === "file") {
-            setExplorerInlineRename({
+            openExplorerInlineRename({
               kind: "file",
               docId: t.docId,
+              parentTreePath: t.parentTreePath,
               draft: t.name,
               initialName: t.name,
             });
           } else {
-            setExplorerInlineRename({
+            openExplorerInlineRename({
               kind: "folder",
               treePath: t.treePath,
               draft: t.name,
@@ -1068,7 +1102,15 @@ export function VaultView() {
           break;
       }
     },
-    [treeRoot, noteContents, treeChildren, browseSelectFile, migrateDocPrefixes, openExplorerDeleteDialog]
+    [
+      treeRoot,
+      noteContents,
+      treeChildren,
+      browseSelectFile,
+      migrateDocPrefixes,
+      openExplorerDeleteDialog,
+      openExplorerInlineRename,
+    ]
   );
 
   const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
@@ -1171,14 +1213,15 @@ export function VaultView() {
             }
             onExplorerRenameRow={(row) => {
               if (row.kind === "file") {
-                setExplorerInlineRename({
+                openExplorerInlineRename({
                   kind: "file",
                   docId: row.docId,
+                  parentTreePath: row.parentTreePath,
                   draft: row.name,
                   initialName: row.name,
                 });
               } else {
-                setExplorerInlineRename({
+                openExplorerInlineRename({
                   kind: "folder",
                   treePath: row.path,
                   draft: row.name,
@@ -1895,8 +1938,8 @@ function FileTree({
   );
 
   const explorerFlatRows = useMemo(
-    () => flattenVisibleExplorerRows(sortedEntries, expandedPaths),
-    [sortedEntries, expandedPaths]
+    () => flattenVisibleExplorerRows(sortedEntries, expandedPaths, listParentPath),
+    [sortedEntries, expandedPaths, listParentPath]
   );
 
   const explorerFlatIndexByKey = useMemo(() => {
@@ -1969,6 +2012,7 @@ function FileTree({
   const handleExplorerDragStart = useCallback(
     (e: DragEvent, row: ExplorerVisibleRow) => {
       explorerInternalDragActiveRef.current = true;
+      setExplorerFocusIdx(null);
       const refs = explorerRefsForDragRow(row, explorerSelKeys, explorerFlatRows);
       const payload = JSON.stringify(refs);
       e.dataTransfer.setData(VAULT_EXPLORER_DRAG_MIME, payload);
@@ -2006,9 +2050,13 @@ function FileTree({
       if (!isVaultExplorerDragDataTransfer(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      setExplorerDragOverPath(listParentPath);
+      const el = e.target as HTMLElement | null;
+      // Só mantém destaque na linha da pasta; na bolha isso roda depois e limpa sobre arquivos/área vazia.
+      if (!el?.closest?.("[data-explorer-folder-drop-target]")) {
+        setExplorerDragOverPath(null);
+      }
     },
-    [listParentPath, isVaultExplorerDragDataTransfer]
+    [isVaultExplorerDragDataTransfer]
   );
 
   const handleExplorerPaneDrop = useCallback(
@@ -2046,7 +2094,12 @@ function FileTree({
         e.preventDefault();
         let row: ExplorerVisibleRow | undefined;
         if (explorerFocusIdx !== null) row = rows[explorerFocusIdx];
-        else if (selectedId) row = rows.find((r) => r.kind === "file" && r.docId === selectedId);
+        else if (explorerSelKeys.size === 1) {
+          const only = [...explorerSelKeys][0];
+          row = rows.find((r) => explorerRowKey(r) === only);
+        } else if (selectedId) {
+          row = rows.find((r) => r.kind === "file" && r.docId === selectedId);
+        }
         if (row) onExplorerRenameRow(row);
         return;
       }
@@ -2296,11 +2349,7 @@ function FileTree({
                 onKeyDown={handleExplorerTreeKeyDown}
                 onDragOver={handleExplorerPaneDragOver}
                 onDrop={handleExplorerPaneDrop}
-                className={cn(
-                  "min-h-0 flex-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                  explorerDragOverPath === listParentPath &&
-                    "bg-primary/10 ring-2 ring-primary/50 ring-offset-2 ring-offset-sidebar"
-                )}
+                className="min-h-0 flex-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
               >
                 <nav className="min-h-0" aria-label="workspace tree">
                   <VaultExplorerTreeView
