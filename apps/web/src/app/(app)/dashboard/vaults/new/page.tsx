@@ -109,6 +109,17 @@ export default function NewVaultPage() {
     [startChoice],
   );
 
+  function formatSubmitError(raw: string): string {
+    try {
+      const parsed = JSON.parse(raw) as { error?: string; message?: string };
+      if (typeof parsed.error === "string" && parsed.error) return parsed.error;
+      if (typeof parsed.message === "string" && parsed.message) return parsed.message;
+    } catch {
+      // keep raw message
+    }
+    return raw;
+  }
+
   async function handleConnectAgent() {
     setSubmitError(null);
     setIsSubmitting(true);
@@ -124,17 +135,9 @@ export default function NewVaultPage() {
       });
       router.replace("/dashboard");
     } catch (error) {
-      let message =
+      const message =
         error instanceof Error ? error.message : "Nao foi possivel conectar o vault.";
-      try {
-        const parsed = JSON.parse(message) as { error?: string };
-        if (parsed.error) {
-          message = parsed.error;
-        }
-      } catch {
-        // keep raw message
-      }
-      setSubmitError(message);
+      setSubmitError(formatSubmitError(message));
     } finally {
       setIsSubmitting(false);
     }
@@ -151,17 +154,9 @@ export default function NewVaultPage() {
       writePendingActiveVaultId(vault.id);
       router.push("/vault");
     } catch (error) {
-      let message =
+      const message =
         error instanceof Error ? error.message : "Nao foi possivel salvar o vault.";
-      try {
-        const parsed = JSON.parse(message) as { error?: string };
-        if (parsed.error) {
-          message = parsed.error;
-        }
-      } catch {
-        // keep raw message
-      }
-      setSubmitError(message);
+      setSubmitError(formatSubmitError(message));
     } finally {
       setIsSubmitting(false);
     }
@@ -210,7 +205,9 @@ export default function NewVaultPage() {
           : "Conectar vault"
         : startChoice === "agent_project"
           ? "Ir para onboarding"
-          : "Abrir o vault";
+          : isSubmitting
+            ? "Criando..."
+            : "Criar e abrir o vault";
 
   const primaryDisabled =
     step === 1
@@ -225,7 +222,7 @@ export default function NewVaultPage() {
       : step === 2
         ? "Nome"
         : startChoice === "empty_vault"
-          ? "Tudo pronto!"
+          ? "Confirmar criacao"
           : "Como o OpenSync deve acessar seu agente?";
 
   const stepDescription =
@@ -237,7 +234,7 @@ export default function NewVaultPage() {
           ? "Escolha uma forma de acesso. Os dados conectam ao seu ambiente; em producao, prefira segredos no servidor."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
-            : `O vault "${vaultName.trim() || "…"}" foi preparado. Voce pode abri-lo agora no explorador; conectar um agente fica para quando quiser.`;
+            : `O vault "${vaultName.trim() || "…"}" sera criado no servidor (banco de dados + repositorio no Gitea) quando voce confirmar. Depois voce entra no explorador; conectar um agente pode ser feito depois.`;
 
   const step3EmptySuccess =
     step === 3 && startChoice === "empty_vault";
@@ -259,7 +256,7 @@ export default function NewVaultPage() {
         <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {step3EmptySuccess
-              ? "Vault vazio — Concluido"
+              ? "Vault vazio — Confirmar"
               : `Adicionar vault — Etapa ${step} de ${TOTAL_STEPS}`}
           </p>
           {step === 2 ? (
@@ -271,11 +268,7 @@ export default function NewVaultPage() {
             </div>
           ) : null}
           <h1
-            className={cn(
-              "text-2xl font-semibold tracking-tight",
-              step === 2 ? "mt-4" : "mt-2",
-              step3EmptySuccess && "text-emerald-900 dark:text-emerald-100",
-            )}
+            className={cn("text-2xl font-semibold tracking-tight", step === 2 ? "mt-4" : "mt-2")}
           >
             {stepTitle}
           </h1>
@@ -384,19 +377,19 @@ export default function NewVaultPage() {
             ) : null}
 
             {step3EmptySuccess ? (
-              <div className="flex flex-col items-center rounded-xl border border-emerald-200/90 bg-emerald-50/60 py-10 text-center dark:border-emerald-900/50 dark:bg-emerald-950/25">
+              <div className="flex flex-col items-center rounded-xl border border-border bg-muted/30 py-10 text-center">
                 <div
-                  className="flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 shadow-sm dark:bg-emerald-950/60 dark:text-emerald-400"
+                  className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground shadow-sm"
                   aria-hidden
                 >
                   <CheckCircle2 className="size-9" strokeWidth={1.75} />
                 </div>
                 <p className="mt-5 max-w-sm text-sm font-medium text-foreground">
-                  Vault vazio criado com sucesso
+                  Pronto para criar o vault vazio
                 </p>
                 <p className="mt-2 max-w-xs text-xs text-muted-foreground">
-                  Nenhuma conexao com agente e necessaria neste momento. Use o botao abaixo para entrar no
-                  explorador.
+                  Ao confirmar, criamos o registro e o repositorio remoto. Nenhuma conexao com agente e
+                  necessaria agora; voce abre o explorador em seguida.
                 </p>
               </div>
             ) : null}

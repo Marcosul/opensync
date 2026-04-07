@@ -57,7 +57,18 @@ export class GiteaService {
   }
 
   private async fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, init);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, init);
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}🌐 Gitea rede/indisponivel:${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(
+        `Nao foi possivel contatar o Gitea (${this.baseUrl}). Verifique GITEA_URL e rede: ${hint}`,
+      );
+    }
     if (!response.ok) {
       const text = await response.text();
       throw new BadGatewayException(`Gitea HTTP ${response.status}: ${text}`);
@@ -67,9 +78,20 @@ export class GiteaService {
 
   private async ensureOrgExists(org: string): Promise<void> {
     this.ensureConfigured();
-    const check = await fetch(`${this.baseUrl}/api/v1/orgs/${org}`, {
-      headers: this.headers,
-    });
+    let check: Response;
+    try {
+      check = await fetch(`${this.baseUrl}/api/v1/orgs/${org}`, {
+        headers: this.headers,
+      });
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}🌐 Gitea (orgs):${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(
+        `Nao foi possivel contatar o Gitea: ${hint}`,
+      );
+    }
     if (check.ok) return;
     if (check.status !== 404) {
       const body = await check.text();
@@ -97,15 +119,26 @@ export class GiteaService {
     await this.ensureOrgExists(org);
 
     const path = `/api/v1/orgs/${encodeURIComponent(org)}/repos`;
-    const create = await fetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        name: repoName,
-        private: true,
-        auto_init: true,
-      }),
-    });
+    let create: Response;
+    try {
+      create = await fetch(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({
+          name: repoName,
+          private: true,
+          auto_init: true,
+        }),
+      });
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}🌐 Gitea (criar repo):${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(
+        `Nao foi possivel criar repo no Gitea: ${hint}`,
+      );
+    }
 
     if (create.ok) {
       const repo = (await create.json()) as GiteaRepo;

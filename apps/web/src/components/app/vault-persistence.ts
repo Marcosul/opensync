@@ -120,7 +120,7 @@ export type VaultSnapshotV1 = {
 };
 
 export const initialVaultUi: VaultUiState = {
-  viewMode: "graph",
+  viewMode: "editor",
   openTabs: ["AGENTS.md"],
   activeTabId: "AGENTS.md",
 };
@@ -253,14 +253,29 @@ export function writeActiveVaultId(id: string): void {
   }
 }
 
+/**
+ * Estados antigos vinham com aba de arquivo "aberta" mas viewMode no grafo — área central
+ * ficava vazia (grade) e parecia que a nota não carregava. Com aba ativa, mostrar o editor.
+ */
+function normalizeLoadedUi(ui: VaultUiState): VaultUiState {
+  if (
+    ui.viewMode === "graph" &&
+    ui.activeTabId &&
+    ui.openTabs.includes(ui.activeTabId)
+  ) {
+    return { ...ui, viewMode: "editor" };
+  }
+  return ui;
+}
+
 export function loadSnapshot(vaultId: string, meta: VaultMeta | undefined): VaultSnapshotV1 {
   if (typeof window === "undefined") return defaultSnapshotForMeta(meta);
   try {
     const raw = localStorage.getItem(vaultSnapshotKey(vaultId));
     if (!raw) return defaultSnapshotForMeta(meta);
     const parsed = JSON.parse(raw) as VaultSnapshotV1;
-    if (parsed?.v !== 1 || !parsed.tree) return defaultSnapshotForMeta(meta);
-    return parsed;
+    if (parsed?.v !== 1 || !parsed.tree || !parsed.ui) return defaultSnapshotForMeta(meta);
+    return { ...parsed, ui: normalizeLoadedUi(parsed.ui) };
   } catch {
     return defaultSnapshotForMeta(meta);
   }

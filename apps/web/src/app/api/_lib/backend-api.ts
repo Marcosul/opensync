@@ -7,6 +7,15 @@ function resolveBackendBaseUrl(): string {
   return clean.endsWith("/api") ? clean.slice(0, -4) : clean;
 }
 
+/** NestJS usa `setGlobalPrefix('api')`; paths sem `/api` viram 404 no servidor real. */
+function resolveBackendPath(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  if (normalized === "/api" || normalized.startsWith("/api/")) {
+    return normalized;
+  }
+  return `/api${normalized}`;
+}
+
 export type BackendVault = {
   id: string;
   name: string;
@@ -25,7 +34,7 @@ export async function backendRequest<T>(
     throw new Error("NEXT_PUBLIC_API_URL/OPENSYNC_API_URL não configurado");
   }
   const method = options.method ?? "GET";
-  const response = await fetch(`${base}${path}`, {
+  const response = await fetch(`${base}${resolveBackendPath(path)}`, {
     method,
     headers: {
       "Content-Type": "application/json",

@@ -4,6 +4,7 @@ const core_1 = require("@nestjs/core");
 const platform_fastify_1 = require("@nestjs/platform-fastify");
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
+const prisma_exception_filter_1 = require("./common/prisma-exception.filter");
 const app_module_1 = require("./app.module");
 const colors = {
     reset: '\x1b[0m',
@@ -14,6 +15,7 @@ const colors = {
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, new platform_fastify_1.FastifyAdapter());
     app.setGlobalPrefix('api');
+    app.useGlobalFilters(new prisma_exception_filter_1.PrismaKnownRequestExceptionFilter(), new prisma_exception_filter_1.PrismaValidationExceptionFilter());
     const fastify = app.getHttpAdapter().getInstance();
     fastify.get('/', async (_req, reply) => {
         console.log(`${colors.magenta}🏠 Alguém acessou a raiz (GET /) — redirecionando mentalmente para /docs ✨${colors.reset}`);

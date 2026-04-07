@@ -10,7 +10,7 @@ type RequestOptions = {
 /**
  * Chamadas para Route Handlers do próprio app (`/api/...`).
  * Não usar `NEXT_PUBLIC_API_URL` aqui — essa env é o backend OpenSync (Gitea etc.),
- * usado só em `backendRequest`; mandar `/api/vaults/list` para lá gera 404 no servidor externo.
+ * usado só em `backendRequest` (que monta a URL do Nest com prefixo `/api`).
  */
 function getRequestUrl(path: string) {
   if (/^https?:\/\//i.test(path)) {

@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
+import { useSyncBaseTheme } from "@/components/theme/base-theme-provider";
 import { Button } from "@/components/ui/button";
 import { defaultUserSettings, type UserSettings } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,8 @@ export default function SettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasFetched, setHasFetched] = useState(false);
   const lastSavedRef = useRef(JSON.stringify(defaultUserSettings));
+  const settingsLoadSucceededRef = useRef(false);
+  const syncBaseTheme = useSyncBaseTheme();
 
   const activeSectionData = useMemo(
     () => settingsSections.find((section) => section.id === activeSection),
@@ -70,6 +73,7 @@ export default function SettingsPage() {
         if (!mounted) return;
         setSettings(response.settings);
         lastSavedRef.current = JSON.stringify(response.settings);
+        settingsLoadSucceededRef.current = true;
         setSaveState("saved");
       } catch (error) {
         if (!mounted) return;
@@ -117,6 +121,11 @@ export default function SettingsPage() {
 
     return () => clearTimeout(timeout);
   }, [hasFetched, settings]);
+
+  useEffect(() => {
+    if (!hasFetched || !settingsLoadSucceededRef.current) return;
+    syncBaseTheme(settings.baseTheme);
+  }, [hasFetched, settings.baseTheme, syncBaseTheme]);
 
   function updateSetting<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));

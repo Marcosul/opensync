@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * Menu de manutenção Prisma (roda no contexto de @opensync/api).
- * Na raiz: pnpm prisma
+ * Prisma no pacote @opensync/api (carrega apps/api/.env).
+ *
+ * - Menu:     pnpm prisma
+ * - Direto:   pnpm prisma -- migrate deploy
+ * - Atalhos:  pnpm prisma:generate | prisma:deploy | prisma:push | …
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -55,6 +58,13 @@ function preferDirectDatabaseUrl() {
   }
 }
 
+/** Comandos que falam com a BD: no Supabase use DIRECT_URL (5432) para não travar no pooler. */
+function shouldUseDirectUrl(args) {
+  const head = args[0]?.toLowerCase();
+  if (head === "migrate" || head === "db" || head === "studio") return true;
+  return false;
+}
+
 function runPrisma(args, { useDirectUrl = false } = {}) {
   loadEnvFromFile(apiEnvPath);
   if (useDirectUrl) {
@@ -79,6 +89,13 @@ function runPrisma(args, { useDirectUrl = false } = {}) {
   return result.status ?? 1;
 }
 
+function runPassthrough() {
+  const args = process.argv.slice(2);
+  if (args.length === 0) return false;
+  const code = runPrisma(args, { useDirectUrl: shouldUseDirectUrl(args) });
+  process.exit(code);
+}
+
 const MENU = `
 ${colors.green}Prisma — manutenção (@opensync/api)${colors.reset}
 ${colors.dim}Carrega apps/api/.env (sem sobrescrever variáveis já definidas no shell).${colors.reset}
@@ -92,7 +109,11 @@ ${colors.dim}Carrega apps/api/.env (sem sobrescrever variáveis já definidas no
   ${colors.cyan}7${colors.reset}  format            — formata os ficheiros Prisma
   ${colors.cyan}8${colors.reset}  validate          — valida schema e migrações
   ${colors.cyan}9${colors.reset}  db pull           — introspect → atualiza schema a partir da BD (usa DIRECT_URL se existir)
+  ${colors.cyan}a${colors.reset}  db execute      — executa ficheiro SQL (--file …)
   ${colors.cyan}0${colors.reset}  sair
+
+${colors.dim}Linha de comando: pnpm prisma -- migrate deploy
+Atalhos na raiz: pnpm prisma:generate | prisma:migrate | prisma:deploy | …${colors.reset}
 `;
 
 async function main() {
@@ -101,14 +122,19 @@ async function main() {
     process.exit(1);
   }
 
+  if (process.argv.length > 2) {
+    runPassthrough();
+    return;
+  }
+
   const rl = readline.createInterface({ input, output });
 
   try {
     while (true) {
       console.log(MENU);
-      const raw = (await rl.question(`${colors.green}Opção [0-9]: ${colors.reset}`)).trim();
+      const raw = (await rl.question(`${colors.green}Opção [0-9a]: ${colors.reset}`)).trim();
 
-      switch (raw) {
+      switch (raw.toLowerCase()) {
         case "1":
           runPrisma(["generate"]);
           break;
@@ -136,6 +162,19 @@ async function main() {
         case "9":
           runPrisma(["db", "pull"], { useDirectUrl: true });
           break;
+        case "a": {
+          const file = (
+            await rl.question(`${colors.green}Caminho do .sql (relativo à raiz do repo): ${colors.reset}`)
+          ).trim();
+          if (!file) {
+            log("Caminho em falta.", "yellow");
+            break;
+          }
+          runPrisma(["db", "execute", "--file", join(rootDir, file)], {
+            useDirectUrl: true,
+          });
+          break;
+        }
         case "0":
         case "":
           log("Até logo.", "green");
