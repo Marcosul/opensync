@@ -1,5 +1,8 @@
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
 
+/** Raiz da árvore após operações que exigem pasta como root (sempre `type: "dir"`). */
+export type TreeDirRoot = Extract<TreeEntry, { type: "dir" }>;
+
 export function cloneTreeEntry(entry: TreeEntry): TreeEntry {
   if (entry.type === "dir") {
     return { ...entry, children: entry.children.map(cloneTreeEntry) };
@@ -133,7 +136,7 @@ function addChildToDir(entries: TreeEntry[], dirPath: string, child: TreeEntry):
 }
 
 export type EnsureMissionMdResult =
-  | { ok: true; root: TreeEntry; docId: string; existed: boolean }
+  | { ok: true; root: TreeDirRoot; docId: string; existed: boolean }
   | { ok: false; reason: string };
 
 /** Garante `MISSION.md` na pasta do workspace (`vault-root` ou `openclaw/workspace`). */
@@ -235,7 +238,7 @@ function uniqueNameInParent(
 }
 
 export type AddNoteResult =
-  | { ok: true; root: TreeEntry; docId: string; fileName: string }
+  | { ok: true; root: TreeDirRoot; docId: string; fileName: string }
   | { ok: false; reason: string };
 
 export function addNoteToParent(
@@ -283,7 +286,7 @@ export function addNoteToParent(
 }
 
 export type AddDirResult =
-  | { ok: true; root: TreeEntry; path: string; name: string }
+  | { ok: true; root: TreeDirRoot; path: string; name: string }
   | { ok: false; reason: string };
 
 export function addFolderToParent(root: TreeEntry, parentTreePath: string, preferredBase = "Nova pasta"): AddDirResult {
@@ -392,7 +395,7 @@ export function addBaseToParent(root: TreeEntry, parentTreePath: string): AddNot
   return { ok: true, root: { ...root, children: nextChildren }, docId, fileName };
 }
 
-export type TreeOpResult = { ok: true; root: TreeEntry } | { ok: false; reason: string };
+export type TreeOpResult = { ok: true; root: TreeDirRoot } | { ok: false; reason: string };
 
 export function deleteFile(root: TreeEntry, docId: string): TreeOpResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
@@ -478,7 +481,7 @@ function rewriteSubtreePaths(
 }
 
 export type RenameDirectoryResult =
-  | { ok: true; root: TreeEntry; docPrefixFrom: string; docPrefixTo: string }
+  | { ok: true; root: TreeDirRoot; docPrefixFrom: string; docPrefixTo: string }
   | { ok: false; reason: string };
 
 export function renameDirectory(root: TreeEntry, dirPath: string, newNameRaw: string): RenameDirectoryResult {
@@ -532,7 +535,7 @@ export function renameDirectory(root: TreeEntry, dirPath: string, newNameRaw: st
 }
 
 export type MoveDirectoryResult =
-  | { ok: true; root: TreeEntry; docPrefixFrom: string; docPrefixTo: string; newPath: string }
+  | { ok: true; root: TreeDirRoot; docPrefixFrom: string; docPrefixTo: string; newPath: string }
   | { ok: false; reason: string };
 
 function isUnderPath(candidate: string, ancestor: string): boolean {
@@ -678,7 +681,7 @@ function applyExplorerPathRemaps(path: string, remaps: { from: string; to: strin
 export type MoveExplorerBatchResult =
   | {
       ok: true;
-      root: TreeEntry;
+      root: TreeDirRoot;
       docIdReplacements: { from: string; to: string }[];
       prefixMigrations: { from: string; to: string }[];
     }
@@ -748,12 +751,13 @@ export function moveExplorerItemsToParent(
 }
 
 export type DeleteExplorerBatchResult =
-  | { ok: true; root: TreeEntry; closedDocIds: string[] }
+  | { ok: true; root: TreeDirRoot; closedDocIds: string[] }
   | { ok: false; reason: string };
 
 export function deleteExplorerItems(root: TreeEntry, items: ExplorerItemRef[]): DeleteExplorerBatchResult {
+  if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
   const top = filterTopLevelExplorerRefs(root, items);
-  let currentRoot = root;
+  let currentRoot: TreeDirRoot = root;
   const closedDocIds: string[] = [];
 
   const files = top.filter((i): i is { kind: "file"; docId: string } => i.kind === "file");

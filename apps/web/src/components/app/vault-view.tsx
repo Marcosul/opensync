@@ -1299,33 +1299,6 @@ export function VaultView() {
             <GitBranch className="size-3.5" />
             Grafo
           </TabButton>
-          {isBackendSyncVaultId(activeVaultId) ? (
-            <div className="flex shrink-0 items-center gap-1 border-l border-border/60 pl-1.5">
-              <span
-                className={cn(
-                  "hidden max-w-[9rem] truncate text-[10px] text-muted-foreground sm:inline",
-                  giteaSyncStatus === "error" && "text-destructive",
-                  giteaSyncStatus === "synced" && "text-emerald-600 dark:text-emerald-500",
-                )}
-                title={activeVaultMeta?.pathLabel ?? ""}
-              >
-                {giteaSyncStatus === "idle" && "Gitea"}
-                {giteaSyncStatus === "syncing" && "A sincronizar…"}
-                {giteaSyncStatus === "synced" && "Sincronizado"}
-                {giteaSyncStatus === "error" && "Erro sync"}
-              </span>
-              <button
-                type="button"
-                title="Sincronizar agora com o Gitea"
-                onClick={() => void runVaultGiteaSync(activeVaultId)}
-                disabled={giteaSyncStatus === "syncing"}
-                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                aria-label="Sincronizar agora"
-              >
-                <CloudUpload className="size-4" />
-              </button>
-            </div>
-          ) : null}
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
             {openTabs.map((id) => (
               <FileTab
@@ -1385,6 +1358,51 @@ export function VaultView() {
           >
             <Columns className="size-4" />
           </button>
+          {isBackendSyncVaultId(activeVaultId) ? (
+            <div className="ml-0.5 flex shrink-0 border-l border-border/60 pl-1.5">
+              <button
+                type="button"
+                title={
+                  giteaSyncStatus === "syncing"
+                    ? "A sincronizar com o Gitea…"
+                    : giteaSyncStatus === "synced"
+                      ? "Sincronizado com o Gitea"
+                      : giteaSyncStatus === "error"
+                        ? "Erro ao sincronizar — clique para tentar de novo"
+                        : `Sincronizar com o Gitea${activeVaultMeta?.pathLabel ? ` (${activeVaultMeta.pathLabel})` : ""}`
+                }
+                onClick={() => void runVaultGiteaSync(activeVaultId)}
+                disabled={giteaSyncStatus === "syncing"}
+                aria-label={
+                  giteaSyncStatus === "syncing"
+                    ? "A sincronizar com o Gitea"
+                    : giteaSyncStatus === "synced"
+                      ? "Sincronizado — clique para sincronizar de novo"
+                      : giteaSyncStatus === "error"
+                        ? "Erro na sincronização — clique para tentar de novo"
+                        : "Sincronizar agora com o Gitea"
+                }
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-all duration-200",
+                  giteaSyncStatus === "idle" &&
+                    "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  giteaSyncStatus === "syncing" &&
+                    "cursor-wait text-sky-600 ring-2 ring-sky-500/45 motion-safe:animate-pulse dark:text-sky-400 dark:ring-sky-400/40 disabled:opacity-100",
+                  giteaSyncStatus === "synced" &&
+                    "text-emerald-600 shadow-[0_0_10px_-2px_rgba(16,185,129,0.55)] hover:bg-emerald-500/10 dark:text-emerald-400 dark:shadow-[0_0_12px_-2px_rgba(52,211,153,0.4)]",
+                  giteaSyncStatus === "error" &&
+                    "text-destructive ring-2 ring-destructive/40 hover:bg-destructive/10 motion-safe:animate-pulse",
+                )}
+              >
+                <CloudUpload
+                  className={cn(
+                    "size-4",
+                    giteaSyncStatus === "syncing" && "motion-safe:scale-110",
+                  )}
+                />
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {viewMode === "editor" && activeTabId ? (

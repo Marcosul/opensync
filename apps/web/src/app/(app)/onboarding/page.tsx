@@ -8,6 +8,7 @@ import { AgentConnectionStep } from "@/components/onboarding/agent-connection-st
 import { Button } from "@/components/ui/button";
 import {
   buildAgentConnectionPayload,
+  getAgentConnectionValidationMessage,
   isAgentConnectionValid,
   type AgentConnectionForm,
 } from "@/lib/onboarding-agent";
@@ -21,14 +22,13 @@ type OnboardingData = {
 const TOTAL_STEPS = 4;
 
 const defaultAgentFields: AgentConnectionForm = {
-  agentMode: "gateway",
-  gatewayUrl: "",
-  gatewayToken: "",
+  agentMode: "ssh_key",
   sshHost: "",
   sshPort: "22",
   sshUser: "",
   sshPrivateKey: "",
   sshPassword: "",
+  sshRemotePath: "",
 };
 
 const goalOptions = [
@@ -68,6 +68,11 @@ export default function OnboardingPage() {
     setSubmitError(null);
     setIsSubmitting(true);
     try {
+      const formatMsg = getAgentConnectionValidationMessage(formData);
+      if (formatMsg) {
+        setSubmitError(formatMsg);
+        return;
+      }
       const agentConnection = buildAgentConnectionPayload(formData);
       if (!agentConnection) {
         setSubmitError("Preencha os dados de conexao do agente.");

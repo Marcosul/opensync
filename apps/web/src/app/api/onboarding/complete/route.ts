@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
-import type { AgentConnectionPayload } from "@/lib/onboarding-agent";
+import {
+  DEFAULT_SSH_REMOTE_PATH,
+  toStoredAgentConnection,
+  type AgentConnectionPayload,
+} from "@/lib/onboarding-agent";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import {
+  normalizeStoredRemotePath,
+  sshPullAuthFromStored,
+} from "@/lib/server/agent-ssh-pull-params";
+import { mapSshKeyOrConnectionError } from "@/lib/server/ssh-error-message";
+import { verifySshRemotePath } from "@/lib/server/ssh-workspace-pull";
 
 type OnboardingPayload = {
   goals?: string[];
@@ -42,6 +52,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Informe a conexao do agente" }, { status: 400 });
   }
 
+  if (payload.agentConnection.mode === "gateway") {
+    return NextResponse.json(
+      { error: "Conexao via gateway foi descontinuada. Use SSH com chave ou com senha." },
+      { status: 400 },
+    );
+  }
+
+  const ac = payload.agentConnection;
+  const sshProbe = sshPullAuthFromStored(toStoredAgentConnection(ac, undefined));
+  if (sshProbe) {
+    try {
+      await verifySshRemotePath(sshProbe);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? mapSshKeyOrConnectionError(err.message)
+          : "Falha na conexao SSH ou no caminho remoto.";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+  }
+
+  let connectionToSave: Exclude<AgentConnectionPayload, { mode: "gateway" }> = ac;
+  if (ac.mode === "ssh_key" || ac.mode === "ssh_password") {
+    const rp = ac.remotePath?.trim() || DEFAULT_SSH_REMOTE_PATH;
+    connectionToSave = { ...ac, remotePath: normalizeStoredRemotePath(rp) };
+  }
+
   const completedAt = new Date().toISOString();
 
   const { data: existing, error: selectError } = await supabase
@@ -57,7 +94,7 @@ export async function POST(request: Request) {
         goals,
         usageContext: payload.usageContext ?? null,
         frequency: payload.frequency ?? null,
-        agentConnection: payload.agentConnection,
+        agentConnection: connectionToSave,
       });
       if (metaErr) {
         return NextResponse.json({ error: metaErr }, { status: 500 });
@@ -75,7 +112,7 @@ export async function POST(request: Request) {
         onboarding_usage_context: payload.usageContext ?? null,
         onboarding_frequency: payload.frequency ?? null,
         onboarding_completed_at: completedAt,
-        agent_connection: payload.agentConnection,
+        agent_connection: connectionToSave,
       })
       .eq("id", user.id);
 
@@ -86,7 +123,7 @@ export async function POST(request: Request) {
           goals,
           usageContext: payload.usageContext ?? null,
           frequency: payload.frequency ?? null,
-          agentConnection: payload.agentConnection,
+          agentConnection: connectionToSave,
         });
         if (metaErr) {
           return NextResponse.json({ error: metaErr }, { status: 500 });
@@ -103,7 +140,7 @@ export async function POST(request: Request) {
       onboarding_usage_context: payload.usageContext ?? null,
       onboarding_frequency: payload.frequency ?? null,
       onboarding_completed_at: completedAt,
-      agent_connection: payload.agentConnection,
+      agent_connection: connectionToSave,
     });
 
     if (error) {
@@ -113,7 +150,7 @@ export async function POST(request: Request) {
           goals,
           usageContext: payload.usageContext ?? null,
           frequency: payload.frequency ?? null,
-          agentConnection: payload.agentConnection,
+          agentConnection: connectionToSave,
         });
         if (metaErr) {
           return NextResponse.json({ error: metaErr }, { status: 500 });

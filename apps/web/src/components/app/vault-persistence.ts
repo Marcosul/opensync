@@ -108,6 +108,8 @@ export type VaultMeta = {
   managedByProfile?: boolean;
   /** false = cofre do agente (nao apagar pelo explorador). true = pode apagar (vazio salvo / local). */
   deletable?: boolean;
+  /** Arvore preenchida a partir de SSH (VPS). */
+  remoteSync?: "ssh";
 };
 
 export type VaultSnapshotV1 = {

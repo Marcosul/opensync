@@ -1,4 +1,8 @@
-import type { User } from "@supabase/supabase-js";
+/** Cabecalhos enviados ao Nest; basta o que o Supabase devolve em `getUser()`. */
+export type BackendRequestUser = {
+  id: string;
+  email?: string | null;
+};
 
 function resolveBackendBaseUrl(): string {
   const raw = (process.env.NEXT_PUBLIC_API_URL ?? process.env.OPENSYNC_API_URL ?? "").trim();
@@ -26,7 +30,7 @@ export type BackendVault = {
 
 export async function backendRequest<T>(
   path: string,
-  user: User,
+  user: BackendRequestUser,
   options: { method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"; body?: unknown } = {},
 ): Promise<T> {
   const base = resolveBackendBaseUrl();

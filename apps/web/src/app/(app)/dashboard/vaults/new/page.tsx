@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import {
+  saveSnapshot,
   writePendingActiveVaultId,
   writePendingAgentProject,
 } from "@/components/app/vault-persistence";
@@ -14,21 +15,22 @@ import { AgentConnectionStep } from "@/components/onboarding/agent-connection-st
 import { Button } from "@/components/ui/button";
 import {
   buildAgentConnectionPayload,
+  getAgentConnectionValidationMessage,
   isAgentConnectionValid,
   type AgentConnectionForm,
 } from "@/lib/onboarding-agent";
+import { remoteTextFilesToVaultSnapshot } from "@/lib/vault-remote-import";
 import type { VaultListItem } from "@/lib/vault-list-types";
 import { cn } from "@/lib/utils";
 
 const defaultAgentFields: AgentConnectionForm = {
-  agentMode: "gateway",
-  gatewayUrl: "",
-  gatewayToken: "",
+  agentMode: "ssh_key",
   sshHost: "",
   sshPort: "22",
   sshUser: "",
   sshPrivateKey: "",
   sshPassword: "",
+  sshRemotePath: "",
 };
 
 const vaultNameInputClass =
@@ -63,7 +65,7 @@ const startOptions: { id: StartChoice; label: string; hint: string }[] = [
   {
     id: "connect_agent",
     label: "Conectar com meu agente",
-    hint: "Gateway, token ou SSH para sincronizar com um ambiente existente.",
+    hint: "SSH (chave ou senha) para importar o workspace da sua VPS.",
   },
   {
     id: "empty_vault",
@@ -82,6 +84,8 @@ export default function NewVaultPage() {
   const [agentProjectScope, setAgentProjectScope] = useState<AgentProjectScope>("single_agent");
   const [squadMission, setSquadMission] = useState("");
   const [form, setForm] = useState<AgentConnectionForm>(defaultAgentFields);
+  const [connectLog, setConnectLog] = useState<string[]>([]);
+  const [connectElapsedSec, setConnectElapsedSec] = useState(0);
 
   useEffect(() => {
     if (startChoice !== "agent_project") {
@@ -89,6 +93,18 @@ export default function NewVaultPage() {
       setSquadMission("");
     }
   }, [startChoice]);
+
+  useEffect(() => {
+    if (!isSubmitting) {
+      setConnectElapsedSec(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = window.setInterval(() => {
+      setConnectElapsedSec(Math.floor((Date.now() - t0) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isSubmitting]);
 
   const nameOk = vaultName.trim().length > 0;
 
@@ -122,18 +138,91 @@ export default function NewVaultPage() {
 
   async function handleConnectAgent() {
     setSubmitError(null);
+    setConnectLog([]);
     setIsSubmitting(true);
     try {
+      const formatMsg = getAgentConnectionValidationMessage(form);
+      if (formatMsg) {
+        setSubmitError(formatMsg);
+        return;
+      }
       const agentConnection = buildAgentConnectionPayload(form);
       if (!agentConnection) {
         setSubmitError("Preencha os dados de conexao do agente.");
         return;
       }
-      await apiRequest<{ ok: boolean }>("/api/vaults/connect", {
+
+      const streamRes = await fetch("/api/vaults/connect?stream=1", {
         method: "POST",
-        body: { agentConnection, vaultName: vaultName.trim() },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentConnection, vaultName: vaultName.trim() }),
+        cache: "no-store",
       });
-      router.replace("/dashboard");
+
+      const ct = streamRes.headers.get("content-type") || "";
+
+      if (!streamRes.ok || !ct.includes("ndjson")) {
+        const text = await streamRes.text();
+        setSubmitError(formatSubmitError(text));
+        return;
+      }
+
+      const reader = streamRes.body?.getReader();
+      if (!reader) {
+        setSubmitError("Resposta sem corpo (stream).");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let doneBody: {
+        snapshotVaultId: string;
+        initialFiles: Record<string, string>;
+      } | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let row: {
+            t: string;
+            m?: string;
+            body?: {
+              snapshotVaultId?: string;
+              initialFiles?: Record<string, string>;
+            };
+            error?: string;
+          };
+          try {
+            row = JSON.parse(line) as typeof row;
+          } catch {
+            continue;
+          }
+          if (row.t === "log" && row.m) {
+            setConnectLog((prev) => [...prev, row.m as string]);
+          } else if (row.t === "error") {
+            throw new Error(row.error || "Falha na conexao.");
+          } else if (row.t === "done" && row.body?.snapshotVaultId) {
+            doneBody = {
+              snapshotVaultId: row.body.snapshotVaultId,
+              initialFiles: row.body.initialFiles ?? {},
+            };
+          }
+        }
+        if (done) break;
+      }
+
+      if (!doneBody?.snapshotVaultId?.trim()) {
+        throw new Error("Resposta incompleta do servidor.");
+      }
+
+      const snap = remoteTextFilesToVaultSnapshot(doneBody.initialFiles ?? {});
+      saveSnapshot(doneBody.snapshotVaultId.trim(), snap);
+      writePendingActiveVaultId(doneBody.snapshotVaultId.trim());
+      router.replace("/vault");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Nao foi possivel conectar o vault.";
@@ -201,7 +290,7 @@ export default function NewVaultPage() {
       ? "Continuar"
       : startChoice === "connect_agent"
         ? isSubmitting
-          ? "Conectando..."
+          ? `Conectando… ${connectElapsedSec}s`
           : "Conectar vault"
         : startChoice === "agent_project"
           ? "Ir para onboarding"
@@ -231,7 +320,7 @@ export default function NewVaultPage() {
       : step === 2
         ? "Escolha um nome para identificar este vault no dashboard."
         : startChoice === "connect_agent"
-          ? "Escolha uma forma de acesso. Os dados conectam ao seu ambiente; em producao, prefira segredos no servidor."
+          ? "SSH le a pasta ~/.openclaw na VPS (arvore completa) e importa ficheiros de texto. O servidor testa a ligacao ao guardar."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
             : `O vault "${vaultName.trim() || "…"}" sera criado no servidor (banco de dados + repositorio no Gitea) quando voce confirmar. Depois voce entra no explorador; conectar um agente pode ser feito depois.`;
@@ -374,6 +463,25 @@ export default function NewVaultPage() {
 
             {step === 3 && startChoice === "connect_agent" ? (
               <AgentConnectionStep form={form} onChange={setForm} hideIntro />
+            ) : null}
+
+            {step === 3 && startChoice === "connect_agent" && (isSubmitting || connectLog.length > 0) ? (
+              <div className="mt-5 rounded-xl border border-border bg-muted/35 p-3 sm:p-4">
+                <p className="text-xs font-medium text-muted-foreground">Progresso da ligacao SSH</p>
+                <pre
+                  className="mt-2 max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground sm:max-h-64 sm:text-xs"
+                  aria-live="polite"
+                >
+                  {connectLog.length > 0 ? connectLog.join("\n") : "A iniciar…"}
+                </pre>
+                {isSubmitting ? (
+                  <p className="mt-2 text-[11px] text-muted-foreground sm:text-xs">
+                    Importar <span className="font-mono">~/.openclaw</span> pode demorar com muitas
+                    pastas. Os mesmos passos aparecem no terminal do{" "}
+                    <span className="font-mono">next dev</span>.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
             {step3EmptySuccess ? (

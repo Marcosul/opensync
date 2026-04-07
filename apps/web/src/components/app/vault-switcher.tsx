@@ -11,7 +11,8 @@ import {
   Settings,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 
 import type { VaultMeta } from "@/components/app/vault-persistence";
 import { cn } from "@/lib/utils";
@@ -127,9 +128,13 @@ function VaultRemoveConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[330] flex items-center justify-center bg-black/50 p-4" role="presentation">
+  if (!open || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+    >
       <button
         type="button"
         className="absolute inset-0 cursor-default"
@@ -143,11 +148,11 @@ function VaultRemoveConfirmDialog({
         aria-describedby="vault-remove-confirm-desc"
       >
         <h2 id="vault-remove-confirm-title" className="text-base font-semibold text-foreground">
-          Deletar o cofre &quot;{vaultName}&quot;?
+          Remover &quot;{vaultName}&quot; da lista?
         </h2>
         <p id="vault-remove-confirm-desc" className="mt-2 text-sm text-muted-foreground">
           O histórico e os dados locais deste cofre neste navegador serão apagados. Isto não apaga o
-          repositório remoto, apenas remove a referência e o cache local.
+          repositório remoto — apenas remove a referência e o cache local neste dispositivo.
         </p>
         {pathLabel ? (
           <p className="mt-2 truncate rounded-md border border-border/60 bg-muted/40 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
@@ -164,14 +169,15 @@ function VaultRemoveConfirmDialog({
           </button>
           <button
             type="button"
-            className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+            className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-muted/80 dark:text-red-400"
             onClick={onConfirm}
           >
-            Deletar vault
+            Remover
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -192,75 +198,78 @@ export function VaultManageDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/45 p-4" role="presentation">
-      <button
-        type="button"
-        className="absolute inset-0 cursor-default"
-        aria-label="Fechar"
-        onClick={onClose}
-      />
-      <div
-        className="relative flex max-h-[min(520px,85vh)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
-        role="dialog"
-        aria-labelledby="vault-manage-title"
-      >
-        <div className="border-b border-border px-4 py-3">
-          <h2 id="vault-manage-title" className="text-sm font-semibold text-foreground">
-            Gerenciar cofres
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Adicione um cofre novo ou exclua um cofre da lista. Ao excluir, os dados locais deste
-            navegador desse cofre serão apagados.
-          </p>
-        </div>
-        <ul className="flex-1 overflow-y-auto p-2 [scrollbar-width:thin]">
-          {vaults.map((v) => (
-            <li
-              key={v.id}
-              className="flex items-center gap-1 rounded-lg border border-transparent px-2 py-2 hover:bg-muted/50"
-            >
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => {
-                  onSelectVault(v.id);
-                  onClose();
-                }}
+    <>
+      <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/45 p-4" role="presentation">
+        <button
+          type="button"
+          className="absolute inset-0 cursor-default"
+          aria-label="Fechar"
+          onClick={onClose}
+        />
+        <div
+          className="relative flex max-h-[min(520px,85vh)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+          role="dialog"
+          aria-labelledby="vault-manage-title"
+        >
+          <div className="border-b border-border px-4 py-3">
+            <h2 id="vault-manage-title" className="text-sm font-semibold text-foreground">
+              Gerenciar cofres
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Adicione um cofre novo ou exclua um cofre da lista. Ao excluir, os dados locais deste
+              navegador desse cofre serão apagados.
+            </p>
+          </div>
+          <ul className="flex-1 overflow-y-auto p-2 [scrollbar-width:thin]">
+            {vaults.map((v) => (
+              <li
+                key={v.id}
+                className="flex items-center gap-1 rounded-lg border border-transparent px-2 py-2 hover:bg-muted/50"
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">{v.name}</span>
-                  {v.id === activeId && (
-                    <Check className="size-3.5 shrink-0 text-primary" aria-label="Cofre ativo" />
-                  )}
-                </div>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  {v.pathLabel}
-                </p>
-              </button>
-              <VaultRowRemoveMenu
-                vaultName={v.name}
-                canRemove={vaults.length > 1 && v.deletable !== false}
-                onRequestRemove={() => setRemoveConfirmVault(v)}
-              />
-            </li>
-          ))}
-        </ul>
-        <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <Link
-            href="/dashboard/vaults/new"
-            onClick={onClose}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 sm:w-auto"
-          >
-            <Plus className="size-4 shrink-0" aria-hidden />
-            Adicionar vault
-          </Link>
-          <button
-            type="button"
-            className="w-full rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:w-auto sm:px-4"
-            onClick={onClose}
-          >
-            Fechar
-          </button>
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => {
+                    onSelectVault(v.id);
+                    onClose();
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{v.name}</span>
+                    {v.id === activeId && (
+                      <Check className="size-3.5 shrink-0 text-primary" aria-label="Cofre ativo" />
+                    )}
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                    {v.pathLabel}
+                  </p>
+                </button>
+                <VaultRowRemoveMenu
+                  vaultName={v.name}
+                  vaultCount={vaults.length}
+                  vaultDeletable={v.deletable !== false}
+                  onRequestRemove={() => setRemoveConfirmVault(v)}
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <Link
+              href="/dashboard/vaults/new"
+              onClick={onClose}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 sm:w-auto"
+            >
+              <Plus className="size-4 shrink-0" aria-hidden />
+              Adicionar vault
+            </Link>
+            <button
+              type="button"
+              className="w-full rounded-md py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:w-auto sm:px-4"
+              onClick={onClose}
+            >
+              Fechar
+            </button>
+          </div>
         </div>
       </div>
 
@@ -274,29 +283,45 @@ export function VaultManageDialog({
           setRemoveConfirmVault(null);
         }}
       />
-    </div>
+    </>
   );
 }
 
 function VaultRowRemoveMenu({
   vaultName,
-  canRemove,
+  vaultCount,
+  vaultDeletable,
   onRequestRemove,
 }: {
   vaultName: string;
-  canRemove: boolean;
+  vaultCount: number;
+  vaultDeletable: boolean;
   onRequestRemove: () => void;
 }) {
-  const onRemoveClick = useCallback(() => {
-    if (!canRemove) {
-      window.alert("É preciso manter pelo menos um cofre na lista.");
-      return;
-    }
-    onRequestRemove();
-  }, [canRemove, onRequestRemove]);
+  const lastVaultOnly = vaultCount <= 1;
+
+  const onRemoveClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      event.stopPropagation();
+      if (lastVaultOnly) {
+        window.alert("É preciso manter pelo menos um cofre na lista.");
+        return;
+      }
+      if (!vaultDeletable) {
+        window.alert(
+          "Este cofre esta ligado ao agente no seu perfil. Para alterar, atualize a conexao no dashboard.",
+        );
+        return;
+      }
+      window.setTimeout(() => {
+        onRequestRemove();
+      }, 0);
+    },
+    [lastVaultOnly, vaultDeletable, onRequestRemove]
+  );
 
   return (
-    <Menu.Root>
+    <Menu.Root modal={false}>
       <Menu.Trigger
         className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted"
         aria-label={`Opções do cofre ${vaultName}`}
@@ -304,7 +329,7 @@ function VaultRowRemoveMenu({
         <MoreVertical className="size-4" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner className="z-[310] outline-none" side="bottom" align="end" sideOffset={4}>
+        <Menu.Positioner className="z-[420] outline-none" side="bottom" align="end" sideOffset={4}>
           <Menu.Popup
             className={cn(
               "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
@@ -314,12 +339,13 @@ function VaultRowRemoveMenu({
             <Menu.Item
               className={cn(
                 menuItemClass,
-                "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
+                "text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive",
+                lastVaultOnly && "opacity-50"
               )}
-              disabled={!canRemove}
+              disabled={lastVaultOnly}
               onClick={onRemoveClick}
             >
-              Deletar vault
+              Remover da lista…
             </Menu.Item>
           </Menu.Popup>
         </Menu.Positioner>

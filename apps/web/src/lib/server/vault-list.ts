@@ -8,6 +8,7 @@ import {
 } from "@/lib/vault-display";
 import type { VaultListItem } from "@/lib/vault-list-types";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { isBackendSyncVaultId } from "@/lib/vault-sync-flatten";
 
 export type VaultListResult = {
   items: VaultListItem[];
@@ -41,7 +42,22 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
     );
   }
 
-  const vaults: VaultListItem[] = backendVaults.map((v) => ({
+  const o =
+    raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  const linkedRaw = o?.backendVaultId;
+  const linkedBackendId =
+    typeof linkedRaw === "string" && isBackendSyncVaultId(linkedRaw)
+      ? linkedRaw.trim()
+      : null;
+  const linkedRow = linkedBackendId
+    ? backendVaults.find((v) => v.id === linkedBackendId)
+    : undefined;
+
+  const backendForList = linkedBackendId
+    ? backendVaults.filter((v) => v.id !== linkedBackendId)
+    : backendVaults;
+
+  const vaults: VaultListItem[] = backendForList.map((v) => ({
     id: v.id,
     name: v.name,
     pathLabel: v.giteaRepo,
@@ -50,15 +66,18 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
     deletable: true,
   }));
 
-  if (raw != null && typeof raw === "object") {
-    const o = raw as Record<string, unknown>;
+  if (o) {
+    const mode = o.mode;
+    const remoteSync =
+      mode === "ssh_key" || mode === "ssh_password" ? ("ssh" as const) : undefined;
     vaults.push({
-      id: `profile-${user.id}`,
+      id: linkedBackendId ?? `profile-${user.id}`,
       name: deriveVaultName(o),
-      pathLabel: formatAgentPreview(o),
+      pathLabel: linkedRow?.giteaRepo ?? formatAgentPreview(o),
       kind: deriveVaultExplorerKind(o),
       managedByProfile: true,
       deletable: false,
+      ...(remoteSync ? { remoteSync } : {}),
     });
   }
 
