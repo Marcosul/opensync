@@ -14,11 +14,11 @@ export function LoadingScreen({
           <div className="h-14 w-14 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
           <div className="absolute inset-0 flex items-center justify-center">
             <Image
-              src="/favicon.ico"
+              src="/logo/opensync-icon-green.svg"
               alt="OpenSync"
-              width={24}
-              height={24}
-              className="animate-pulse rounded-sm"
+              width={36}
+              height={36}
+              className="animate-pulse"
               priority
             />
           </div>

@@ -2,8 +2,8 @@ import { Cpu, FolderOpen, Plus, Wifi, WifiOff } from "lucide-react";
 import Link from "next/link";
 
 import { AddVaultCard } from "@/components/dashboard/add-vault-card";
-import { apiRequest } from "@/api/rest/generic";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { fetchVaultListForUser } from "@/lib/server/vault-list";
 import { deriveAgentMode, deriveVaultName, formatAgentPreview } from "@/lib/vault-display";
 import type { VaultListItem } from "@/lib/vault-list-types";
 import { cn } from "@/lib/utils";
@@ -14,22 +14,12 @@ export default async function DashboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: profile } = user
-    ? await supabase
-        .from("profiles")
-        .select("agent_connection, onboarding_completed_at")
-        .eq("id", user.id)
-        .maybeSingle()
-    : { data: null };
+  const { items: listItems, agentConnectionRaw: agentRaw } = user
+    ? await fetchVaultListForUser(user)
+    : { items: [] as VaultListItem[], agentConnectionRaw: null };
 
-  const agentRaw =
-    profile?.agent_connection ?? user?.user_metadata?.opensync_agent_connection;
   const hasAgent = agentRaw != null && typeof agentRaw === "object";
-
-  const backendVaults = user
-    ? await apiRequest<{ vaults: VaultListItem[] }>("/api/vaults/list")
-    : { vaults: [] as VaultListItem[] };
-  const savedVaultItems: VaultItem[] = backendVaults.vaults
+  const savedVaultItems: VaultItem[] = listItems
     .filter((v) => !v.managedByProfile)
     .map((s) => ({
       id: s.id,
