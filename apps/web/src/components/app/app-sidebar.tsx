@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Vaults" },
   { href: "/vault", icon: FolderOpen, label: "Explorador" },
-  { href: "/onboarding", icon: Settings, label: "Configurações" },
+  { href: "/settings", icon: Settings, label: "Configurações" },
 ];
 
 export function AppSidebar() {
