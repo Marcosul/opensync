@@ -25,12 +25,13 @@ export function GoogleAuthCard({
 
     try {
       const supabase = createSupabaseBrowserClient();
-      const origin = window.location.origin;
+      const safeOrigin = window.location.origin.trim().replace(/\/+$/g, "");
+      const redirectTo = `${safeOrigin}/auth/callback`.trim();
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${origin}/auth/callback`,
+          redirectTo,
         },
       });
 

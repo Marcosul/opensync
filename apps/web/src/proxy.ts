@@ -4,6 +4,15 @@ import { ONBOARDING_COOKIE_NAME, isOnboardingCompleted } from "@/lib/onboarding"
 import { createSupabaseProxyClient } from "@/lib/supabase/proxy-client";
 import { isOnboardingCompleteInDatabase } from "@/lib/supabase/onboarding-status";
 
+function getTrimmedPathname(pathname: string) {
+  try {
+    const decodedPathname = decodeURIComponent(pathname);
+    return decodedPathname.replace(/\s+$/g, "");
+  } catch {
+    return pathname.replace(/\s+$/g, "");
+  }
+}
+
 function isPrivatePath(pathname: string) {
   return pathname.startsWith("/dashboard") || pathname.startsWith("/onboarding");
 }
@@ -14,6 +23,14 @@ function isAuthPath(pathname: string) {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const trimmedPathname = getTrimmedPathname(pathname);
+
+  // Normalize URLs accidentally returned by OAuth providers with trailing spaces.
+  if (trimmedPathname !== pathname) {
+    const normalizedUrl = new URL(request.url);
+    normalizedUrl.pathname = trimmedPathname;
+    return NextResponse.redirect(normalizedUrl);
+  }
 
   if (!isPrivatePath(pathname) && !isAuthPath(pathname)) {
     return NextResponse.next();
@@ -55,5 +72,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/sign-in", "/sign-up", "/dashboard/:path*", "/onboarding/:path*"],
+  matcher: [
+    "/sign-in",
+    "/sign-up",
+    "/auth/:path*",
+    "/dashboard/:path*",
+    "/onboarding/:path*",
+  ],
 };
