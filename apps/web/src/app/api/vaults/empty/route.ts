@@ -1,105 +1,18 @@
-import { randomUUID } from "node:crypto";
-
 import { NextResponse } from "next/server";
-import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 import type { VaultListItem } from "@/lib/vault-list-types";
-import {
-  mergeSavedVaultsFromSources,
-  type SavedVaultRecord,
-  savedVaultToListItem,
-} from "@/lib/saved-vaults";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { backendRequest, type BackendVault } from "@/app/api/_lib/backend-api";
 
 const VAULT_NAME_MAX = 120;
 
-type EmptyPayload = {
-  vaultName?: string;
-};
-
-function shouldFallbackToUserMetadata(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("profiles") ||
-    m.includes("schema cache") ||
-    m.includes("does not exist") ||
-    m.includes("saved_vaults") ||
-    (m.includes("column") && m.includes("does not exist")) ||
-    (m.includes("relation") && m.includes("does not exist"))
-  );
-}
+type EmptyPayload = { vaultName?: string };
 
 function normalizeName(raw: string | undefined): string | null {
   if (raw == null) return null;
   const t = raw.trim();
   if (!t) return null;
   return t.length > VAULT_NAME_MAX ? t.slice(0, VAULT_NAME_MAX) : t;
-}
-
-async function persistSavedVaults(
-  supabase: SupabaseClient,
-  user: User,
-  nextList: SavedVaultRecord[],
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { data: existing, error: selectError } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (selectError) {
-    if (shouldFallbackToUserMetadata(selectError.message)) {
-      const metaErr = await saveVaultsToUserMetadata(supabase, user, nextList);
-      return metaErr ? { ok: false, error: metaErr } : { ok: true };
-    }
-    return { ok: false, error: selectError.message };
-  }
-
-  if (existing) {
-    const { error } = await supabase
-      .from("profiles")
-      .update({ saved_vaults: nextList })
-      .eq("id", user.id);
-
-    if (error) {
-      if (shouldFallbackToUserMetadata(error.message)) {
-        const metaErr = await saveVaultsToUserMetadata(supabase, user, nextList);
-        return metaErr ? { ok: false, error: metaErr } : { ok: true };
-      }
-      return { ok: false, error: error.message };
-    }
-  } else {
-    const { error } = await supabase.from("profiles").insert({
-      id: user.id,
-      email: user.email ?? "",
-      onboarding_goals: [],
-      saved_vaults: nextList,
-    });
-
-    if (error) {
-      if (shouldFallbackToUserMetadata(error.message)) {
-        const metaErr = await saveVaultsToUserMetadata(supabase, user, nextList);
-        return metaErr ? { ok: false, error: metaErr } : { ok: true };
-      }
-      return { ok: false, error: error.message };
-    }
-  }
-
-  return { ok: true };
-}
-
-async function saveVaultsToUserMetadata(
-  supabase: SupabaseClient,
-  user: User,
-  vaults: SavedVaultRecord[],
-): Promise<string | null> {
-  const { error } = await supabase.auth.updateUser({
-    data: {
-      ...user.user_metadata,
-      opensync_saved_vaults: vaults,
-    },
-  });
-  return error?.message ?? null;
 }
 
 export async function POST(request: Request) {
@@ -119,30 +32,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Informe o nome do vault" }, { status: 400 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("saved_vaults")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const current = mergeSavedVaultsFromSources(
-    profile?.saved_vaults,
-    user.user_metadata?.opensync_saved_vaults,
-  );
-
-  const record: SavedVaultRecord = {
-    id: randomUUID(),
-    name,
-    kind: "empty",
-    createdAt: new Date().toISOString(),
-  };
-  const nextList = [...current, record];
-
-  const result = await persistSavedVaults(supabase, user, nextList);
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 500 });
+  try {
+    const created = await backendRequest<{ vault: BackendVault }>("/vaults", user, {
+      method: "POST",
+      body: { name, path: "./openclaw" },
+    });
+    const vault: VaultListItem = {
+      id: created.vault.id,
+      name: created.vault.name,
+      pathLabel: created.vault.giteaRepo,
+      kind: "blank",
+      managedByProfile: false,
+      deletable: true,
+    };
+    return NextResponse.json({ vault });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Falha ao criar vault no backend";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
-
-  const vault: VaultListItem = savedVaultToListItem(record);
-  return NextResponse.json({ vault });
 }

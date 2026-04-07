@@ -13,9 +13,11 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { apiRequest } from "@/api/rest/generic";
 import { Button } from "@/components/ui/button";
+import { defaultUserSettings, type UserSettings } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
 
 type SettingsSectionId =
@@ -47,16 +49,79 @@ const settingsSections: SettingsSection[] = [
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("about");
-  const [autoUpdate, setAutoUpdate] = useState(true);
-  const [comfortableLineLength, setComfortableLineLength] = useState(true);
-  const [showStatusBar, setShowStatusBar] = useState(true);
-  const [confirmDelete, setConfirmDelete] = useState(true);
-  const [wikilinksEnabled, setWikilinksEnabled] = useState(true);
+  const [settings, setSettings] = useState<UserSettings>(defaultUserSettings);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [hasFetched, setHasFetched] = useState(false);
+  const lastSavedRef = useRef(JSON.stringify(defaultUserSettings));
 
   const activeSectionData = useMemo(
     () => settingsSections.find((section) => section.id === activeSection),
     [activeSection],
   );
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadSettings() {
+      try {
+        const response = await apiRequest<{ ok: boolean; settings: UserSettings }>("/api/settings");
+        if (!mounted) return;
+        setSettings(response.settings);
+        lastSavedRef.current = JSON.stringify(response.settings);
+        setSaveState("saved");
+      } catch (error) {
+        if (!mounted) return;
+        const message =
+          error instanceof Error ? error.message : "Nao foi possivel carregar as configuracoes.";
+        setSaveError(message);
+        setSaveState("error");
+      } finally {
+        if (!mounted) return;
+        setIsLoading(false);
+        setHasFetched(true);
+      }
+    }
+    void loadSettings();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasFetched) return;
+
+    const serialized = JSON.stringify(settings);
+    if (serialized === lastSavedRef.current) return;
+
+    const timeout = setTimeout(async () => {
+      setIsSaving(true);
+      setSaveError(null);
+      try {
+        const response = await apiRequest<{ ok: boolean; settings: UserSettings }>("/api/settings", {
+          method: "POST",
+          body: { settings },
+        });
+        lastSavedRef.current = JSON.stringify(response.settings);
+        setSaveState("saved");
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Nao foi possivel salvar as configuracoes.";
+        setSaveError(message);
+        setSaveState("error");
+      } finally {
+        setIsSaving(false);
+      }
+    }, 450);
+
+    return () => clearTimeout(timeout);
+  }, [hasFetched, settings]);
+
+  function updateSetting<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSaveState("idle");
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -65,10 +130,15 @@ export default function SettingsPage() {
           <p className="text-sm font-medium text-foreground/90">Configurações</p>
           <p className="text-xs text-muted-foreground">Experiência inspirada no Obsidian</p>
         </div>
-        <Button type="button" variant="outline" size="sm">
-          <Sparkles className="size-3.5" />
-          Personalizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {isLoading ? "Carregando..." : isSaving ? "Salvando..." : saveState === "saved" ? "Salvo" : "Pendente"}
+          </span>
+          <Button type="button" variant="outline" size="sm" disabled>
+            <Sparkles className="size-3.5" />
+            Preferências
+          </Button>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -116,9 +186,9 @@ export default function SettingsPage() {
               </p>
               <h1 className="mt-1 text-2xl font-semibold tracking-tight">Preferências do aplicativo</h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                Ajuste o ambiente para o seu fluxo de trabalho. Essas opções podem ser conectadas ao
-                perfil do usuário em uma próxima etapa.
+                Ajuste o ambiente para o seu fluxo de trabalho. As mudanças são salvas automaticamente.
               </p>
+              {saveError ? <p className="mt-2 text-sm text-destructive">{saveError}</p> : null}
             </div>
 
             {activeSection === "about" ? (
@@ -136,14 +206,23 @@ export default function SettingsPage() {
                     icon={<Bell className="size-4 text-muted-foreground" />}
                     label="Atualizar automaticamente"
                     helpText="Desative para evitar verificações automáticas de novas versões."
-                    control={<Switch checked={autoUpdate} onChange={setAutoUpdate} />}
+                    control={
+                      <Switch
+                        checked={settings.autoUpdate}
+                        onChange={(next) => updateSetting("autoUpdate", next)}
+                      />
+                    }
                   />
                   <SettingRow
                     icon={<Languages className="size-4 text-muted-foreground" />}
                     label="Idioma"
                     helpText="Defina o idioma principal da interface."
                     control={
-                      <select className={selectClass} defaultValue="pt-BR">
+                      <select
+                        className={selectClass}
+                        value={settings.language}
+                        onChange={(e) => updateSetting("language", e.target.value as UserSettings["language"])}
+                      >
                         <option value="pt-BR">Português do Brasil</option>
                         <option value="en-US">English</option>
                         <option value="es-ES">Español</option>
@@ -162,7 +241,13 @@ export default function SettingsPage() {
                     label="Visualização padrão para novas abas"
                     helpText="Escolha entre editar e pré-visualizar ao abrir nova aba."
                     control={
-                      <select className={selectClass} defaultValue="split">
+                      <select
+                        className={selectClass}
+                        value={settings.defaultTabView}
+                        onChange={(e) =>
+                          updateSetting("defaultTabView", e.target.value as UserSettings["defaultTabView"])
+                        }
+                      >
                         <option value="split">Visualização e edição</option>
                         <option value="preview">Pré-visualização</option>
                         <option value="editing">Edição</option>
@@ -175,8 +260,8 @@ export default function SettingsPage() {
                     helpText="Limita a largura de linhas para leitura mais confortável."
                     control={
                       <Switch
-                        checked={comfortableLineLength}
-                        onChange={setComfortableLineLength}
+                        checked={settings.comfortableLineLength}
+                        onChange={(next) => updateSetting("comfortableLineLength", next)}
                       />
                     }
                   />
@@ -184,7 +269,12 @@ export default function SettingsPage() {
                     icon={<Globe className="size-4 text-muted-foreground" />}
                     label="Status do editor"
                     helpText="Mostra o estado atual de edição na barra inferior."
-                    control={<Switch checked={showStatusBar} onChange={setShowStatusBar} />}
+                    control={
+                      <Switch
+                        checked={settings.showEditorStatus}
+                        onChange={(next) => updateSetting("showEditorStatus", next)}
+                      />
+                    }
                   />
                 </SettingPanel>
               </div>
@@ -201,7 +291,13 @@ export default function SettingsPage() {
                     label="Arquivo padrão para abrir"
                     helpText="Escolha o arquivo ao iniciar o app."
                     control={
-                      <select className={selectClass} defaultValue="last-opened">
+                      <select
+                        className={selectClass}
+                        value={settings.defaultOpenFile}
+                        onChange={(e) =>
+                          updateSetting("defaultOpenFile", e.target.value as UserSettings["defaultOpenFile"])
+                        }
+                      >
                         <option value="last-opened">Último aberto</option>
                         <option value="daily-note">Nota diária</option>
                         <option value="home">Home</option>
@@ -212,13 +308,23 @@ export default function SettingsPage() {
                     icon={<Link2 className="size-4 text-muted-foreground" />}
                     label="Usar [[wikilinks]]"
                     helpText="Gera links no formato wikilink em vez de markdown."
-                    control={<Switch checked={wikilinksEnabled} onChange={setWikilinksEnabled} />}
+                    control={
+                      <Switch
+                        checked={settings.wikilinksEnabled}
+                        onChange={(next) => updateSetting("wikilinksEnabled", next)}
+                      />
+                    }
                   />
                   <SettingRow
                     icon={<Bell className="size-4 text-muted-foreground" />}
                     label="Confirmar antes de excluir arquivos"
                     helpText="Evita remoções acidentais de notas e anexos."
-                    control={<Switch checked={confirmDelete} onChange={setConfirmDelete} />}
+                    control={
+                      <Switch
+                        checked={settings.confirmDelete}
+                        onChange={(next) => updateSetting("confirmDelete", next)}
+                      />
+                    }
                   />
                 </SettingPanel>
               </div>
@@ -232,7 +338,11 @@ export default function SettingsPage() {
                     label="Tema base"
                     helpText="Escolha entre tema claro, escuro ou automático."
                     control={
-                      <select className={selectClass} defaultValue="system">
+                      <select
+                        className={selectClass}
+                        value={settings.baseTheme}
+                        onChange={(e) => updateSetting("baseTheme", e.target.value as UserSettings["baseTheme"])}
+                      >
                         <option value="system">Adaptar ao sistema</option>
                         <option value="light">Claro</option>
                         <option value="dark">Escuro</option>
@@ -243,7 +353,12 @@ export default function SettingsPage() {
                     icon={<LayoutTemplate className="size-4 text-muted-foreground" />}
                     label="Mostrar barra de título da aba"
                     helpText="Exibe o cabeçalho no topo de cada aba aberta."
-                    control={<Switch checked onChange={() => null} />}
+                    control={
+                      <Switch
+                        checked={settings.showTabTitleBar}
+                        onChange={(next) => updateSetting("showTabTitleBar", next)}
+                      />
+                    }
                   />
                 </SettingPanel>
               </div>
@@ -299,8 +414,8 @@ function SettingPanel({
 }: {
   title: string;
   description: string;
-  children: React.ReactNode;
-  action?: React.ReactNode;
+  children: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
@@ -322,10 +437,10 @@ function SettingRow({
   helpText,
   control,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   helpText: string;
-  control: React.ReactNode;
+  control: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">

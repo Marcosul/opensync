@@ -7,7 +7,7 @@ import {
   formatAgentPreview,
 } from "@/lib/vault-display";
 import type { VaultListItem } from "@/lib/vault-list-types";
-import { mergeSavedVaultsFromSources, savedVaultToListItem } from "@/lib/saved-vaults";
+import { backendRequest, type BackendVault } from "@/app/api/_lib/backend-api";
 
 export async function GET() {
   const supabase = await createSupabaseServerClient();
@@ -22,23 +22,22 @@ export async function GET() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("agent_connection, saved_vaults")
+    .select("agent_connection")
     .eq("id", user.id)
     .maybeSingle();
-
-  const savedRecords = mergeSavedVaultsFromSources(
-    profile?.saved_vaults,
-    user.user_metadata?.opensync_saved_vaults,
-  );
-  const emptyVaults: VaultListItem[] = savedRecords
-    .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map(savedVaultToListItem);
 
   const raw =
     profile?.agent_connection ?? user.user_metadata?.opensync_agent_connection;
 
-  const vaults: VaultListItem[] = [...emptyVaults];
+  const backend = await backendRequest<{ vaults: BackendVault[] }>("/vaults", user);
+  const vaults: VaultListItem[] = backend.vaults.map((v) => ({
+    id: v.id,
+    name: v.name,
+    pathLabel: v.giteaRepo,
+    kind: "blank" as const,
+    managedByProfile: false,
+    deletable: true,
+  }));
 
   if (raw != null && typeof raw === "object") {
     const o = raw as Record<string, unknown>;

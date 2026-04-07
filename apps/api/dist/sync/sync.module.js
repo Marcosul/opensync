@@ -8,9 +8,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SyncModule = void 0;
 const common_1 = require("@nestjs/common");
+const gitea_service_1 = require("./gitea.service");
+const sync_controller_1 = require("./sync.controller");
 let SyncModule = class SyncModule {
 };
 exports.SyncModule = SyncModule;
 exports.SyncModule = SyncModule = __decorate([
-    (0, common_1.Module)({})
+    (0, common_1.Module)({
+        controllers: [sync_controller_1.SyncController],
+        providers: [gitea_service_1.GiteaService],
+        exports: [gitea_service_1.GiteaService],
+    })
 ], SyncModule);

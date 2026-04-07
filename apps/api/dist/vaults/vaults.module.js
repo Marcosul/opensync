@@ -8,9 +8,16 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VaultsModule = void 0;
 const common_1 = require("@nestjs/common");
+const sync_module_1 = require("../sync/sync.module");
+const vaults_controller_1 = require("./vaults.controller");
+const vaults_service_1 = require("./vaults.service");
 let VaultsModule = class VaultsModule {
 };
 exports.VaultsModule = VaultsModule;
 exports.VaultsModule = VaultsModule = __decorate([
-    (0, common_1.Module)({})
+    (0, common_1.Module)({
+        imports: [sync_module_1.SyncModule],
+        controllers: [vaults_controller_1.VaultsController],
+        providers: [vaults_service_1.VaultsService],
+    })
 ], VaultsModule);

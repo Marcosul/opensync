@@ -2,9 +2,10 @@ import { Cpu, FolderOpen, Plus, Wifi, WifiOff } from "lucide-react";
 import Link from "next/link";
 
 import { AddVaultCard } from "@/components/dashboard/add-vault-card";
+import { apiRequest } from "@/api/rest/generic";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { deriveAgentMode, deriveVaultName, formatAgentPreview } from "@/lib/vault-display";
-import { parseSavedVaults } from "@/lib/saved-vaults";
+import type { VaultListItem } from "@/lib/vault-list-types";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
@@ -16,7 +17,7 @@ export default async function DashboardPage() {
   const { data: profile } = user
     ? await supabase
         .from("profiles")
-        .select("agent_connection, onboarding_completed_at, saved_vaults")
+        .select("agent_connection, onboarding_completed_at")
         .eq("id", user.id)
         .maybeSingle()
     : { data: null };
@@ -25,19 +26,20 @@ export default async function DashboardPage() {
     profile?.agent_connection ?? user?.user_metadata?.opensync_agent_connection;
   const hasAgent = agentRaw != null && typeof agentRaw === "object";
 
-  const savedList = parseSavedVaults(
-    profile?.saved_vaults ?? user?.user_metadata?.opensync_saved_vaults,
-  );
-
-  const savedVaultItems: VaultItem[] = savedList.map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: "Vault vazio · guardado na conta",
-    connected: false,
-    agentMode: "empty",
-    isEmpty: true,
-    fileCount: 0,
-  }));
+  const backendVaults = user
+    ? await apiRequest<{ vaults: VaultListItem[] }>("/api/vaults/list")
+    : { vaults: [] as VaultListItem[] };
+  const savedVaultItems: VaultItem[] = backendVaults.vaults
+    .filter((v) => !v.managedByProfile)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.pathLabel,
+      connected: false,
+      agentMode: "empty",
+      isEmpty: true,
+      fileCount: 0,
+    }));
 
   const agentVaultItems: VaultItem[] =
     hasAgent && user

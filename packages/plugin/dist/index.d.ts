@@ -7,6 +7,7 @@ declare const _default: {
             workspaceDir: string;
             config: {
                 token: string;
+                vaultId?: string;
             };
         }) => Promise<void>;
         onUnload: () => Promise<void>;

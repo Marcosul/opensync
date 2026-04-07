@@ -1,11 +1,15 @@
 import chokidar, { FSWatcher } from 'chokidar';
-import { commitAll, pushToApi } from './git';
+import { commitAll } from './git';
 import { sync } from './sync';
 
 let watcher: FSWatcher | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-export async function startWatcher(workspaceDir: string, token: string): Promise<void> {
+export async function startWatcher(
+  workspaceDir: string,
+  token: string,
+  vaultId?: string,
+): Promise<void> {
   watcher = chokidar.watch(workspaceDir, {
     ignored: /(^|[/\\])\..|(^|[/\\])node_modules/,
     persistent: true,
@@ -17,7 +21,7 @@ export async function startWatcher(workspaceDir: string, token: string): Promise
     debounceTimer = setTimeout(async () => {
       const filename = filePath.replace(workspaceDir, '').replace(/^\//, '');
       await commitAll(workspaceDir, `auto: ${filename} ${event}`);
-      await sync(workspaceDir, token);
+      await sync(workspaceDir, token, vaultId);
     }, 1000);
   });
 }

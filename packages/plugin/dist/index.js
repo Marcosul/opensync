@@ -9,7 +9,7 @@ exports.default = {
     hooks: {
         onLoad: async (ctx) => {
             await (0, git_1.initGit)(ctx.workspaceDir);
-            await (0, watcher_1.startWatcher)(ctx.workspaceDir, ctx.config.token);
+            await (0, watcher_1.startWatcher)(ctx.workspaceDir, ctx.config.token, ctx.config.vaultId);
         },
         onUnload: async () => {
             await (0, watcher_1.stopWatcher)();

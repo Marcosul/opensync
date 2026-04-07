@@ -18,6 +18,7 @@ const graph_module_1 = require("./graph/graph.module");
 const plans_module_1 = require("./plans/plans.module");
 const billing_module_1 = require("./billing/billing.module");
 const health_controller_1 = require("./health.controller");
+const prisma_module_1 = require("./common/prisma.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -26,6 +27,7 @@ exports.AppModule = AppModule = __decorate([
         controllers: [health_controller_1.HealthController],
         imports: [
             throttler_1.ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+            prisma_module_1.PrismaModule,
             ionos_module_1.IonosModule,
             auth_module_1.AuthModule,
             vaults_module_1.VaultsModule,

@@ -10,7 +10,7 @@ const git_1 = require("./git");
 const sync_1 = require("./sync");
 let watcher = null;
 let debounceTimer = null;
-async function startWatcher(workspaceDir, token) {
+async function startWatcher(workspaceDir, token, vaultId) {
     watcher = chokidar_1.default.watch(workspaceDir, {
         ignored: /(^|[/\\])\..|(^|[/\\])node_modules/,
         persistent: true,
@@ -22,7 +22,7 @@ async function startWatcher(workspaceDir, token) {
         debounceTimer = setTimeout(async () => {
             const filename = filePath.replace(workspaceDir, '').replace(/^\//, '');
             await (0, git_1.commitAll)(workspaceDir, `auto: ${filename} ${event}`);
-            await (0, sync_1.sync)(workspaceDir, token);
+            await (0, sync_1.sync)(workspaceDir, token, vaultId);
         }, 1000);
     });
 }

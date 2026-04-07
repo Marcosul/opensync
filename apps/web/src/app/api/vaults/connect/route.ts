@@ -7,6 +7,7 @@ import {
   type AgentConnectionStored,
 } from "@/lib/onboarding-agent";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
+import { backendRequest, type BackendVault } from "@/app/api/_lib/backend-api";
 
 type ConnectPayload = {
   agentConnection?: AgentConnectionPayload;
@@ -53,6 +54,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Informe o nome do vault" }, { status: 400 });
   }
 
+  let backendVault: BackendVault | null = null;
+  try {
+    const created = await backendRequest<{ vault: BackendVault }>("/vaults", user, {
+      method: "POST",
+      body: { name: vaultLabel, path: "./openclaw" },
+    });
+    backendVault = created.vault;
+  } catch {
+    // mantém fluxo de conexão legado para não bloquear onboarding em ambientes sem API nova
+  }
+
   const stored: AgentConnectionStored = toStoredAgentConnection(
     payload.agentConnection,
     vaultLabel,
@@ -70,7 +82,11 @@ export async function POST(request: Request) {
       if (metaErr) {
         return NextResponse.json({ error: metaErr }, { status: 500 });
       }
-      return NextResponse.json({ ok: true, stored: "user_metadata" });
+      return NextResponse.json({
+        ok: true,
+        stored: "user_metadata",
+        backendVaultId: backendVault?.id ?? null,
+      });
     }
     return NextResponse.json({ error: selectError.message }, { status: 500 });
   }
@@ -87,7 +103,11 @@ export async function POST(request: Request) {
         if (metaErr) {
           return NextResponse.json({ error: metaErr }, { status: 500 });
         }
-        return NextResponse.json({ ok: true, stored: "user_metadata" });
+        return NextResponse.json({
+          ok: true,
+          stored: "user_metadata",
+          backendVaultId: backendVault?.id ?? null,
+        });
       }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -108,13 +128,21 @@ export async function POST(request: Request) {
         if (metaErr) {
           return NextResponse.json({ error: metaErr }, { status: 500 });
         }
-        return NextResponse.json({ ok: true, stored: "user_metadata" });
+        return NextResponse.json({
+          ok: true,
+          stored: "user_metadata",
+          backendVaultId: backendVault?.id ?? null,
+        });
       }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
   }
 
-  return NextResponse.json({ ok: true, stored: "profiles" });
+  return NextResponse.json({
+    ok: true,
+    stored: "profiles",
+    backendVaultId: backendVault?.id ?? null,
+  });
 }
 
 async function saveAgentConnectionToUserMetadata(
