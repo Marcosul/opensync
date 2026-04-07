@@ -93,14 +93,14 @@ export function VaultSidebarFooter({
       >
         <HelpCircle className="size-4" />
       </button>
-      <button
-        type="button"
-        className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+      <Link
+        href="/settings"
+        className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         title="Configurações"
         aria-label="Configurações"
       >
         <Settings className="size-4" />
-      </button>
+      </Link>
     </div>
   );
 }

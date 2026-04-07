@@ -7,28 +7,17 @@ type RequestOptions = {
   cache?: RequestCache;
 };
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (!baseUrl) {
-    return "";
-  }
-
-  return baseUrl.replace(/\/+$/, "");
-}
-
+/**
+ * Chamadas para Route Handlers do próprio app (`/api/...`).
+ * Não usar `NEXT_PUBLIC_API_URL` aqui — essa env é o backend OpenSync (Gitea etc.),
+ * usado só em `backendRequest`; mandar `/api/vaults/list` para lá gera 404 no servidor externo.
+ */
 function getRequestUrl(path: string) {
   if (/^https?:\/\//i.test(path)) {
     return path;
   }
 
-  let normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const apiBaseUrl = getApiBaseUrl();
-
-  if (apiBaseUrl && apiBaseUrl.endsWith("/api") && normalizedPath.startsWith("/api/")) {
-    normalizedPath = normalizedPath.slice(4);
-  }
-
-  return apiBaseUrl ? `${apiBaseUrl}${normalizedPath}` : normalizedPath;
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 export async function apiRequest<TResponse>(
