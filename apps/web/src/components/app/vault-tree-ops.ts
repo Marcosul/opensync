@@ -25,7 +25,13 @@ export function collectDocIdsUnderDir(dir: TreeEntry & { type: "dir" }): string[
 
 /** Prefixo do docId para arquivos dentro desta pasta (ex.: `memory/`). */
 export function docIdPrefixFromDirPath(dirPath: string): string {
-  if (dirPath === "openclaw-root" || dirPath === "openclaw/workspace") return "";
+  if (
+    dirPath === "openclaw-root" ||
+    dirPath === "openclaw/workspace" ||
+    dirPath === "vault-root"
+  ) {
+    return "";
+  }
   if (dirPath.startsWith("openclaw/workspace/")) {
     return `${dirPath.slice("openclaw/workspace/".length)}/`;
   }
@@ -87,7 +93,14 @@ function ensureMarkdownExtensionForRename(oldFileName: string | null, sanitizedN
   return `${sanitizedNewName}.md`;
 }
 
-function existingNamesInParent(entries: TreeEntry[], parentPath: string): Set<string> {
+function existingNamesInParent(
+  entries: TreeEntry[],
+  parentPath: string,
+  treeRootPath: string
+): Set<string> {
+  if (parentPath === treeRootPath) {
+    return new Set(entries.map((c) => c.name));
+  }
   const set = new Set<string>();
   function walk(es: TreeEntry[]): boolean {
     for (const e of es) {
@@ -175,8 +188,9 @@ function findParentPathForDoc(entries: TreeEntry[], docId: string, ancestorPath:
   return null;
 }
 
-export function getParentTreePathForDoc(rootChildren: TreeEntry[], docId: string): string | null {
-  return findParentPathForDoc(rootChildren, docId, "openclaw-root");
+export function getParentTreePathForDoc(root: TreeEntry, docId: string): string | null {
+  if (root.type !== "dir") return null;
+  return findParentPathForDoc(root.children, docId, root.path);
 }
 
 function removeFileFromEntries(entries: TreeEntry[], docId: string): TreeEntry[] {
@@ -203,9 +217,10 @@ function uniqueNameInParent(
   parentPath: string,
   base: string,
   ext: string,
-  isDir: boolean
+  isDir: boolean,
+  treeRootPath: string
 ): string {
-  const names = existingNamesInParent(entries, parentPath);
+  const names = existingNamesInParent(entries, parentPath, treeRootPath);
   let candidate = isDir ? base : `${base}${ext}`;
   let i = 2;
   while (names.has(candidate)) {
@@ -225,10 +240,38 @@ export function addNoteToParent(
   preferredBase = DEFAULT_MARKDOWN_NOTE_BASENAME
 ): AddNoteResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
+  const treeRootPath = root.path;
+
+  if (parentTreePath === treeRootPath) {
+    const fileName = uniqueNameInParent(
+      root.children,
+      parentTreePath,
+      preferredBase,
+      ".md",
+      false,
+      treeRootPath
+    );
+    const docId = docIdForFileInParent(parentTreePath, fileName);
+    const child: TreeEntry = { type: "file", name: fileName, docId };
+    return {
+      ok: true,
+      root: { ...root, children: insertSorted(root.children, child) },
+      docId,
+      fileName,
+    };
+  }
+
   const parent = findDir(root.children, parentTreePath);
   if (!parent) return { ok: false, reason: "Pasta não encontrada" };
 
-  const fileName = uniqueNameInParent(root.children, parentTreePath, preferredBase, ".md", false);
+  const fileName = uniqueNameInParent(
+    root.children,
+    parentTreePath,
+    preferredBase,
+    ".md",
+    false,
+    treeRootPath
+  );
   const docId = docIdForFileInParent(parentTreePath, fileName);
   const child: TreeEntry = { type: "file", name: fileName, docId };
   const nextChildren = addChildToDir(root.children, parentTreePath, child);
@@ -241,10 +284,24 @@ export type AddDirResult =
 
 export function addFolderToParent(root: TreeEntry, parentTreePath: string, preferredBase = "Nova pasta"): AddDirResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
+  const treeRootPath = root.path;
+
+  if (parentTreePath === treeRootPath) {
+    const name = uniqueNameInParent(root.children, parentTreePath, preferredBase, "", true, treeRootPath);
+    const path = `${parentTreePath}/${name}`;
+    const child: TreeEntry = { type: "dir", name, path, children: [] };
+    return {
+      ok: true,
+      root: { ...root, children: insertSorted(root.children, child) },
+      path,
+      name,
+    };
+  }
+
   const parent = findDir(root.children, parentTreePath);
   if (!parent) return { ok: false, reason: "Pasta não encontrada" };
 
-  const name = uniqueNameInParent(root.children, parentTreePath, preferredBase, "", true);
+  const name = uniqueNameInParent(root.children, parentTreePath, preferredBase, "", true, treeRootPath);
   const path = `${parentTreePath}/${name}`;
   const child: TreeEntry = { type: "dir", name, path, children: [] };
   const nextChildren = addChildToDir(root.children, parentTreePath, child);
@@ -253,10 +310,38 @@ export function addFolderToParent(root: TreeEntry, parentTreePath: string, prefe
 
 export function addCanvasToParent(root: TreeEntry, parentTreePath: string): AddNoteResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
+  const treeRootPath = root.path;
+
+  if (parentTreePath === treeRootPath) {
+    const fileName = uniqueNameInParent(
+      root.children,
+      parentTreePath,
+      "Sem título",
+      ".canvas",
+      false,
+      treeRootPath
+    );
+    const docId = docIdForFileInParent(parentTreePath, fileName);
+    const child: TreeEntry = { type: "file", name: fileName, docId };
+    return {
+      ok: true,
+      root: { ...root, children: insertSorted(root.children, child) },
+      docId,
+      fileName,
+    };
+  }
+
   const parent = findDir(root.children, parentTreePath);
   if (!parent) return { ok: false, reason: "Pasta não encontrada" };
 
-  const fileName = uniqueNameInParent(root.children, parentTreePath, "Sem título", ".canvas", false);
+  const fileName = uniqueNameInParent(
+    root.children,
+    parentTreePath,
+    "Sem título",
+    ".canvas",
+    false,
+    treeRootPath
+  );
   const docId = docIdForFileInParent(parentTreePath, fileName);
   const child: TreeEntry = { type: "file", name: fileName, docId };
   const nextChildren = addChildToDir(root.children, parentTreePath, child);
@@ -265,10 +350,38 @@ export function addCanvasToParent(root: TreeEntry, parentTreePath: string): AddN
 
 export function addBaseToParent(root: TreeEntry, parentTreePath: string): AddNoteResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
+  const treeRootPath = root.path;
+
+  if (parentTreePath === treeRootPath) {
+    const fileName = uniqueNameInParent(
+      root.children,
+      parentTreePath,
+      "Sem título",
+      ".base",
+      false,
+      treeRootPath
+    );
+    const docId = docIdForFileInParent(parentTreePath, fileName);
+    const child: TreeEntry = { type: "file", name: fileName, docId };
+    return {
+      ok: true,
+      root: { ...root, children: insertSorted(root.children, child) },
+      docId,
+      fileName,
+    };
+  }
+
   const parent = findDir(root.children, parentTreePath);
   if (!parent) return { ok: false, reason: "Pasta não encontrada" };
 
-  const fileName = uniqueNameInParent(root.children, parentTreePath, "Sem título", ".base", false);
+  const fileName = uniqueNameInParent(
+    root.children,
+    parentTreePath,
+    "Sem título",
+    ".base",
+    false,
+    treeRootPath
+  );
   const docId = docIdForFileInParent(parentTreePath, fileName);
   const child: TreeEntry = { type: "file", name: fileName, docId };
   const nextChildren = addChildToDir(root.children, parentTreePath, child);
@@ -284,7 +397,11 @@ export function deleteFile(root: TreeEntry, docId: string): TreeOpResult {
 
 export function deleteDirectory(root: TreeEntry, dirPath: string): TreeOpResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
-  if (dirPath === "openclaw-root" || dirPath === "openclaw/workspace") {
+  if (
+    dirPath === "openclaw-root" ||
+    dirPath === "openclaw/workspace" ||
+    dirPath === "vault-root"
+  ) {
     return { ok: false, reason: "Não é possível apagar esta pasta." };
   }
   return { ok: true, root: { ...root, children: removeDirFromEntries(root.children, dirPath) } };
@@ -301,11 +418,11 @@ export function renameFile(
   if (!sanitized) return { ok: false, reason: "Nome inválido" };
   const name = ensureMarkdownExtensionForRename(oldFileName, sanitized);
 
-  const parentPath = getParentTreePathForDoc(root.children, docId);
+  const parentPath = getParentTreePathForDoc(root, docId);
   if (parentPath === null) return { ok: false, reason: "Arquivo não encontrado" };
 
   const newDocId = docIdForFileInParent(parentPath, name);
-  const names = existingNamesInParent(root.children, parentPath);
+  const names = existingNamesInParent(root.children, parentPath, root.path);
   if (newDocId !== docId && names.has(name)) {
     return { ok: false, reason: "Já existe um item com esse nome." };
   }
@@ -362,7 +479,11 @@ export type RenameDirectoryResult =
 
 export function renameDirectory(root: TreeEntry, dirPath: string, newNameRaw: string): RenameDirectoryResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
-  if (dirPath === "openclaw-root" || dirPath === "openclaw/workspace") {
+  if (
+    dirPath === "openclaw-root" ||
+    dirPath === "openclaw/workspace" ||
+    dirPath === "vault-root"
+  ) {
     return { ok: false, reason: "Não é possível renomear esta pasta." };
   }
 
@@ -378,7 +499,7 @@ export function renameDirectory(root: TreeEntry, dirPath: string, newNameRaw: st
   const dir = findDir(root.children, dirPath);
   if (!dir) return { ok: false, reason: "Pasta não encontrada" };
 
-  const names = existingNamesInParent(root.children, parentPath);
+  const names = existingNamesInParent(root.children, parentPath, root.path);
   if (names.has(folderName) && newPath !== dirPath) {
     return { ok: false, reason: "Já existe um item com esse nome." };
   }
@@ -420,11 +541,12 @@ export function moveFile(
   targetParentPath: string
 ): TreeOpResult & { newDocId?: string } {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
-  const sourceParent = getParentTreePathForDoc(root.children, docId);
+  const sourceParent = getParentTreePathForDoc(root, docId);
   if (sourceParent === null) return { ok: false, reason: "Arquivo não encontrado" };
 
-  const targetDir = findDir(root.children, targetParentPath);
-  if (!targetDir) return { ok: false, reason: "Pasta de destino não encontrada" };
+  const targetDir =
+    targetParentPath === root.path ? root : findDir(root.children, targetParentPath);
+  if (!targetDir || targetDir.type !== "dir") return { ok: false, reason: "Pasta de destino não encontrada" };
 
   let fileName = "";
   function findName(es: TreeEntry[]): boolean {
@@ -440,22 +562,33 @@ export function moveFile(
   findName(root.children);
   if (!fileName) return { ok: false, reason: "Arquivo não encontrado" };
 
-  const adjustedName = uniqueNameInParent(root.children, targetParentPath, fileName.replace(/\.[^.]+$/, ""), fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : "", false);
+  const adjustedName = uniqueNameInParent(
+    root.children,
+    targetParentPath,
+    fileName.replace(/\.[^.]+$/, ""),
+    fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : "",
+    false,
+    root.path
+  );
 
   const newDocId = docIdForFileInParent(targetParentPath, adjustedName);
   const without = removeFileFromEntries(root.children, docId);
   const tmpRoot: TreeEntry = { type: "dir", name: root.name, path: root.path, children: without };
-  const withAdded = addChildToDir(tmpRoot.children, targetParentPath, {
-    type: "file",
-    name: adjustedName,
-    docId: newDocId,
-  });
+  const moved: TreeEntry = { type: "file", name: adjustedName, docId: newDocId };
+  const withAdded =
+    targetParentPath === root.path
+      ? insertSorted(tmpRoot.children, moved)
+      : addChildToDir(tmpRoot.children, targetParentPath, moved);
   return { ok: true, root: { ...root, children: withAdded }, newDocId };
 }
 
 export function moveDirectory(root: TreeEntry, dirPath: string, targetParentPath: string): MoveDirectoryResult {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
-  if (dirPath === "openclaw-root" || dirPath === "openclaw/workspace") {
+  if (
+    dirPath === "openclaw-root" ||
+    dirPath === "openclaw/workspace" ||
+    dirPath === "vault-root"
+  ) {
     return { ok: false, reason: "Não é possível mover esta pasta." };
   }
 
@@ -466,10 +599,11 @@ export function moveDirectory(root: TreeEntry, dirPath: string, targetParentPath
   const dir = findDir(root.children, dirPath);
   if (!dir) return { ok: false, reason: "Pasta não encontrada" };
 
-  const targetDir = findDir(root.children, targetParentPath);
-  if (!targetDir) return { ok: false, reason: "Pasta de destino não encontrada" };
+  const targetDir =
+    targetParentPath === root.path ? root : findDir(root.children, targetParentPath);
+  if (!targetDir || targetDir.type !== "dir") return { ok: false, reason: "Pasta de destino não encontrada" };
 
-  const folderName = uniqueNameInParent(root.children, targetParentPath, dir.name, "", true);
+  const folderName = uniqueNameInParent(root.children, targetParentPath, dir.name, "", true, root.path);
   const newPath = `${targetParentPath}/${folderName}`;
 
   const oldDocP = docIdPrefixFromDirPath(dirPath);
@@ -482,7 +616,10 @@ export function moveDirectory(root: TreeEntry, dirPath: string, targetParentPath
   };
   const subtree: TreeEntry & { type: "dir" } = { ...rewritten, name: folderName };
 
-  const placed = addChildToDir(tmpRoot.children, targetParentPath, subtree);
+  const placed =
+    targetParentPath === root.path
+      ? insertSorted(tmpRoot.children, subtree)
+      : addChildToDir(tmpRoot.children, targetParentPath, subtree);
   return {
     ok: true,
     root: { ...root, children: placed },
@@ -493,7 +630,7 @@ export function moveDirectory(root: TreeEntry, dirPath: string, targetParentPath
 
 export function duplicateFile(root: TreeEntry, docId: string): TreeOpResult & { newDocId?: string } {
   if (root.type !== "dir") return { ok: false, reason: "Raiz inválida" };
-  const parentPath = getParentTreePathForDoc(root.children, docId);
+  const parentPath = getParentTreePathForDoc(root, docId);
   if (parentPath === null) return { ok: false, reason: "Arquivo não encontrado" };
 
   let baseName = "";
@@ -518,22 +655,30 @@ export function duplicateFile(root: TreeEntry, docId: string): TreeOpResult & { 
   findMeta(root.children);
 
   const copyBase = `${baseName} (cópia)`;
-  const fileName = uniqueNameInParent(root.children, parentPath, copyBase, ext || "", false);
+  const fileName = uniqueNameInParent(root.children, parentPath, copyBase, ext || "", false, root.path);
   const newDocId = docIdForFileInParent(parentPath, fileName);
   const child: TreeEntry = { type: "file", name: fileName, docId: newDocId };
+  const nextChildren =
+    parentPath === root.path
+      ? insertSorted(root.children, child)
+      : addChildToDir(root.children, parentPath, child);
   return {
     ok: true,
-    root: { ...root, children: addChildToDir(root.children, parentPath, child) },
+    root: { ...root, children: nextChildren },
     newDocId,
   };
 }
 
-export function getChildrenAtPath(entries: TreeEntry[], dirPath: string): TreeEntry[] | null {
-  if (dirPath === "openclaw-root") return entries;
+export function getChildrenAtPath(
+  entries: TreeEntry[],
+  dirPath: string,
+  treeRootPath: string
+): TreeEntry[] | null {
+  if (dirPath === treeRootPath) return entries;
   for (const e of entries) {
     if (e.type === "dir") {
       if (e.path === dirPath) return e.children;
-      const inner = getChildrenAtPath(e.children, dirPath);
+      const inner = getChildrenAtPath(e.children, dirPath, treeRootPath);
       if (inner !== null) return inner;
     }
   }

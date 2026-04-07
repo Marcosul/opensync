@@ -711,7 +711,11 @@ export function VaultView() {
           );
           if (dest === null || !dest.trim()) return;
           const targetPath = dest.trim();
-          if (!findDir(treeRoot.children, targetPath)) {
+          const destExists =
+            treeRoot.type === "dir" && targetPath === treeRoot.path
+              ? true
+              : findDir(treeRoot.children, targetPath) != null;
+          if (!destExists) {
             window.alert("Pasta não encontrada. Use um caminho como openclaw/workspace/memory.");
             return;
           }
@@ -742,7 +746,11 @@ export function VaultView() {
           );
           if (dest === null || !dest.trim()) return;
           const targetPath = dest.trim();
-          if (!findDir(treeRoot.children, targetPath)) {
+          const destFolderExists =
+            treeRoot.type === "dir" && targetPath === treeRoot.path
+              ? true
+              : findDir(treeRoot.children, targetPath) != null;
+          if (!destFolderExists) {
             window.alert("Pasta de destino não encontrada.");
             return;
           }
@@ -897,6 +905,7 @@ export function VaultView() {
         ) : (
           <FileTree
           treeRootLabel={rootExplorerLabel}
+          treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
           treeChildren={treeChildren}
           selectedId={activeTabId || null}
           onSelect={browseSelectFile}
@@ -1546,6 +1555,7 @@ function BacklinksPanel({
 
 function FileTree({
   treeRootLabel,
+  treeRootPath,
   treeChildren,
   selectedId,
   onSelect,
@@ -1576,6 +1586,8 @@ function FileTree({
   onCollapseSidebar,
 }: {
   treeRootLabel: string;
+  /** Caminho da entrada raiz da árvore (`openclaw-root`, `vault-root`, …). */
+  treeRootPath: string;
   treeChildren: TreeEntry[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -1609,12 +1621,12 @@ function FileTree({
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
 
   const baseEntries = folderSearch
-    ? (getChildrenAtPath(treeChildren, folderSearch.path) ?? [])
+    ? (getChildrenAtPath(treeChildren, folderSearch.path, treeRootPath) ?? [])
     : treeChildren;
   const displayEntries = folderSearch?.query.trim()
     ? filterEntriesByNameQuery(baseEntries, folderSearch.query)
     : baseEntries;
-  const listParentPath = folderSearch?.path ?? "openclaw-root";
+  const listParentPath = folderSearch?.path ?? treeRootPath;
 
   const sortedEntries = useMemo(
     () => sortTreeEntries(displayEntries, treeSortOrder),
