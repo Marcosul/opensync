@@ -7,13 +7,37 @@ type RequestOptions = {
   cache?: RequestCache;
 };
 
+function getApiBaseUrl() {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!baseUrl) {
+    return "";
+  }
+
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function getRequestUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  let normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const apiBaseUrl = getApiBaseUrl();
+
+  if (apiBaseUrl && apiBaseUrl.endsWith("/api") && normalizedPath.startsWith("/api/")) {
+    normalizedPath = normalizedPath.slice(4);
+  }
+
+  return apiBaseUrl ? `${apiBaseUrl}${normalizedPath}` : normalizedPath;
+}
+
 export async function apiRequest<TResponse>(
   path: string,
   options: RequestOptions = {},
 ) {
   const { method = "GET", body, headers, cache = "no-store" } = options;
 
-  const response = await fetch(path, {
+  const response = await fetch(getRequestUrl(path), {
     method,
     headers: {
       "Content-Type": "application/json",
