@@ -13,5 +13,6 @@ primary_region = "gru"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  # Evita 502 no primeiro pedido (cold start) quando o Next chama o Nest no onboarding.
+  min_machines_running = 1
   processes = ["app"]

@@ -20,6 +20,13 @@ function resolveBackendPath(path: string): string {
   return `/api${normalized}`;
 }
 
+const TRANSIENT_BACKEND_STATUSES = new Set([502, 503, 504]);
+const BACKEND_FETCH_MAX_ATTEMPTS = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type BackendVault = {
   id: string;
   workspaceId: string;
@@ -39,19 +46,36 @@ export async function backendRequest<T>(
     throw new Error("NEXT_PUBLIC_API_URL/OPENSYNC_API_URL não configurado");
   }
   const method = options.method ?? "GET";
-  const response = await fetch(`${base}${resolveBackendPath(path)}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "x-opensync-user-id": user.id,
-      "x-opensync-user-email": user.email ?? "",
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    cache: "no-store",
-  });
-  if (!response.ok) {
+  const url = `${base}${resolveBackendPath(path)}`;
+  const headers = {
+    "Content-Type": "application/json",
+    "x-opensync-user-id": user.id,
+    "x-opensync-user-email": user.email ?? "",
+  };
+  const body =
+    options.body === undefined ? undefined : JSON.stringify(options.body);
+
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= BACKEND_FETCH_MAX_ATTEMPTS; attempt++) {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body,
+      cache: "no-store",
+    });
+    lastStatus = response.status;
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+    const retry =
+      TRANSIENT_BACKEND_STATUSES.has(response.status) &&
+      attempt < BACKEND_FETCH_MAX_ATTEMPTS;
+    if (retry) {
+      await sleep(250 * 2 ** (attempt - 1));
+      continue;
+    }
     const message = await response.text();
     throw new Error(message || `Falha no backend (${response.status})`);
   }
-  return (await response.json()) as T;
+  throw new Error(`Falha no backend (${lastStatus})`);
 }
