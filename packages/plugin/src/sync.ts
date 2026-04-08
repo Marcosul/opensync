@@ -1,4 +1,4 @@
-const API_URL = process.env.OPENSYNC_API_URL ?? 'https://api.opensync.space';
+import { resolveOpensyncApiBase } from './api-base';
 
 function resolveVaultId(vaultId?: string): string {
   const resolved = (vaultId ?? process.env.OPENSYNC_VAULT_ID ?? '').trim();
@@ -10,7 +10,8 @@ function resolveVaultId(vaultId?: string): string {
 
 export async function sync(workspaceDir: string, token: string, vaultId?: string): Promise<void> {
   const resolvedVaultId = resolveVaultId(vaultId);
-  await fetch(`${API_URL}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
+  const base = resolveOpensyncApiBase();
+  await fetch(`${base}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

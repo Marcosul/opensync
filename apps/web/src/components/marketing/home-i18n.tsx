@@ -88,6 +88,12 @@ type Messages = {
     footerTotal: string;
     footnote: string;
   };
+  footer: {
+    tagline: string;
+    product: string;
+    account: string;
+    rights: string;
+  };
 };
 
 type I18nContextValue = {
@@ -272,6 +278,12 @@ const BASE_EN: Messages = {
     footnote:
       "Pricing is indicative: Obsidian app is free; Sync, Publish, and Catalyst are separate. Notion tiers vary by seats and AI add-ons.",
   },
+  footer: {
+    tagline: "Git-powered vaults and sync built for OpenClaw agents.",
+    product: "Product",
+    account: "Account",
+    rights: "© 2026 opensync. All rights reserved.",
+  },
 };
 
 const PT_BR: Messages = {
@@ -443,6 +455,12 @@ const PT_BR: Messages = {
     footerTotal: "Mensal típico (usuário avançado)",
     footnote:
       "Preços indicativos: app Obsidian é grátis; Sync, Publish e Catalyst são separados. Notion varia por assentos e add-ons de IA.",
+  },
+  footer: {
+    tagline: "Vaults com Git e sync pensados para agentes OpenClaw.",
+    product: "Produto",
+    account: "Conta",
+    rights: "© 2026 opensync. Todos os direitos reservados.",
   },
 };
 

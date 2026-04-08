@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sync = sync;
-const API_URL = process.env.OPENSYNC_API_URL ?? 'https://api.opensync.space';
+const api_base_1 = require("./api-base");
 function resolveVaultId(vaultId) {
     const resolved = (vaultId ?? process.env.OPENSYNC_VAULT_ID ?? '').trim();
     if (!resolved) {
@@ -11,7 +11,8 @@ function resolveVaultId(vaultId) {
 }
 async function sync(workspaceDir, token, vaultId) {
     const resolvedVaultId = resolveVaultId(vaultId);
-    await fetch(`${API_URL}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
+    const base = (0, api_base_1.resolveOpensyncApiBase)();
+    await fetch(`${base}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${token}`,

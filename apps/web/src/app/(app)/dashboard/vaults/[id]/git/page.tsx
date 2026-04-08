@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
+import type { AgentApiTokenResponse } from "@/app/api/vaults/[id]/agent-token/route";
 import type { AgentDeployKeyResponse } from "@/app/api/vaults/[id]/git/deploy-key/route";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,9 @@ export default function VaultGitSetupPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastBootstrap, setLastBootstrap] = useState<AgentDeployKeyResponse | null>(null);
   const [revokeMessage, setRevokeMessage] = useState<string | null>(null);
+  const [agentApiBusy, setAgentApiBusy] = useState(false);
+  const [agentApiError, setAgentApiError] = useState<string | null>(null);
+  const [lastAgentApiToken, setLastAgentApiToken] = useState<AgentApiTokenResponse | null>(null);
 
   const storedFingerprint = useMemo(() => {
     if (typeof window === "undefined" || !vaultId) return null;
@@ -93,6 +97,24 @@ export default function VaultGitSetupPage() {
     }
   }, []);
 
+  const handleGenerateAgentApiToken = useCallback(async () => {
+    if (!vaultId) return;
+    setAgentApiError(null);
+    setLastAgentApiToken(null);
+    setAgentApiBusy(true);
+    try {
+      const res = await apiRequest<AgentApiTokenResponse>(
+        `/api/vaults/${encodeURIComponent(vaultId)}/agent-token`,
+        { method: "POST" },
+      );
+      setLastAgentApiToken(res);
+    } catch (e) {
+      setAgentApiError(e instanceof Error ? e.message : "Falha ao gerar API key.");
+    } finally {
+      setAgentApiBusy(false);
+    }
+  }, [vaultId]);
+
   const cronSnippet = useMemo(() => {
     const short = vaultId ? vaultId.slice(0, 8) : "VAULT";
     return `openclaw cron add \\
@@ -134,9 +156,88 @@ export default function VaultGitSetupPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               OpenClaw + Gitea
             </p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-              Ligar o agente por Git
-            </h1>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">Ligar o agente</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Pode sincronizar pelo <strong className="font-medium text-foreground">HTTP + API key</strong>{" "}
+              (plugin OpenSync / OpenClaw) ou, em alternativa, ligar Git na VPS com deploy key abaixo.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4 sm:p-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              API do agente (HTTP)
+            </p>
+            <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
+              Chave Bearer para o OpenClaw
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Use com <span className="font-mono text-xs">OPENSYNC_VAULT_ID</span> e{" "}
+              <span className="font-mono text-xs">OPENSYNC_API_URL</span> (base com{" "}
+              <span className="font-mono text-xs">/api</span>).               Cada geração cria uma credencial nova; as anteriores continuam válidas em paralelo (revogação
+              dedicada pode vir a seguir).
+            </p>
+            <div className="mt-3">
+              <p className="text-xs font-medium text-muted-foreground">Vault ID</p>
+              <pre className={monoBlockClass}>{vaultId}</pre>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-8 text-xs"
+                onClick={() => void copy(vaultId)}
+              >
+                <Copy className="mr-1 size-3.5" />
+                Copiar ID
+              </Button>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={agentApiBusy}
+                onClick={() => void handleGenerateAgentApiToken()}
+              >
+                <KeyRound className="mr-2 size-4" />
+                {agentApiBusy ? "A gerar…" : "Gerar API key"}
+              </Button>
+            </div>
+            {agentApiError ? <p className="mt-3 text-sm text-destructive">{agentApiError}</p> : null}
+            {lastAgentApiToken ? (
+              <div className="mt-4 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm">
+                <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                  Copie a API key agora. Não voltamos a mostrá-la.
+                </p>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <pre className={cn(monoBlockClass, "mt-0 max-h-32 flex-1 overflow-y-auto")}>
+                    {lastAgentApiToken.token}
+                  </pre>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 shrink-0 text-xs"
+                    onClick={() => void copy(lastAgentApiToken.token)}
+                  >
+                    <Copy className="mr-1 size-3.5" />
+                    Copiar
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Chame{" "}
+                  <code className="rounded bg-muted px-1 font-mono text-[10px] text-foreground">
+                    POST …/api/git/&lt;vaultId&gt;/push
+                  </code>{" "}
+                  com <code className="rounded bg-muted px-1 font-mono text-[10px]">Authorization: Bearer</code>{" "}
+                  igual a esta chave.
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="border-t border-border pt-8">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Alternativa — Git na VPS
+            </p>
+            <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">Deploy key SSH</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Gere uma deploy key com acesso só a este repositório. Guarde a chave privada na VPS (nunca no
               repositório). O OpenSync não volta a mostrar a privada.

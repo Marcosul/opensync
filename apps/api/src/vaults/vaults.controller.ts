@@ -63,6 +63,16 @@ export class VaultsController {
     return { ok: true };
   }
 
+  @Post(':id/agent-token')
+  @HttpCode(HttpStatus.CREATED)
+  async createAgentApiToken(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    return this.vaultsService.createAgentApiTokenForUser(uid, id.trim());
+  }
+
   @Post(':id/git/deploy-key')
   @HttpCode(HttpStatus.CREATED)
   async createAgentDeployKey(

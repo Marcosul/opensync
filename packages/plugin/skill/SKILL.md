@@ -1,70 +1,60 @@
 ---
-
-## name: opensync
-description: Integração OpenSync — Git, commits e sincronização com o vault no Gitea.
+name: opensync
+description: Integração OpenSync — API HTTP, skill e sincronização do vault com Gitea.
+---
 
 # OpenSync — workspace e sincronização
 
 ## Contexto
 
-O utilizador usa **OpenSync** (opensync.space) com um **vault** por repositório Gitea. O agente na VPS deve manter o workspace alinhado com esse remoto (pull antes de push quando houver dois escritores).
+O utilizador usa **OpenSync** (opensync.space) com um **vault** por repositório **Gitea**. O caminho recomendado é **API key (Bearer)** + endpoints HTTP da API OpenSync; o plugin em `packages/plugin` chama `POST /api/git/<vaultId>/push` com o token emitido no dashboard ou no assistente «Conectar agente OpenClaw».
 
 ## Antes de editar ficheiros importantes
 
-Garantir histórico local recuperável:
+Garantir histórico local recuperável no workspace do agente:
 
 ```bash
 git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "pre: snapshot before agent edit" || true
 ```
 
-(Ajuste o caminho se o clone do vault não for `~/.openclaw/workspace`.)
+(Ajuste o caminho se o workspace não for `~/.openclaw/workspace`.)
 
-## Sincronização programática (recomendado)
+## Sincronização via API (recomendado)
 
-1. **Remoto**: o utilizador gera **deploy key** no dashboard OpenSync (*Ligar Git na VPS*) e configura `GIT_SSH_COMMAND` com `ssh -i … -o IdentitiesOnly=yes`.
-2. **Script**: usar o script versionado `docs/dev/scripts/opensync-vps-git-sync.sh` (variável `OPENSYNC_REPO_DIR` = pasta do clone).
-3. **Imediato**: quando o utilizador pedir para publicar alterações, executar esse script com a ferramenta **exec** (ou `git pull --rebase`, `git add`, `git commit` se não houver mudanças pendentes, `git push`).
-4. **Periódico**: ver secção *Scheduled Tasks* abaixo (duas vezes por dia: 06:00 e 18:00).
+1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Git na VPS* → secção *API do agente*, ou assistente de novo vault OpenClaw). Guarde `OPENSYNC_VAULT_ID` e use a URL base da API **com sufixo `/api`** em `OPENSYNC_API_URL` (ex.: `https://api.opensync.space/api`).
+2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. Exemplo de endpoint: `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` (corpo JSON conforme o plugin).
+3. **Plugin**: com `OPENSYNC_API_URL`, `OPENSYNC_VAULT_ID` e token no contexto, o comando `/sync` faz commit local e chama a API.
 
-## Scheduled Tasks (OpenClaw Cron)
+## Instalação da skill (OpenClaw)
 
-Use as [Scheduled Tasks (Cron) do OpenClaw](https://docs.openclaw.ai/automation/cron-jobs) para correr o script de sync em horários fixos. Ajuste o caminho do script, o fuso (`--tz`) e a mensagem ao ambiente do utilizador.
+O OpenClaw segue pastas de skills compatíveis com [AgentSkills](https://agentskills.io); ver [Skills no OpenClaw](https://docs.openclaw.ai/tools/skills) para precedência completa.
 
-Crie **dois jobs** (um às 06:00 e outro às 18:00 no fuso escolhido):
+**Onde colocar** (por ordem de precedência típica, do mais específico ao partilhado):
 
-```bash
-# Sync OpenSync — manhã (06:00)
-openclaw cron add \
-  --name "OpenSync vault sync (06:00)" \
-  --cron "0 6 * * *" \
-  --tz "Europe/Lisbon" \
-  --session isolated \
-  --message "Execute apenas: bash /root/bin/opensync-vps-git-sync.sh — reporte numa linha se ok ou o erro." \
-  --tools exec \
-  --delivery none
+- `<workspace>/skills/opensync/SKILL.md` — só nesse workspace do agente
+- `<workspace>/.agents/skills/opensync/SKILL.md`
+- `~/.agents/skills/opensync/SKILL.md` — skills pessoais em todas as workspaces da máquina
+- `~/.openclaw/skills/opensync/SKILL.md` — skills geridas/local, visíveis a todos os agentes na máquina
 
-# Sync OpenSync — fim do dia (18:00)
-openclaw cron add \
-  --name "OpenSync vault sync (18:00)" \
-  --cron "0 18 * * *" \
-  --tz "Europe/Lisbon" \
-  --session isolated \
-  --message "Execute apenas: bash /root/bin/opensync-vps-git-sync.sh — reporte numa linha se ok ou o erro." \
-  --tools exec \
-  --delivery none
-```
+Copie o ficheiro deste repositório `packages/plugin/skill/SKILL.md` para `.../opensync/SKILL.md` numa das pastas acima (crie a pasta `opensync`).
 
-- **Cron (5 campos)**: `0 6 * * *` = minuto 0, hora 6, todos os dias; `0 18 * * *` = às 18:00.
-- `**--tz`**: obrigatório para horário de relógio local; troque `Europe/Lisbon` pelo timezone IANA do utilizador (ex.: `America/Sao_Paulo`).
-- `**--message**`: deve apontar para o script real (ex. copiado de `docs/dev/scripts/opensync-vps-git-sync.sh`). O ambiente da VPS já deve ter `GIT_SSH_COMMAND` e `OPENSYNC_REPO_DIR` definidos onde o cron corre.
-- `**openclaw cron list**` para verificar; `**openclaw cron remove <jobId>**` para remover.
+### Depois de instalar ou alterar `SKILL.md`
 
-Documentação complementar no repositório OpenSync: `docs/dev/openclaw-agent-sync.md`.
+- Por defeito o OpenClaw **observa** as pastas de skills; muitas alterações passam a contar na **próxima jogada** do agente (hot reload do snapshot de skills).
+- O snapshot de skills é criado **no início da sessão**; mudanças profundas ou config em `openclaw.json` (`skills.entries`, etc.) podem exigir **uma nova sessão** de chat/agente para ficarem visíveis.
+- **Não é obrigatório** reiniciar o Gateway só por ter copiado esta skill; reiniciar o processo do Gateway só se alterou configuração do próprio Gateway ou se o ambiente não estiver a aplicar mudanças (caso raro).
+
+## Alternativa — Git na VPS (deploy key)
+
+1. No dashboard: *Ligar Git na VPS* → gerar **deploy key**, configurar `GIT_SSH_COMMAND` com `ssh -i … -o IdentitiesOnly=yes`.
+2. Script: `docs/dev/scripts/opensync-vps-git-sync.sh` com `OPENSYNC_REPO_DIR` = pasta do clone.
+3. **Scheduled Tasks** do OpenClaw para correr o script em horários fixos (ex.: 06:00 e 18:00); ver [Cron jobs](https://docs.openclaw.ai/automation/cron-jobs).
 
 ## Conflitos
 
-Se `git pull --rebase` falhar, **não** forçar push; reportar ao utilizador e pedir resolução manual no clone.
+Se `git pull --rebase` falhar, **não** forçar push; reportar ao utilizador.
 
-## Plugin (avançado)
+## Documentação no repositório
 
-No monorepo OpenSync existe `packages/plugin` com comandos tipo `/sync` quando o Gateway expõe o plugin e variáveis `OPENSYNC_API_URL`, token e `OPENSYNC_VAULT_ID` estão definidos — uso típico é self-hosted.
+- `docs/dev/openclaw-agent-sync.md` — fluxo Git na VPS
+- `docs/dev/vault-git-api.md` — deploy keys na API

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   ConflictException,
   Injectable,
@@ -5,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { hashAgentBearerToken } from '../common/agent-token.util';
 import { PrismaService } from '../common/prisma.service';
 import { GiteaService } from '../sync/gitea.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -17,6 +19,7 @@ const colors = {
   green: '\x1b[32m',
   red: '\x1b[31m',
   yellow: '\x1b[33m',
+  magenta: '\x1b[35m',
 };
 
 @Injectable()
@@ -250,6 +253,46 @@ export class VaultsService {
       `${colors.green}🗑️ Deploy key revogada:${colors.reset} vault=${vaultId} repo=${vault.giteaRepo}`,
     );
     return { ok: true as const, removed: true };
+  }
+
+  /**
+   * Cria credencial de agente (OpenClaw/plugin): token mostrado uma vez; guarda-se apenas SHA-256.
+   */
+  async createAgentApiTokenForUser(userId: string, vaultId: string) {
+    const vault = await this.prisma.vault.findFirst({
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereUser(userId),
+      },
+      select: { id: true },
+    });
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+
+    const raw = randomBytes(32).toString('base64url');
+    const token = `osk_${raw}`;
+    const tokenHash = hashAgentBearerToken(token);
+
+    const agent = await this.prisma.agent.create({
+      data: {
+        vaultId: vault.id,
+        name: 'OpenClaw',
+        tokenHash,
+      },
+      select: { id: true },
+    });
+
+    this.logger.log(
+      `${colors.magenta}🔑 API token de agente criado:${colors.reset} vault=${vaultId} agent=${agent.id}`,
+    );
+
+    return {
+      token,
+      vaultId: vault.id,
+      agentId: agent.id,
+    };
   }
 
   async listVaultsForUser(userId: string) {

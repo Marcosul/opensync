@@ -15,28 +15,11 @@ import {
   writePendingAgentProject,
   writeVaultMetas,
 } from "@/components/app/vault-persistence";
-import { AgentConnectionStep } from "@/components/onboarding/agent-connection-step";
-import { OpenSyncAgentSkillInstructions } from "@/components/onboarding/opensync-agent-skill-instructions";
+import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-agent-skill-instructions";
 import { Button } from "@/components/ui/button";
-import {
-  buildAgentConnectionPayload,
-  getAgentConnectionValidationMessage,
-  isAgentConnectionValid,
-  type AgentConnectionForm,
-} from "@/lib/onboarding-agent";
-import { remoteTextFilesToVaultSnapshot } from "@/lib/vault-remote-import";
+import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import type { VaultListItem } from "@/lib/vault-list-types";
 import { cn } from "@/lib/utils";
-
-const defaultAgentFields: AgentConnectionForm = {
-  agentMode: "ssh_key",
-  sshHost: "",
-  sshPort: "22",
-  sshUser: "",
-  sshPrivateKey: "",
-  sshPassword: "",
-  sshRemotePath: "",
-};
 
 const vaultNameInputClass =
   "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40";
@@ -45,8 +28,15 @@ const VAULT_NAME_MAX = 120;
 const SQUAD_MISSION_MAX = 8000;
 const TOTAL_STEPS = 3;
 
+const SKILL_DOC_PATH = "/docs/agent/opensync-skill";
+
 type StartChoice = "agent_project" | "connect_agent" | "empty_vault";
 type AgentProjectScope = "single_agent" | "agent_squad";
+
+type ConnectAgentSetup = {
+  vault: VaultListItem;
+  token: string;
+};
 
 const agentProjectScopeOptions: { id: AgentProjectScope; label: string; hint: string }[] = [
   {
@@ -69,8 +59,8 @@ const startOptions: { id: StartChoice; label: string; hint: string }[] = [
   },
   {
     id: "connect_agent",
-    label: "Conectar com meu agente",
-    hint: "Importacao SSH inicial + skill OpenSync (sync programático). Alternativa: vault vazio + Git no dashboard.",
+    label: "Conectar com meu agente OpenClaw",
+    hint: "Instale a skill OpenSync no agente, use a API key e o endpoint da API para sincronizar com o repo Gitea do vault.",
   },
   {
     id: "empty_vault",
@@ -78,6 +68,14 @@ const startOptions: { id: StartChoice; label: string; hint: string }[] = [
     hint: "Abrir o explorador sem conectar um agente agora.",
   },
 ];
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    window.alert("Nao foi possivel copiar. Selecione o texto manualmente.");
+  }
+}
 
 export default function NewVaultPage() {
   const router = useRouter();
@@ -88,9 +86,7 @@ export default function NewVaultPage() {
   const [startChoice, setStartChoice] = useState<StartChoice>("connect_agent");
   const [agentProjectScope, setAgentProjectScope] = useState<AgentProjectScope>("single_agent");
   const [squadMission, setSquadMission] = useState("");
-  const [form, setForm] = useState<AgentConnectionForm>(defaultAgentFields);
-  const [connectLog, setConnectLog] = useState<string[]>([]);
-  const [connectElapsedSec, setConnectElapsedSec] = useState(0);
+  const [connectAgentSetup, setConnectAgentSetup] = useState<ConnectAgentSetup | null>(null);
 
   useEffect(() => {
     if (startChoice !== "agent_project") {
@@ -100,16 +96,10 @@ export default function NewVaultPage() {
   }, [startChoice]);
 
   useEffect(() => {
-    if (!isSubmitting) {
-      setConnectElapsedSec(0);
-      return;
+    if (startChoice !== "connect_agent") {
+      setConnectAgentSetup(null);
     }
-    const t0 = Date.now();
-    const id = window.setInterval(() => {
-      setConnectElapsedSec(Math.floor((Date.now() - t0) / 1000));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [isSubmitting]);
+  }, [startChoice]);
 
   const nameOk = vaultName.trim().length > 0;
 
@@ -120,15 +110,21 @@ export default function NewVaultPage() {
 
   const canContinueStep1 = true;
   const canContinueStep2 = nameOk && agentProjectStep2Ok;
-  const canFinishStep3 = useMemo(() => {
-    if (startChoice === "connect_agent") return isAgentConnectionValid(form);
-    return true;
-  }, [form, startChoice]);
 
   const selectedStartLabel = useMemo(
     () => startOptions.find((o) => o.id === startChoice)?.label ?? "",
     [startChoice],
   );
+
+  const skillGuideAbsoluteUrl = useMemo(() => {
+    if (typeof window === "undefined") {
+      return SKILL_DOC_PATH;
+    }
+    return `${window.location.origin}${SKILL_DOC_PATH}`;
+  }, [step, connectAgentSetup]);
+
+  const isConnectAgentStep3 = step === 3 && startChoice === "connect_agent";
+  const isConnectAgentStep2Submitting = step === 2 && startChoice === "connect_agent" && isSubmitting;
 
   function formatSubmitError(raw: string): string {
     try {
@@ -141,114 +137,52 @@ export default function NewVaultPage() {
     return raw;
   }
 
-  async function handleConnectAgent() {
+  function pushVaultToMetasAndLocal(vault: VaultListItem) {
+    const metas = readVaultMetas();
+    if (!metas.some((m) => m.id === vault.id)) {
+      metas.push({
+        id: vault.id,
+        name: vault.name,
+        pathLabel: vault.pathLabel,
+        kind: vault.kind,
+        managedByProfile: vault.managedByProfile,
+        deletable: vault.deletable,
+        remoteSync: vault.remoteSync ?? "git",
+      });
+      writeVaultMetas(metas);
+    }
+    saveSnapshot(vault.id, blankVaultSnapshot());
+    writeActiveVaultId(vault.id);
+    writePendingActiveVaultId(vault.id);
+  }
+
+  async function runConnectAgentSetupFromStep2() {
     setSubmitError(null);
-    setConnectLog([]);
     setIsSubmitting(true);
     try {
-      const formatMsg = getAgentConnectionValidationMessage(form);
-      if (formatMsg) {
-        setSubmitError(formatMsg);
-        return;
-      }
-      const agentConnection = buildAgentConnectionPayload(form);
-      if (!agentConnection) {
-        setSubmitError("Preencha os dados de conexao do agente.");
-        return;
-      }
-
-      const streamRes = await fetch("/api/vaults/connect?stream=1", {
+      const { vault } = await apiRequest<{ vault: VaultListItem }>("/api/vaults/empty", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentConnection, vaultName: vaultName.trim() }),
-        cache: "no-store",
+        body: { vaultName: vaultName.trim() },
       });
-
-      const ct = streamRes.headers.get("content-type") || "";
-
-      if (!streamRes.ok || !ct.includes("ndjson")) {
-        const text = await streamRes.text();
-        setSubmitError(formatSubmitError(text));
-        return;
+      try {
+        const tokenRes = await apiRequest<{ token: string; vaultId: string; agentId: string }>(
+          `/api/vaults/${encodeURIComponent(vault.id)}/agent-token`,
+          { method: "POST" },
+        );
+        pushVaultToMetasAndLocal(vault);
+        setConnectAgentSetup({ vault, token: tokenRes.token });
+        setStep(3);
+      } catch (tokenErr) {
+        pushVaultToMetasAndLocal(vault);
+        const msg =
+          tokenErr instanceof Error ? tokenErr.message : "Falha ao gerar API key.";
+        setSubmitError(
+          `${formatSubmitError(msg)} O vault foi criado. Gere a API key em Dashboard → Git na VPS (este cofre), secção API do agente.`,
+        );
       }
-
-      const reader = streamRes.body?.getReader();
-      if (!reader) {
-        setSubmitError("Resposta sem corpo (stream).");
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let doneBody: {
-        snapshotVaultId: string;
-        initialFiles: Record<string, string>;
-      } | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let row: {
-            t: string;
-            m?: string;
-            body?: {
-              snapshotVaultId?: string;
-              initialFiles?: Record<string, string>;
-            };
-            error?: string;
-          };
-          try {
-            row = JSON.parse(line) as typeof row;
-          } catch {
-            continue;
-          }
-          if (row.t === "log" && row.m) {
-            setConnectLog((prev) => [...prev, row.m as string]);
-          } else if (row.t === "error") {
-            throw new Error(row.error || "Falha na conexao.");
-          } else if (row.t === "done" && row.body?.snapshotVaultId) {
-            doneBody = {
-              snapshotVaultId: row.body.snapshotVaultId,
-              initialFiles: row.body.initialFiles ?? {},
-            };
-          }
-        }
-        if (done) break;
-      }
-
-      if (!doneBody?.snapshotVaultId?.trim()) {
-        throw new Error("Resposta incompleta do servidor.");
-      }
-
-      const vaultId = doneBody.snapshotVaultId.trim();
-      const snap = remoteTextFilesToVaultSnapshot(doneBody.initialFiles ?? {});
-      saveSnapshot(vaultId, snap);
-
-      /** Garantir que o novo cofre entra em metas antes de redirecionar — readActiveVaultId só ativa IDs presentes na lista. */
-      const label = vaultName.trim() || "Vault";
-      const metas = readVaultMetas();
-      if (!metas.some((m) => m.id === vaultId)) {
-        metas.push({
-          id: vaultId,
-          name: label,
-          pathLabel: "SSH / VPS",
-          kind: "blank",
-          managedByProfile: true,
-          deletable: false,
-          remoteSync: "ssh",
-        });
-        writeVaultMetas(metas);
-      }
-      writeActiveVaultId(vaultId);
-      writePendingActiveVaultId(vaultId);
-      router.replace(`/vault?vaultId=${encodeURIComponent(vaultId)}`);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Nao foi possivel conectar o vault.";
+        error instanceof Error ? error.message : "Nao foi possivel criar o vault.";
       setSubmitError(formatSubmitError(message));
     } finally {
       setIsSubmitting(false);
@@ -290,17 +224,24 @@ export default function NewVaultPage() {
   }
 
   function handlePrimaryAction() {
+    if (step === 3 && startChoice === "connect_agent" && connectAgentSetup) {
+      router.push(`/vault?vaultId=${encodeURIComponent(connectAgentSetup.vault.id)}`);
+      return;
+    }
+
     if (step < TOTAL_STEPS) {
       if (step === 1 && !canContinueStep1) return;
       if (step === 2 && !canContinueStep2) return;
+
+      if (step === 2 && startChoice === "connect_agent") {
+        void runConnectAgentSetupFromStep2();
+        return;
+      }
+
       setStep((s) => Math.min(TOTAL_STEPS, s + 1));
       return;
     }
 
-    if (startChoice === "connect_agent") {
-      void handleConnectAgent();
-      return;
-    }
     if (startChoice === "agent_project") {
       writePendingAgentProject({
         vaultName: vaultName.trim(),
@@ -315,6 +256,10 @@ export default function NewVaultPage() {
   }
 
   function handleBack() {
+    if (step === 3 && startChoice === "connect_agent" && connectAgentSetup) {
+      router.push("/dashboard");
+      return;
+    }
     if (step <= 1) {
       router.push("/dashboard");
       return;
@@ -324,12 +269,14 @@ export default function NewVaultPage() {
   }
 
   const primaryLabel =
-    step < TOTAL_STEPS
-      ? "Continuar"
-      : startChoice === "connect_agent"
-        ? isSubmitting
-          ? `Conectando… ${connectElapsedSec}s`
-          : "Conectar vault"
+    step === 3 && startChoice === "connect_agent" && connectAgentSetup
+      ? "SKILL instalada"
+      : step < TOTAL_STEPS
+        ? step === 2 && startChoice === "connect_agent"
+          ? isSubmitting
+            ? "criando vault…"
+            : "Continuar"
+          : "Continuar"
         : startChoice === "agent_project"
           ? "Ir para onboarding"
           : isSubmitting
@@ -337,11 +284,13 @@ export default function NewVaultPage() {
             : "Criar e abrir o vault";
 
   const primaryDisabled =
-    step === 1
-      ? !canContinueStep1
-      : step === 2
-        ? !canContinueStep2
-        : !canFinishStep3 || isSubmitting;
+    step === 3 && startChoice === "connect_agent" && connectAgentSetup
+      ? false
+      : step === 1
+        ? !canContinueStep1
+        : step === 2
+          ? !canContinueStep2 || (startChoice === "connect_agent" && isSubmitting)
+          : isSubmitting;
 
   const stepTitle =
     step === 1
@@ -352,15 +301,19 @@ export default function NewVaultPage() {
           ? isSubmitting
             ? "Criando seu vault"
             : "Confirmar criacao"
-          : "Como o OpenSync deve acessar seu agente?";
+          : startChoice === "connect_agent"
+            ? "Instalar a skill no agente"
+            : "Confirmar criacao";
 
   const stepDescription =
     step === 1
       ? "Selecione o caminho que melhor descreve o que voce quer fazer agora."
       : step === 2
-        ? "Escolha um nome para identificar este vault no dashboard."
+        ? startChoice === "connect_agent"
+          ? "Escolha o nome do vault e continue: criamos o cofre no Gitea e a API key antes de mostrar o guia da skill."
+          : "Escolha um nome para identificar este vault no dashboard."
         : startChoice === "connect_agent"
-          ? "Siga primeiro o bloco da skill OpenSync (instalação no OpenClaw e sync via Git/script). A importação SSH abaixo traz um snapshot inicial do ~/.openclaw para o explorador."
+          ? "Envie ao agente o link do guia. Use as variáveis abaixo no ambiente do OpenClaw. Quando a skill estiver instalada, abra o explorador."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
             : isSubmitting
@@ -369,6 +322,17 @@ export default function NewVaultPage() {
 
   const isEmptyVaultStep3 = step === 3 && startChoice === "empty_vault";
   const isEmptyVaultCreating = isEmptyVaultStep3 && isSubmitting;
+
+  const headerEyebrow =
+    step === 3 && startChoice === "connect_agent" && connectAgentSetup
+      ? "OpenClaw — Skill"
+      : isConnectAgentStep2Submitting
+        ? "OpenClaw — criando vault"
+        : isEmptyVaultCreating
+          ? "Vault vazio — Criando"
+          : isEmptyVaultStep3
+            ? "Vault vazio — Confirmar"
+            : `Adicionar vault — Etapa ${step} de ${TOTAL_STEPS}`;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -385,13 +349,7 @@ export default function NewVaultPage() {
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {isEmptyVaultCreating
-              ? "Vault vazio — Criando"
-              : isEmptyVaultStep3
-                ? "Vault vazio — Confirmar"
-                : `Adicionar vault — Etapa ${step} de ${TOTAL_STEPS}`}
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{headerEyebrow}</p>
           {step === 2 ? (
             <div className="mt-3 rounded-lg border border-border bg-muted/25 px-3 py-2.5">
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -443,12 +401,24 @@ export default function NewVaultPage() {
                     maxLength={VAULT_NAME_MAX}
                     value={vaultName}
                     onChange={(e) => setVaultName(e.target.value)}
+                    disabled={isConnectAgentStep2Submitting}
                     className={vaultNameInputClass}
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     Ate {VAULT_NAME_MAX} caracteres. Usado no dashboard e ao conectar o agente.
                   </p>
                 </div>
+
+                {isConnectAgentStep2Submitting ? (
+                  <div
+                    className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-muted-foreground"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <Loader2 className="size-5 shrink-0 animate-spin text-primary" aria-hidden />
+                    criando vault…
+                  </div>
+                ) : null}
 
                 {startChoice === "agent_project" ? (
                   <div className="space-y-4">
@@ -505,30 +475,14 @@ export default function NewVaultPage() {
               </div>
             ) : null}
 
-            {step === 3 && startChoice === "connect_agent" ? (
-              <>
-                <OpenSyncAgentSkillInstructions />
-                <AgentConnectionStep form={form} onChange={setForm} hideIntro />
-              </>
-            ) : null}
-
-            {step === 3 && startChoice === "connect_agent" && (isSubmitting || connectLog.length > 0) ? (
-              <div className="mt-5 rounded-xl border border-border bg-muted/35 p-3 sm:p-4">
-                <p className="text-xs font-medium text-muted-foreground">Progresso da ligacao SSH</p>
-                <pre
-                  className="mt-2 max-h-52 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground sm:max-h-64 sm:text-xs"
-                  aria-live="polite"
-                >
-                  {connectLog.length > 0 ? connectLog.join("\n") : "A iniciar…"}
-                </pre>
-                {isSubmitting ? (
-                  <p className="mt-2 text-[11px] text-muted-foreground sm:text-xs">
-                    Importar <span className="font-mono">~/.openclaw</span> pode demorar com muitas
-                    pastas. Os mesmos passos aparecem no terminal do{" "}
-                    <span className="font-mono">next dev</span>.
-                  </p>
-                ) : null}
-              </div>
+            {isConnectAgentStep3 && connectAgentSetup ? (
+              <ConnectAgentSkillStep3Panel
+                skillGuideUrl={skillGuideAbsoluteUrl}
+                apiBaseUrl={getPublicApiBaseUrlForClient()}
+                vaultId={connectAgentSetup.vault.id}
+                agentApiKey={connectAgentSetup.token}
+                onCopyBlock={(text) => void copyToClipboard(text)}
+              />
             ) : null}
 
             {isEmptyVaultStep3 ? (
@@ -591,10 +545,14 @@ export default function NewVaultPage() {
             <Button
               type="button"
               variant="ghost"
-              disabled={isSubmitting}
+              disabled={isConnectAgentStep2Submitting}
               onClick={handleBack}
             >
-              {step === 1 ? "Cancelar" : "Voltar"}
+              {step === 3 && startChoice === "connect_agent" && connectAgentSetup
+                ? "Ir ao dashboard"
+                : step === 1
+                  ? "Cancelar"
+                  : "Voltar"}
             </Button>
             <Button
               type="button"

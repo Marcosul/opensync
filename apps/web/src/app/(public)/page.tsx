@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 
-import { FeaturesSection } from "@/components/marketing/features-section";
 import { HeroSection, LandingBrandMark } from "@/components/marketing/hero-section";
 import { ManifestSection } from "@/components/marketing/manifest-section";
 import {
@@ -10,6 +9,7 @@ import {
   LanguageDropdown,
   useHomeI18n,
 } from "@/components/marketing/home-i18n";
+import { LandingFooter } from "@/components/marketing/landing-footer";
 import { ComparisonSection, PricingSection } from "@/components/marketing/pricing-section";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -60,6 +60,8 @@ function PublicHomeContent() {
         <PricingSection />
         <ComparisonSection />
       </main>
+
+      <LandingFooter />
     </div>
   );
 }

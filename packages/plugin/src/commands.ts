@@ -1,3 +1,4 @@
+import { resolveOpensyncApiBase } from './api-base';
 import { commitAll } from './git';
 import { sync } from './sync';
 
@@ -25,13 +26,11 @@ export async function cmdRollback(ctx: {
   if (!vaultId) {
     throw new Error('Vault ID ausente para rollback.');
   }
-  await fetch(
-    `${process.env.OPENSYNC_API_URL ?? 'https://api.opensync.space'}/git/${encodeURIComponent(vaultId)}/rollback`,
-    {
+  const base = resolveOpensyncApiBase();
+  await fetch(`${base}/git/${encodeURIComponent(vaultId)}/rollback`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ commitHash: ctx.hash }),
-  },
-  );
+  });
   return `Rollback para ${ctx.hash} solicitado.`;
 }
