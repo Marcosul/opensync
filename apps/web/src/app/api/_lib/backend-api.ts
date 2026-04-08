@@ -22,6 +22,7 @@ function resolveBackendPath(path: string): string {
 
 export type BackendVault = {
   id: string;
+  workspaceId: string;
   name: string;
   path: string;
   giteaRepo: string;

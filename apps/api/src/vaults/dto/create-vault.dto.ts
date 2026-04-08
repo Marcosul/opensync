@@ -1,9 +1,14 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreateVaultDto {
   @IsString()
   @MaxLength(120)
   name!: string;
+
+  /** Se omitido, usa o workspace "Default" do utilizador. */
+  @IsOptional()
+  @IsUUID()
+  workspaceId?: string;
 
   @IsOptional()
   @IsString()

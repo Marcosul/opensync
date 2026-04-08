@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { GiteaService } from '../sync/gitea.service';
+import { WorkspacesService } from '../workspaces/workspaces.service';
 import { generateOpensshEd25519KeyPair } from '../sync/openssh-keygen.util';
 import { CreateVaultDto } from './dto/create-vault.dto';
 
@@ -25,10 +26,17 @@ export class VaultsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gitea: GiteaService,
+    private readonly workspaces: WorkspacesService,
   ) {}
 
   private normalizeName(name: string): string {
     return name.trim().slice(0, 120);
+  }
+
+  private vaultWhereUser(userId: string) {
+    return {
+      workspace: { userId },
+    } as const;
   }
 
   async createVaultForUser(
@@ -37,14 +45,6 @@ export class VaultsService {
     dto: CreateVaultDto,
   ) {
     const name = this.normalizeName(dto.name);
-    const existing = await this.prisma.vault.findFirst({
-      where: { userId, name },
-      select: { id: true, name: true },
-    });
-    if (existing) {
-      throw new ConflictException(`Já existe um vault com nome "${name}"`);
-    }
-
     await this.prisma.profile.upsert({
       where: { id: userId },
       update: {
@@ -57,15 +57,28 @@ export class VaultsService {
       },
     });
 
+    const workspaceId = await this.workspaces.resolveWorkspaceForCreate(
+      userId,
+      dto.workspaceId,
+    );
+
+    const existing = await this.prisma.vault.findFirst({
+      where: { workspaceId, name },
+      select: { id: true, name: true },
+    });
+    if (existing) {
+      throw new ConflictException(`Já existe um vault com nome "${name}" neste workspace`);
+    }
+
     this.logger.log(
-      `${colors.cyan}📦 Criando vault + repo:${colors.reset} user=${userId} name=${name}`,
+      `${colors.cyan}📦 Criando vault + repo:${colors.reset} user=${userId} workspace=${workspaceId} name=${name}`,
     );
 
     const giteaRepo = await this.gitea.createRepoForVault(userId, name);
     try {
       const vault = await this.prisma.vault.create({
         data: {
-          userId,
+          workspaceId,
           name,
           description: dto.description?.trim() || null,
           path: dto.path?.trim() || './openclaw',
@@ -74,6 +87,7 @@ export class VaultsService {
         },
         select: {
           id: true,
+          workspaceId: true,
           name: true,
           description: true,
           path: true,
@@ -100,7 +114,11 @@ export class VaultsService {
     vaultId: string,
   ): Promise<{ id: string; giteaRepo: string } | null> {
     return this.prisma.vault.findFirst({
-      where: { id: vaultId, userId, isActive: true },
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereUser(userId),
+      },
       select: { id: true, giteaRepo: true },
     });
   }
@@ -111,7 +129,11 @@ export class VaultsService {
    */
   async createAgentDeployKeyForUser(userId: string, vaultId: string) {
     const vault = await this.prisma.vault.findFirst({
-      where: { id: vaultId, userId, isActive: true },
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereUser(userId),
+      },
       select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
     });
     if (!vault) {
@@ -177,7 +199,11 @@ export class VaultsService {
 
   async deleteAgentDeployKeyForUser(userId: string, vaultId: string) {
     const vault = await this.prisma.vault.findFirst({
-      where: { id: vaultId, userId, isActive: true },
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereUser(userId),
+      },
       select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
     });
     if (!vault) {
@@ -199,10 +225,11 @@ export class VaultsService {
 
   async listVaultsForUser(userId: string) {
     const vaults = await this.prisma.vault.findMany({
-      where: { userId, isActive: true },
+      where: { isActive: true, ...this.vaultWhereUser(userId) },
       orderBy: { createdAt: 'asc' },
       select: {
         id: true,
+        workspaceId: true,
         name: true,
         path: true,
         giteaRepo: true,
@@ -218,7 +245,11 @@ export class VaultsService {
 
   async deleteVaultForUser(userId: string, vaultId: string) {
     const existing = await this.prisma.vault.findFirst({
-      where: { id: vaultId, userId, isActive: true },
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereUser(userId),
+      },
       select: { id: true, giteaRepo: true },
     });
     if (!existing) {

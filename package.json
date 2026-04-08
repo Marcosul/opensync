@@ -9,6 +9,7 @@
     "prisma:validate": "node ./scripts/prisma-menu.mjs validate",
     "prisma:migrate": "node ./scripts/prisma-menu.mjs migrate dev",
     "prisma:deploy": "node ./scripts/prisma-menu.mjs migrate deploy",
+    "prisma:baseline:applied": "node ./scripts/prisma-menu.mjs migrate resolve --applied 20260409140000_init_schema",
     "prisma:status": "node ./scripts/prisma-menu.mjs migrate status",
     "prisma:push": "node ./scripts/prisma-menu.mjs db push",
     "prisma:pull": "node ./scripts/prisma-menu.mjs db pull",

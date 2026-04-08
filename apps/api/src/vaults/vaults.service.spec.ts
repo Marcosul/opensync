@@ -19,6 +19,10 @@ describe('VaultsService', () => {
     deleteRepo: jest.fn(),
   } as any;
 
+  const workspaces = {
+    resolveWorkspaceForCreate: jest.fn().mockResolvedValue('ws-1'),
+  } as any;
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -29,6 +33,7 @@ describe('VaultsService', () => {
     gitea.createRepoForVault.mockResolvedValue('opensync/vault-123');
     prisma.vault.create.mockResolvedValue({
       id: 'vault-1',
+      workspaceId: 'ws-1',
       name: 'Meu Vault',
       description: null,
       path: './openclaw',
@@ -36,15 +41,25 @@ describe('VaultsService', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const service = new VaultsService(prisma, gitea);
+    const service = new VaultsService(prisma, gitea, workspaces);
     const result = await service.createVaultForUser('user-1', 'u@e.com', { name: 'Meu Vault' });
     expect(result.giteaRepo).toBe('opensync/vault-123');
     expect(gitea.createRepoForVault).toHaveBeenCalled();
+    expect(prisma.vault.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          workspaceId: 'ws-1',
+          name: 'Meu Vault',
+        }),
+      }),
+    );
   });
 
-  it('bloqueia nome duplicado por usuário', async () => {
+  it('bloqueia nome duplicado no mesmo workspace', async () => {
+    prisma.profile.upsert.mockResolvedValue({});
+    workspaces.resolveWorkspaceForCreate.mockResolvedValue('ws-1');
     prisma.vault.findFirst.mockResolvedValue({ id: 'already' });
-    const service = new VaultsService(prisma, gitea);
+    const service = new VaultsService(prisma, gitea, workspaces);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Duplicado' }),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -53,10 +68,11 @@ describe('VaultsService', () => {
   it('executa compensação no gitea quando persistência falha', async () => {
     prisma.vault.findFirst.mockResolvedValue(null);
     prisma.profile.upsert.mockResolvedValue({});
+    workspaces.resolveWorkspaceForCreate.mockResolvedValue('ws-1');
     gitea.createRepoForVault.mockResolvedValue('opensync/vault-xyz');
     prisma.vault.create.mockRejectedValue(new Error('db down'));
 
-    const service = new VaultsService(prisma, gitea);
+    const service = new VaultsService(prisma, gitea, workspaces);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Compensar' }),
     ).rejects.toThrow('db down');
@@ -70,7 +86,7 @@ describe('VaultsService', () => {
     });
     prisma.vault.update.mockResolvedValue({});
     gitea.deleteRepo.mockResolvedValue(undefined);
-    const service = new VaultsService(prisma, gitea);
+    const service = new VaultsService(prisma, gitea, workspaces);
     await service.deleteVaultForUser('user-1', 'v1');
     expect(prisma.vault.update).toHaveBeenCalledWith({
       where: { id: 'v1' },
@@ -86,7 +102,7 @@ describe('VaultsService', () => {
     });
     prisma.vault.update.mockResolvedValue({});
     gitea.deleteRepo.mockRejectedValue(new BadGatewayException('gitea down'));
-    const service = new VaultsService(prisma, gitea);
+    const service = new VaultsService(prisma, gitea, workspaces);
     await expect(service.deleteVaultForUser('user-1', 'v1')).rejects.toThrow(
       BadGatewayException,
     );

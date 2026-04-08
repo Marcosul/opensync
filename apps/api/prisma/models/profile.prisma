@@ -11,8 +11,8 @@ model Profile {
   onboardingCompletedAt  DateTime? @map("onboarding_completed_at")
   agentConnection        Json?     @map("agent_connection")
 
-  vaults    Vault[]
-  auditLogs AuditLog[]
+  workspaces Workspace[]
+  auditLogs  AuditLog[]
 
   @@map("profiles")
 }

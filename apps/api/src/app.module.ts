@@ -3,6 +3,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { IonosModule } from './ionos/ionos.module';
 import { AuthModule } from './auth/auth.module';
 import { VaultsModule } from './vaults/vaults.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
 import { SyncModule } from './sync/sync.module';
 import { CommitsModule } from './commits/commits.module';
 import { GraphModule } from './graph/graph.module';
@@ -19,6 +20,7 @@ import { PrismaModule } from './common/prisma.module';
     IonosModule,
     AuthModule,
     VaultsModule,
+    WorkspacesModule,
     SyncModule,
     CommitsModule,
     GraphModule,

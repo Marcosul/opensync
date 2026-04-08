@@ -1,7 +1,7 @@
 ---
-name: opensync
+
+## name: opensync
 description: Integração OpenSync — Git, commits e sincronização com o vault no Gitea.
----
 
 # OpenSync — workspace e sincronização
 
@@ -55,9 +55,9 @@ openclaw cron add \
 ```
 
 - **Cron (5 campos)**: `0 6 * * *` = minuto 0, hora 6, todos os dias; `0 18 * * *` = às 18:00.
-- **`--tz`**: obrigatório para horário de relógio local; troque `Europe/Lisbon` pelo timezone IANA do utilizador (ex.: `America/Sao_Paulo`).
-- **`--message`**: deve apontar para o script real (ex. copiado de `docs/dev/scripts/opensync-vps-git-sync.sh`). O ambiente da VPS já deve ter `GIT_SSH_COMMAND` e `OPENSYNC_REPO_DIR` definidos onde o cron corre.
-- **`openclaw cron list`** para verificar; **`openclaw cron remove <jobId>`** para remover.
+- `**--tz`**: obrigatório para horário de relógio local; troque `Europe/Lisbon` pelo timezone IANA do utilizador (ex.: `America/Sao_Paulo`).
+- `**--message**`: deve apontar para o script real (ex. copiado de `docs/dev/scripts/opensync-vps-git-sync.sh`). O ambiente da VPS já deve ter `GIT_SSH_COMMAND` e `OPENSYNC_REPO_DIR` definidos onde o cron corre.
+- `**openclaw cron list**` para verificar; `**openclaw cron remove <jobId>**` para remover.
 
 Documentação complementar no repositório OpenSync: `docs/dev/openclaw-agent-sync.md`.
 

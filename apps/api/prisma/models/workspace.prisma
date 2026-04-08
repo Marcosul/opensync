@@ -1,0 +1,12 @@
+model Workspace {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String   @default("Default")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vaults Vault[]
+
+  @@unique([userId, name])
+  @@map("workspaces")
+}

@@ -1,6 +1,6 @@
 model Vault {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
   name        String
   description String?
   giteaRepo   String   @map("gitea_repo")
@@ -10,11 +10,12 @@ model Vault {
   agentDeployKeyGiteaId Int? @map("agent_deploy_key_gitea_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  user      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   agents    Agent[]
   commits   Commit[]
   fileLinks FileLink[]
   auditLogs AuditLog[]
 
+  @@unique([workspaceId, name])
   @@map("vaults")
 }

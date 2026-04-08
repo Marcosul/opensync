@@ -29,7 +29,9 @@ export class SyncController {
   ) {
     const uid = this.normalizeUserId(userId);
     const vault = await this.prisma.vault.findFirst({
-      where: uid ? { id: vaultId, userId: uid } : { id: vaultId },
+      where: uid
+        ? { id: vaultId, workspace: { userId: uid } }
+        : { id: vaultId },
       select: { id: true, giteaRepo: true, name: true },
     });
     if (!vault) {
@@ -49,7 +51,9 @@ export class SyncController {
   ) {
     const uid = this.normalizeUserId(userId);
     const vault = await this.prisma.vault.findFirst({
-      where: uid ? { id: vaultId, userId: uid } : { id: vaultId },
+      where: uid
+        ? { id: vaultId, workspace: { userId: uid } }
+        : { id: vaultId },
       select: { id: true, giteaRepo: true },
     });
     if (!vault) {
@@ -66,7 +70,9 @@ export class SyncController {
   ) {
     const uid = this.normalizeUserId(userId);
     const vault = await this.prisma.vault.findFirst({
-      where: uid ? { id: vaultId, userId: uid } : { id: vaultId },
+      where: uid
+        ? { id: vaultId, workspace: { userId: uid } }
+        : { id: vaultId },
       select: { id: true, giteaRepo: true },
     });
     if (!vault) {
