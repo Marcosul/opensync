@@ -1,6 +1,9 @@
 import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { VaultsService } from './vaults.service';
 
+const WORKSPACE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const GITEA_ORG_SLUG = 'wsaaaaaaaabbbb4ccc8ddeeeeeeeeeeee';
+
 describe('VaultsService', () => {
   const prisma = {
     vault: {
@@ -9,18 +12,23 @@ describe('VaultsService', () => {
       findMany: jest.fn(),
       update: jest.fn(),
     },
+    workspace: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
     profile: {
       upsert: jest.fn(),
     },
   } as any;
 
   const gitea = {
+    ensureOrg: jest.fn(),
     createRepoForVault: jest.fn(),
     deleteRepo: jest.fn(),
   } as any;
 
   const workspaces = {
-    resolveWorkspaceForCreate: jest.fn().mockResolvedValue('ws-1'),
+    resolveWorkspaceForCreate: jest.fn().mockResolvedValue(WORKSPACE_ID),
   } as any;
 
   beforeEach(() => {
@@ -30,25 +38,40 @@ describe('VaultsService', () => {
   it('cria vault e persiste giteaRepo', async () => {
     prisma.vault.findFirst.mockResolvedValue(null);
     prisma.profile.upsert.mockResolvedValue({});
-    gitea.createRepoForVault.mockResolvedValue('opensync/vault-123');
+    prisma.workspace.findFirst.mockResolvedValue({
+      id: WORKSPACE_ID,
+      name: 'Meu Workspace',
+      giteaOrg: null,
+    });
+    prisma.workspace.update.mockResolvedValue({});
+    gitea.ensureOrg.mockResolvedValue(undefined);
+    gitea.createRepoForVault.mockResolvedValue(`${GITEA_ORG_SLUG}/meu-vault-user-1`);
     prisma.vault.create.mockResolvedValue({
       id: 'vault-1',
-      workspaceId: 'ws-1',
+      workspaceId: WORKSPACE_ID,
       name: 'Meu Vault',
       description: null,
       path: './openclaw',
-      giteaRepo: 'opensync/vault-123',
+      giteaRepo: `${GITEA_ORG_SLUG}/meu-vault-user-1`,
       createdAt: new Date().toISOString(),
     });
 
     const service = new VaultsService(prisma, gitea, workspaces);
     const result = await service.createVaultForUser('user-1', 'u@e.com', { name: 'Meu Vault' });
-    expect(result.giteaRepo).toBe('opensync/vault-123');
-    expect(gitea.createRepoForVault).toHaveBeenCalled();
+    expect(result.giteaRepo).toBe(`${GITEA_ORG_SLUG}/meu-vault-user-1`);
+    expect(gitea.ensureOrg).toHaveBeenCalledWith({
+      username: GITEA_ORG_SLUG,
+      fullName: 'Meu Workspace',
+    });
+    expect(gitea.createRepoForVault).toHaveBeenCalledWith(
+      'user-1',
+      'Meu Vault',
+      GITEA_ORG_SLUG,
+    );
     expect(prisma.vault.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          workspaceId: 'ws-1',
+          workspaceId: WORKSPACE_ID,
           name: 'Meu Vault',
         }),
       }),
@@ -57,7 +80,7 @@ describe('VaultsService', () => {
 
   it('bloqueia nome duplicado no mesmo workspace', async () => {
     prisma.profile.upsert.mockResolvedValue({});
-    workspaces.resolveWorkspaceForCreate.mockResolvedValue('ws-1');
+    workspaces.resolveWorkspaceForCreate.mockResolvedValue(WORKSPACE_ID);
     prisma.vault.findFirst.mockResolvedValue({ id: 'already' });
     const service = new VaultsService(prisma, gitea, workspaces);
     await expect(
@@ -68,15 +91,21 @@ describe('VaultsService', () => {
   it('executa compensação no gitea quando persistência falha', async () => {
     prisma.vault.findFirst.mockResolvedValue(null);
     prisma.profile.upsert.mockResolvedValue({});
-    workspaces.resolveWorkspaceForCreate.mockResolvedValue('ws-1');
-    gitea.createRepoForVault.mockResolvedValue('opensync/vault-xyz');
+    workspaces.resolveWorkspaceForCreate.mockResolvedValue(WORKSPACE_ID);
+    prisma.workspace.findFirst.mockResolvedValue({
+      id: WORKSPACE_ID,
+      name: 'W',
+      giteaOrg: GITEA_ORG_SLUG,
+    });
+    gitea.createRepoForVault.mockResolvedValue(`${GITEA_ORG_SLUG}/compensar-user-1`);
     prisma.vault.create.mockRejectedValue(new Error('db down'));
 
     const service = new VaultsService(prisma, gitea, workspaces);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Compensar' }),
     ).rejects.toThrow('db down');
-    expect(gitea.deleteRepo).toHaveBeenCalledWith('opensync/vault-xyz');
+    expect(gitea.deleteRepo).toHaveBeenCalledWith(`${GITEA_ORG_SLUG}/compensar-user-1`);
+    expect(gitea.ensureOrg).not.toHaveBeenCalled();
   });
 
   it('desativa vault e apaga repo no Gitea', async () => {

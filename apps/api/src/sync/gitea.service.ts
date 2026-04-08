@@ -24,9 +24,6 @@ export class GiteaService {
   private readonly logger = new Logger(GiteaService.name);
   private readonly baseUrl = (process.env.GITEA_URL ?? '').replace(/\/+$/, '');
   private readonly token = process.env.GITEA_ADMIN_TOKEN ?? '';
-  private readonly defaultOrg = (process.env.GITEA_DEFAULT_ORG ?? 'opensync')
-    .trim()
-    .toLowerCase();
 
   private ensureConfigured() {
     if (!this.baseUrl || !this.token) {
@@ -77,27 +74,27 @@ export class GiteaService {
   }
 
   /**
-   * Garante que a org existe no Gitea sem usar GET /orgs/{name}: tokens com scope fino
-   * exigem `read:organization` para esse GET e falham com 403. Em vez disso, tentamos
-   * POST /api/v1/orgs (idempotente: 422/409 = já existe).
+   * Cria a organização no Gitea (uma por workspace). Exige scope write:organization no PAT.
    */
-  private async ensureOrgExists(org: string): Promise<void> {
+  async ensureOrg(opts: { username: string; fullName: string }): Promise<void> {
     this.ensureConfigured();
+    const username = opts.username.trim().toLowerCase();
+    const fullName = opts.fullName.trim().slice(0, 100) || username;
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}/api/v1/orgs`, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify({
-          username: org,
-          full_name: `OpenSync ${org}`,
+          username,
+          full_name: fullName,
           visibility: 'private',
         }),
       });
     } catch (err) {
       const hint = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `${colors.red}🌐 Gitea (orgs):${colors.reset} ${hint}`,
+        `${colors.red}🌐 Gitea (criar org):${colors.reset} ${hint}`,
       );
       throw new BadGatewayException(
         `Nao foi possivel contatar o Gitea: ${hint}`,
@@ -106,7 +103,7 @@ export class GiteaService {
 
     if (res.ok) {
       this.logger.log(
-        `${colors.cyan}🏗️ Organização criada no Gitea:${colors.reset} ${org}`,
+        `${colors.cyan}🏗️ Org Gitea criada:${colors.reset} ${username}`,
       );
       return;
     }
@@ -119,20 +116,25 @@ export class GiteaService {
       return;
     }
     if (res.status === 403) {
-      this.logger.warn(
-        `${colors.yellow}⚠️ POST /orgs devolveu 403 — assumindo que a org "${org}" já existe no Gitea (criada na UI). Detalhe:${colors.reset} ${body}`,
+      throw new BadGatewayException(
+        `Gitea recusou criar a org "${username}". O token (GITEA_ADMIN_TOKEN) precisa do scope ` +
+          `write:organization ou ser token de administrador com permissao para criar organizacoes. ${body}`,
       );
-      return;
     }
-
-    throw new BadGatewayException(`Falha ao garantir org ${org}: ${body}`);
+    throw new BadGatewayException(`Falha ao criar org Gitea "${username}": ${body}`);
   }
 
-  async createRepoForVault(userId: string, vaultName: string): Promise<string> {
+  async createRepoForVault(
+    userId: string,
+    vaultName: string,
+    giteaOrg: string,
+  ): Promise<string> {
     this.ensureConfigured();
-    const org = this.defaultOrg;
+    const org = giteaOrg.trim().toLowerCase();
     const repoName = `${this.slugify(vaultName)}-${userId.slice(0, 8)}`;
-    await this.ensureOrgExists(org);
+    this.logger.log(
+      `${colors.cyan}📦 Criando repo na org do workspace:${colors.reset} ${org}/${repoName}`,
+    );
 
     const path = `/api/v1/orgs/${encodeURIComponent(org)}/repos`;
     let create: Response;

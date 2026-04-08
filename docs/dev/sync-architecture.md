@@ -10,7 +10,7 @@
 
 | Componente | Papel |
 |------------|--------|
-| **Gitea** | Repositório privado por vault (`owner/repo`), criado em [`GiteaService.createRepoForVault`](../../apps/api/src/sync/gitea.service.ts). |
+| **Gitea** | Uma **organização por workspace** (username `ws` + uuid); cada vault é um repo privado `org/repo`, criado em [`GiteaService`](../../apps/api/src/sync/gitea.service.ts). |
 | **Nest `VaultGitSyncService`** | Push de um mapa `path → conteúdo UTF-8` a partir do browser: clone shallow, escrita, commit, push ([`vault-git-sync.service.ts`](../../apps/api/src/sync/vault-git-sync.service.ts)). |
 | **Next `/api/vaults/[id]/sync`** | Proxy autenticado (Supabase) para `POST /api/vaults/:id/sync`. |
 | **SSH / SFTP (legado)** | Import inicial opcional a partir da VPS ([`ssh-workspace-pull.ts`](../../apps/web/src/lib/server/ssh-workspace-pull.ts)); pesado no browser. O caminho preferido a médio prazo é **Git na VPS → Gitea**. |

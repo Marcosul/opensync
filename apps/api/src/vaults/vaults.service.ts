@@ -39,6 +39,34 @@ export class VaultsService {
     } as const;
   }
 
+  /** Username da org Gitea: estável por workspace (ws + uuid sem hífens). */
+  private workspaceGiteaOrgSlug(workspaceId: string): string {
+    return `ws${workspaceId.replace(/-/g, '')}`;
+  }
+
+  private async resolveGiteaOrgForWorkspace(
+    userId: string,
+    workspaceId: string,
+  ): Promise<string> {
+    const ws = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, userId },
+      select: { id: true, name: true, giteaOrg: true },
+    });
+    if (!ws) {
+      throw new NotFoundException('Workspace não encontrado');
+    }
+    if (ws.giteaOrg) {
+      return ws.giteaOrg;
+    }
+    const slug = this.workspaceGiteaOrgSlug(ws.id);
+    await this.gitea.ensureOrg({ username: slug, fullName: ws.name });
+    await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { giteaOrg: slug },
+    });
+    return slug;
+  }
+
   async createVaultForUser(
     userId: string,
     email: string | undefined,
@@ -74,7 +102,8 @@ export class VaultsService {
       `${colors.cyan}📦 Criando vault + repo:${colors.reset} user=${userId} workspace=${workspaceId} name=${name}`,
     );
 
-    const giteaRepo = await this.gitea.createRepoForVault(userId, name);
+    const giteaOrg = await this.resolveGiteaOrgForWorkspace(userId, workspaceId);
+    const giteaRepo = await this.gitea.createRepoForVault(userId, name, giteaOrg);
     try {
       const vault = await this.prisma.vault.create({
         data: {
