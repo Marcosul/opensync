@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   type DragEvent,
+  type FocusEvent,
   type KeyboardEvent,
   type MutableRefObject,
   type PointerEvent,
@@ -90,6 +91,7 @@ export type VaultExplorerTreeViewProps = {
   onExplorerDragStart: (e: DragEvent, row: ExplorerVisibleRow) => void;
   onFolderDragOver: (e: DragEvent, path: string) => void;
   onFolderDrop: (e: DragEvent, path: string) => void;
+  onExplorerRenameRow: (row: ExplorerVisibleRow) => void;
   renameRowClass: string;
   renameInputClass: string;
 };
@@ -116,6 +118,7 @@ export function VaultExplorerTreeView({
   onExplorerDragStart,
   onFolderDragOver,
   onFolderDrop,
+  onExplorerRenameRow,
   renameRowClass,
   renameInputClass,
 }: VaultExplorerTreeViewProps) {
@@ -138,8 +141,16 @@ export function VaultExplorerTreeView({
     onExplorerDragStart,
     onFolderDragOver,
     onFolderDrop,
+    onExplorerRenameRow,
     renameRowClass,
     renameInputClass,
+  };
+
+  const focusRenameInputCaretStart = (e: FocusEvent<HTMLInputElement>) => {
+    const el = e.currentTarget;
+    requestAnimationFrame(() => {
+      el.setSelectionRange(0, 0);
+    });
   };
 
   const onRenameKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -217,7 +228,7 @@ export function VaultExplorerTreeView({
                     onChange={(e) => onRenameDraftChange(e.target.value)}
                     onKeyDown={onRenameKeyDown}
                     onBlur={onRenameBlur}
-                    onFocus={(e) => e.target.select()}
+                    onFocus={focusRenameInputCaretStart}
                   />
                 </div>
                 {isOpen && entry.children.length > 0 && (
@@ -278,8 +289,13 @@ export function VaultExplorerTreeView({
                     data-tree-dir={entry.path}
                     onPointerDown={(e) => onExplorerRowPointerDown(e, folderRow)}
                     onClick={(e) => {
+                      if (e.detail === 2) return;
                       if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                       onToggleDir(entry.path);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      onExplorerRenameRow(folderRow);
                     }}
                     onDragStart={(e) => {
                       onExplorerDragStart(e, folderRow);
@@ -359,7 +375,7 @@ export function VaultExplorerTreeView({
                     onChange={(e) => onRenameDraftChange(e.target.value)}
                     onKeyDown={onRenameKeyDown}
                     onBlur={onRenameBlur}
-                    onFocus={(e) => e.target.select()}
+                    onFocus={focusRenameInputCaretStart}
                   />
                 </div>
               </li>
@@ -386,7 +402,14 @@ export function VaultExplorerTreeView({
                     onExplorerDragStart(e, fileRow);
                     e.currentTarget.blur();
                   }}
-                  onClick={() => onSelect(entry.docId)}
+                  onClick={(e) => {
+                    if (e.detail === 2) return;
+                    onSelect(entry.docId);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    onExplorerRenameRow(fileRow);
+                  }}
                   aria-current={active ? "true" : undefined}
                   className={cn(
                     "flex w-full items-center gap-2 rounded px-2 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border",

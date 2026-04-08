@@ -126,6 +126,7 @@ import {
   GIT_LAZY_PLACEHOLDER_DOC_ID,
   collectLazyGitRepoRelativePaths,
   gitTreePathsToVaultSnapshot,
+  isGitKeepMarkerPath,
   isGitLazyVaultTree,
 } from "@/lib/vault-git-tree-import";
 import {
@@ -1581,6 +1582,7 @@ function FileTree({
                     onExplorerDragStart={handleExplorerDragStart}
                     onFolderDragOver={handleFolderDragOver}
                     onFolderDrop={handleFolderDrop}
+                    onExplorerRenameRow={onExplorerRenameRow}
                     renameRowClass={EXPLORER_INLINE_RENAME_ROW_CLASS}
                     renameInputClass={EXPLORER_INLINE_RENAME_INPUT_CLASS}
                   />
@@ -1798,7 +1800,9 @@ function VaultOpenWorkspace({
         if (isGitLazyVaultTree(treeRootRef.current)) {
           const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
           if (ac.signal.aborted) return;
-          const paths = entries.map((e) => e.path);
+          const paths = entries
+            .map((e) => e.path)
+            .filter((p) => !isGitKeepMarkerPath(p));
           const concurrency = 8;
           for (let i = 0; i < paths.length; i += concurrency) {
             if (ac.signal.aborted) return;

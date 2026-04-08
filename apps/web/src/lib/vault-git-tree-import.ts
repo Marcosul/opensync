@@ -49,10 +49,25 @@ function collectExpandedPaths(node: TreeEntry, depth: number, out: Set<string>):
 export const GIT_LAZY_PLACEHOLDER_DOC_ID = ".opensync-git-placeholder.md";
 
 /**
+ * Pastas vazias no Git precisam de um ficheiro; `.gitkeep` é só marcador no repo — não é nota.
+ */
+export function isGitKeepMarkerPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/").trim();
+  if (!n) return false;
+  return n === ".gitkeep" || n.endsWith("/.gitkeep");
+}
+
+/**
  * Arvore do explorador a partir da lista de paths do Git (conteudo carregado depois via blob).
  */
 export function gitTreePathsToVaultSnapshot(paths: string[]): VaultSnapshotV1 {
-  const normalized = [...new Set(paths.map((p) => p.replace(/\\/g, "/").trim()).filter(Boolean))].sort();
+  const normalized = [
+    ...new Set(
+      paths
+        .map((p) => p.replace(/\\/g, "/").trim())
+        .filter((p) => p.length > 0 && !isGitKeepMarkerPath(p)),
+    ),
+  ].sort();
 
   const root: DirNode = {
     type: "dir",
@@ -123,7 +138,11 @@ export function collectLazyGitRepoRelativePaths(tree: TreeEntry): string[] {
   function walk(entries: TreeEntry[]) {
     for (const e of entries) {
       if (e.type === "dir") walk(e.children);
-      else if ("docId" in e && e.docId !== GIT_LAZY_PLACEHOLDER_DOC_ID) {
+      else if (
+        "docId" in e &&
+        e.docId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+        !isGitKeepMarkerPath(e.docId)
+      ) {
         out.push(e.docId);
       }
     }
