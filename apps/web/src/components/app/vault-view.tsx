@@ -2496,7 +2496,7 @@ function VaultOpenWorkspace({
             onRevealHandled={clearRevealTarget}
             onExplorerCommand={handleExplorerCommand}
             vaultMetas={vaultMetas}
-            vaultId={vaultId}
+            activeVaultId={vaultId}
             activeVaultName={activeVaultMeta?.name ?? "cofre"}
             vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
             vaultStatsLine={vaultStatsLine}
