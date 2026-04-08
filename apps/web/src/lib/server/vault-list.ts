@@ -44,11 +44,9 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
 
   const o =
     raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-  const linkedRaw = o?.backendVaultId;
-  const linkedBackendId =
-    typeof linkedRaw === "string" && isBackendSyncVaultId(linkedRaw)
-      ? linkedRaw.trim()
-      : null;
+  const linkedRaw = o?.backendVaultId ?? o?.backend_vault_id;
+  const linkedStr = typeof linkedRaw === "string" ? linkedRaw.trim() : "";
+  const linkedBackendId = linkedStr && isBackendSyncVaultId(linkedStr) ? linkedStr : null;
   const linkedRow = linkedBackendId
     ? backendVaults.find((v) => v.id === linkedBackendId)
     : undefined;
@@ -64,6 +62,7 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
     kind: "blank" as const,
     managedByProfile: false,
     deletable: true,
+    remoteSync: "git" as const,
   }));
 
   if (o) {

@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { VaultsService } from './vaults.service';
 
 describe('VaultsService', () => {
@@ -7,6 +7,7 @@ describe('VaultsService', () => {
       findFirst: jest.fn(),
       create: jest.fn(),
       findMany: jest.fn(),
+      update: jest.fn(),
     },
     profile: {
       upsert: jest.fn(),
@@ -60,5 +61,43 @@ describe('VaultsService', () => {
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Compensar' }),
     ).rejects.toThrow('db down');
     expect(gitea.deleteRepo).toHaveBeenCalledWith('opensync/vault-xyz');
+  });
+
+  it('desativa vault e apaga repo no Gitea', async () => {
+    prisma.vault.findFirst.mockResolvedValue({
+      id: 'v1',
+      giteaRepo: 'opensync/v-x',
+    });
+    prisma.vault.update.mockResolvedValue({});
+    gitea.deleteRepo.mockResolvedValue(undefined);
+    const service = new VaultsService(prisma, gitea);
+    await service.deleteVaultForUser('user-1', 'v1');
+    expect(prisma.vault.update).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      data: { isActive: false },
+    });
+    expect(gitea.deleteRepo).toHaveBeenCalledWith('opensync/v-x');
+  });
+
+  it('reativa vault se Gitea falhar ao apagar repo', async () => {
+    prisma.vault.findFirst.mockResolvedValue({
+      id: 'v1',
+      giteaRepo: 'opensync/v-x',
+    });
+    prisma.vault.update.mockResolvedValue({});
+    gitea.deleteRepo.mockRejectedValue(new BadGatewayException('gitea down'));
+    const service = new VaultsService(prisma, gitea);
+    await expect(service.deleteVaultForUser('user-1', 'v1')).rejects.toThrow(
+      BadGatewayException,
+    );
+    expect(prisma.vault.update).toHaveBeenCalledTimes(2);
+    expect(prisma.vault.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'v1' },
+      data: { isActive: false },
+    });
+    expect(prisma.vault.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'v1' },
+      data: { isActive: true },
+    });
   });
 });

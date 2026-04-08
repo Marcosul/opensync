@@ -187,19 +187,134 @@ export class GiteaService {
     return `${u.protocol}//${user}:${pass}@${u.host}${pathPrefix}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}.git`;
   }
 
-  async deleteRepo(repoFullName: string): Promise<void> {
-    this.ensureConfigured();
-    const [owner, repo] = repoFullName.split('/');
-    if (!owner || !repo) return;
-    const response = await fetch(
-      `${this.baseUrl}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-      { method: 'DELETE', headers: this.headers },
-    );
-    if (!response.ok && response.status !== 404) {
-      const body = await response.text();
-      this.logger.error(
-        `${colors.red}❌ Falha ao deletar repo de compensação:${colors.reset} ${repoFullName} ${body}`,
+  /**
+   * Remove o repositório no Gitea. 404 = já removido (sucesso).
+   * Lança BadGatewayException se o Gitea responder erro (exceto 404).
+   */
+  private parseOwnerRepo(repoFullName: string): { owner: string; repo: string } {
+    const t = repoFullName.trim();
+    const i = t.indexOf('/');
+    if (i <= 0 || i === t.length - 1) {
+      throw new InternalServerErrorException(
+        'giteaRepo invalido (esperado owner/repo)',
       );
     }
+    return { owner: t.slice(0, i), repo: t.slice(i + 1) };
+  }
+
+  /**
+   * URL SSH publica para clone/push com deploy key (sem credenciais embutidas).
+   * GITEA_SSH_HOST sobrescreve o hostname derivado de GITEA_URL.
+   */
+  buildSshCloneUrl(repoFullName: string): string {
+    this.ensureConfigured();
+    const { owner, repo } = this.parseOwnerRepo(repoFullName);
+    const sshHost =
+      (process.env.GITEA_SSH_HOST ?? '').trim() ||
+      this.sshHostFromGiteaUrl();
+    return `git@${sshHost}:${owner}/${repo}.git`;
+  }
+
+  private sshHostFromGiteaUrl(): string {
+    let base = (process.env.GITEA_URL ?? '').replace(/\/+$/, '');
+    if (!base) return 'localhost';
+    if (!base.includes('://')) base = `https://${base}`;
+    try {
+      return new URL(base).hostname;
+    } catch {
+      return 'localhost';
+    }
+  }
+
+  async addDeployKey(
+    repoFullName: string,
+    opts: { title: string; key: string; readOnly: boolean },
+  ): Promise<{ id: number; fingerprint?: string; key: string }> {
+    this.ensureConfigured();
+    const { owner, repo } = this.parseOwnerRepo(repoFullName);
+    const path = `/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/keys`;
+    return this.fetchJson<{ id: number; fingerprint?: string; key: string }>(path, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        title: opts.title.slice(0, 120),
+        key: opts.key.trim(),
+        read_only: opts.readOnly,
+      }),
+    });
+  }
+
+  async deleteDeployKey(repoFullName: string, keyId: number): Promise<void> {
+    this.ensureConfigured();
+    const { owner, repo } = this.parseOwnerRepo(repoFullName);
+    const path = `/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/keys/${keyId}`;
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: 'DELETE',
+        headers: this.headers,
+      });
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}🌐 Gitea (apagar deploy key):${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(
+        `Nao foi possivel contatar o Gitea: ${hint}`,
+      );
+    }
+    if (response.ok || response.status === 404) {
+      return;
+    }
+    const body = await response.text();
+    throw new BadGatewayException(
+      `Falha ao apagar deploy key (HTTP ${response.status}): ${body}`,
+    );
+  }
+
+  async deleteRepo(repoFullName: string): Promise<void> {
+    this.ensureConfigured();
+    const trimmed = repoFullName.trim();
+    const slash = trimmed.indexOf('/');
+    if (slash < 0 || slash === trimmed.length - 1) {
+      this.logger.warn(
+        `${colors.yellow}⚠️ deleteRepo: full_name invalido, ignorando:${colors.reset} ${repoFullName}`,
+      );
+      return;
+    }
+    const owner = trimmed.slice(0, slash);
+    const repo = trimmed.slice(slash + 1);
+    if (!owner || !repo) return;
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.baseUrl}/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { method: 'DELETE', headers: this.headers },
+      );
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}🌐 Gitea (apagar repo):${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(
+        `Nao foi possivel apagar o repo no Gitea: ${hint}`,
+      );
+    }
+
+    if (response.ok || response.status === 404) {
+      this.logger.log(
+        `${colors.green}🗑️ Repo Gitea removido ou inexistente:${colors.reset} ${trimmed}`,
+      );
+      return;
+    }
+
+    const body = await response.text();
+    this.logger.error(
+      `${colors.red}❌ Falha ao apagar repo no Gitea:${colors.reset} ${trimmed} HTTP ${response.status} ${body}`,
+    );
+    throw new BadGatewayException(
+      `Falha ao apagar repo no Gitea (HTTP ${response.status}): ${body}`,
+    );
   }
 }

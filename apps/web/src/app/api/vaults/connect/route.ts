@@ -250,7 +250,8 @@ export async function POST(request: Request) {
         };
         const log = mirrorSshProgress((m) => send({ t: "log", m }));
         try {
-          const pulled = await pullTextFilesFromSshServer(auth, log, { verboseWire: true });
+          /** verboseWire gera milhares de linhas por ficheiro (CHANNEL_DATA) e NDJSON + React ficam extremamente lentos. */
+          const pulled = await pullTextFilesFromSshServer(auth, log, { verboseWire: false });
           log("💾 A gravar conexao no perfil...");
           const body = await persistAfterSshPull(
             supabase,

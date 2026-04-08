@@ -83,8 +83,10 @@ export function applyMissionMarkdownToSnapshot(
   };
 }
 
+export const VAULT_SNAPSHOT_KEY_PREFIX = "opensync-vault-snapshot-";
+
 export function vaultSnapshotKey(vaultId: string): string {
-  return `opensync-vault-snapshot-${vaultId}`;
+  return `${VAULT_SNAPSHOT_KEY_PREFIX}${vaultId}`;
 }
 
 export type ViewMode = "graph" | "editor";
@@ -108,8 +110,8 @@ export type VaultMeta = {
   managedByProfile?: boolean;
   /** false = cofre do agente (nao apagar pelo explorador). true = pode apagar (vazio salvo / local). */
   deletable?: boolean;
-  /** Arvore preenchida a partir de SSH (VPS). */
-  remoteSync?: "ssh";
+  /** Arvore preenchida a partir de SSH (VPS) ou Git API (lazy). */
+  remoteSync?: "ssh" | "git";
 };
 
 export type VaultSnapshotV1 = {
@@ -133,17 +135,20 @@ const LEGACY_MOCK_VAULT_IDS = new Set([
   "vault-docs",
 ]);
 
-/** Cofre apenas local quando ainda nao ha agente no perfil. */
-export function defaultVaultMetas(): VaultMeta[] {
-  return [
-    {
-      id: "local-browser",
-      name: "Cofre local",
-      pathLabel: "Somente neste navegador",
-      kind: "blank",
-      deletable: true,
-    },
-  ];
+/** Snapshot neutro quando não há cofre selecionado (só UI; não persiste em snapshot). */
+export function emptyVaultPlaceholderSnapshot(): VaultSnapshotV1 {
+  return {
+    v: 1,
+    tree: { type: "dir", name: "vault", path: "vault-root", children: [] },
+    noteContents: {},
+    expandedPaths: [],
+    bookmarks: [],
+    ui: { viewMode: "editor", openTabs: [], activeTabId: "" },
+  };
+}
+
+function stripLegacyLocalBrowser(metas: VaultMeta[]): VaultMeta[] {
+  return metas.filter((m) => m.id !== "local-browser");
 }
 
 export function openclawSnapshot(): VaultSnapshotV1 {
@@ -196,35 +201,38 @@ export function getHydrationSafeVaultBoot(): {
   id: string;
   snap: VaultSnapshotV1;
 } {
-  const metas = defaultVaultMetas();
-  const id = metas[0]?.id ?? "local-browser";
-  const meta = metas.find((m) => m.id === id);
-  return { metas, id, snap: defaultSnapshotForMeta(meta) };
+  return {
+    metas: [],
+    id: "",
+    snap: emptyVaultPlaceholderSnapshot(),
+  };
 }
 
 function migrateLegacyVaultMetas(parsed: VaultMeta[]): VaultMeta[] {
   if (parsed.some((m) => LEGACY_MOCK_VAULT_IDS.has(m.id))) {
-    const defs = defaultVaultMetas();
-    writeVaultMetas(defs);
-    return defs;
+    writeVaultMetas([]);
+    return [];
   }
-  return parsed;
+  return stripLegacyLocalBrowser(parsed);
 }
 
 export function readVaultMetas(): VaultMeta[] {
-  if (typeof window === "undefined") return defaultVaultMetas();
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(VAULT_METAS_KEY);
     if (!raw) {
-      const defs = defaultVaultMetas();
-      localStorage.setItem(VAULT_METAS_KEY, JSON.stringify(defs));
-      return defs;
+      return [];
     }
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed) || parsed.length === 0) return defaultVaultMetas();
-    return migrateLegacyVaultMetas(parsed as VaultMeta[]);
+    if (!Array.isArray(parsed)) return [];
+    const cleaned = migrateLegacyVaultMetas(parsed as VaultMeta[]);
+    const stripped = stripLegacyLocalBrowser(cleaned);
+    if (stripped.length !== cleaned.length) {
+      writeVaultMetas(stripped);
+    }
+    return stripped;
   } catch {
-    return defaultVaultMetas();
+    return [];
   }
 }
 
@@ -237,19 +245,39 @@ export function writeVaultMetas(metas: VaultMeta[]): void {
 }
 
 export function readActiveVaultId(metas: VaultMeta[]): string {
-  if (typeof window === "undefined") return metas[0]?.id ?? "local-browser";
+  if (typeof window === "undefined") return metas[0]?.id ?? "";
+  if (metas.length === 0) {
+    try {
+      localStorage.removeItem(VAULT_ACTIVE_KEY);
+    } catch {
+      /* ignore */
+    }
+    return "";
+  }
   try {
     const id = localStorage.getItem(VAULT_ACTIVE_KEY);
     if (id && metas.some((m) => m.id === id)) return id;
   } catch {
     /* ignore */
   }
-  return metas[0]?.id ?? "local-browser";
+  return metas[0]?.id ?? "";
 }
 
 export function writeActiveVaultId(id: string): void {
   try {
+    if (!id) {
+      localStorage.removeItem(VAULT_ACTIVE_KEY);
+      return;
+    }
     localStorage.setItem(VAULT_ACTIVE_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearActiveVaultId(): void {
+  try {
+    localStorage.removeItem(VAULT_ACTIVE_KEY);
   } catch {
     /* ignore */
   }
@@ -283,11 +311,98 @@ export function loadSnapshot(vaultId: string, meta: VaultMeta | undefined): Vaul
   }
 }
 
+/** Le snapshot sem cair no default (para migracao). */
+export function readSnapshotRaw(vaultId: string): VaultSnapshotV1 | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(vaultSnapshotKey(vaultId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as VaultSnapshotV1;
+    if (parsed?.v !== 1 || !parsed.tree || !parsed.ui) return null;
+    return { ...parsed, ui: normalizeLoadedUi(parsed.ui) };
+  } catch {
+    return null;
+  }
+}
+
+/** Cofre em branco local (Bem-vindo.md), nao importacao SSH. */
+export function isEmptyBrowserVaultSnapshot(snap: VaultSnapshotV1): boolean {
+  const t = snap.tree;
+  if (t.type !== "dir" || t.path !== "vault-root") return false;
+  return (
+    t.children.length === 1 &&
+    t.children[0].type === "file" &&
+    t.children[0].name === "Bem-vindo.md"
+  );
+}
+
+function sshImportedSnapshotScore(snap: VaultSnapshotV1): number {
+  if (snap.tree.type !== "dir" || snap.tree.path !== "ssh-vault-root") return -1;
+  return Object.keys(snap.noteContents).length;
+}
+
+/**
+ * Outra chave localStorage pode ter o import SSH (ex.: UUID) enquanto a lista do servidor
+ * usa `profile-<userId>` se `backendVaultId` faltou no perfil.
+ */
+export function findBestSshImportedSnapshotVaultId(excludeVaultId: string): string | null {
+  if (typeof window === "undefined") return null;
+  let bestId: string | null = null;
+  let bestScore = -1;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(VAULT_SNAPSHOT_KEY_PREFIX)) continue;
+      const id = key.slice(VAULT_SNAPSHOT_KEY_PREFIX.length);
+      if (id === excludeVaultId) continue;
+      const raw = readSnapshotRaw(id);
+      if (!raw) continue;
+      const sc = sshImportedSnapshotScore(raw);
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestId = id;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return bestScore > 0 ? bestId : null;
+}
+
+/**
+ * Carrega snapshot; se for cofre SSH mas o armazenamento local for o vazio (Bem-vindo),
+ * tenta recuperar um snapshot `ssh-vault-root` noutra chave e grava no id atual.
+ */
+export function loadSnapshotWithSshBridge(vaultId: string, meta: VaultMeta | undefined): VaultSnapshotV1 {
+  const snap = loadSnapshot(vaultId, meta);
+  if (meta?.remoteSync !== "ssh" || !isEmptyBrowserVaultSnapshot(snap)) {
+    return snap;
+  }
+  const donorId = findBestSshImportedSnapshotVaultId(vaultId);
+  if (!donorId) return snap;
+  const imported = readSnapshotRaw(donorId);
+  if (!imported || imported.tree.type !== "dir" || imported.tree.path !== "ssh-vault-root") {
+    return snap;
+  }
+  saveSnapshot(vaultId, imported);
+  if (donorId !== vaultId) {
+    try {
+      localStorage.removeItem(vaultSnapshotKey(donorId));
+    } catch {
+      /* ignore */
+    }
+  }
+  return imported;
+}
+
 export function saveSnapshot(vaultId: string, snap: VaultSnapshotV1): void {
   try {
     localStorage.setItem(vaultSnapshotKey(vaultId), JSON.stringify(snap));
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.error(
+      "\x1b[33m[OpenSync]\x1b[0m \x1b[31mFalha ao gravar snapshot no localStorage (quota cheia ou dados demasiado grandes?)\x1b[0m",
+      err,
+    );
   }
 }
 

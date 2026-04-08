@@ -32,6 +32,10 @@ const SKIP_DIR_NAMES = new Set([
   "dist",
   "build",
   ".next",
+  /** Sandboxes e dados de browser costumam ser grandes e raramente são notas. */
+  "sandboxes",
+  "browser-profile",
+  "playwright-profile",
 ]);
 
 export type SshPullAuth = {
@@ -152,6 +156,23 @@ function isProbablyBinary(buf: Buffer): boolean {
   return false;
 }
 
+/** Várias leituras SFTP em paralelo (mesmo canal); reduz latência com muitos ficheiros pequenos. */
+const SFTP_READ_CONCURRENCY = 14;
+
+async function runPool(limit: number, tasks: Array<() => Promise<void>>): Promise<void> {
+  if (tasks.length === 0) return;
+  const n = Math.min(limit, tasks.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = next++;
+      if (i >= tasks.length) return;
+      await tasks[i]!();
+    }
+  }
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
+
 async function walkRemoteDir(
   sftp: SFTPWrapper,
   absDir: string,
@@ -175,6 +196,10 @@ async function walkRemoteDir(
     throw new Error(`Nao foi possivel listar "${absDir}": ${msg}`);
   }
 
+  type Subdir = { absPath: string; relPath: string };
+  const subdirs: Subdir[] = [];
+  const fileReads: Array<() => Promise<void>> = [];
+
   for (const ent of entries) {
     if (ent.filename === "." || ent.filename === "..") continue;
     if (SKIP_DIR_NAMES.has(ent.filename)) continue;
@@ -185,7 +210,7 @@ async function walkRemoteDir(
     const kind = sftpEntryKind(ent);
     if (kind === "link") continue;
     if (kind === "dir") {
-      await walkRemoteDir(sftp, absPath, relPath, depth + 1, out, log);
+      subdirs.push({ absPath, relPath });
       continue;
     }
     if (kind !== "file") continue;
@@ -193,20 +218,29 @@ async function walkRemoteDir(
     const size = ent.attrs.size;
     if (typeof size === "number" && size > MAX_FILE_BYTES) continue;
 
-    let buf: Buffer;
-    try {
-      buf = await sftpReadFile(sftp, absPath);
-    } catch {
-      continue;
-    }
-    if (buf.length > MAX_FILE_BYTES) continue;
-    if (isProbablyBinary(buf)) continue;
+    fileReads.push(async () => {
+      if (Object.keys(out).length >= MAX_FILES) return;
+      let buf: Buffer;
+      try {
+        buf = await sftpReadFile(sftp, absPath);
+      } catch {
+        return;
+      }
+      if (buf.length > MAX_FILE_BYTES) return;
+      if (isProbablyBinary(buf)) return;
+      out[relPath] = buf.toString("utf8");
+    });
+  }
 
-    out[relPath] = buf.toString("utf8");
-    const n = Object.keys(out).length;
-    if (log && (n === 1 || n % 400 === 0)) {
-      log(`📄 ${n} ficheiros de texto importados (a varrer SFTP)...`);
-    }
+  await runPool(SFTP_READ_CONCURRENCY, fileReads);
+
+  const afterFiles = Object.keys(out).length;
+  if (log && fileReads.length > 0 && (afterFiles === 1 || afterFiles % 400 === 0)) {
+    log(`📄 ${afterFiles} ficheiros de texto importados (a varrer SFTP)...`);
+  }
+
+  for (const d of subdirs) {
+    await walkRemoteDir(sftp, d.absPath, d.relPath, depth + 1, out, log);
   }
 }
 

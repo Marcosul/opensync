@@ -1,6 +1,13 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { GiteaService } from '../sync/gitea.service';
+import { generateOpensshEd25519KeyPair } from '../sync/openssh-keygen.util';
 import { CreateVaultDto } from './dto/create-vault.dto';
 
 const colors = {
@@ -98,6 +105,98 @@ export class VaultsService {
     });
   }
 
+  /**
+   * Gera par SSH, regista deploy key no Gitea (escrita), guarda só o id Gitea na base.
+   * A chave privada devolvida deve ser mostrada uma vez ao utilizador (VPS OpenClaw).
+   */
+  async createAgentDeployKeyForUser(userId: string, vaultId: string) {
+    const vault = await this.prisma.vault.findFirst({
+      where: { id: vaultId, userId, isActive: true },
+      select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
+    });
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+
+    if (vault.agentDeployKeyGiteaId != null) {
+      try {
+        await this.gitea.deleteDeployKey(
+          vault.giteaRepo,
+          vault.agentDeployKeyGiteaId,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `${colors.yellow}⚠️ Não foi possível revogar deploy key antiga (seguindo):${colors.reset} ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    let pair: ReturnType<typeof generateOpensshEd25519KeyPair>;
+    try {
+      pair = generateOpensshEd25519KeyPair(`opensync-vault-${vault.id.slice(0, 8)}`);
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}❌ ssh-keygen falhou:${colors.reset} ${hint}`,
+      );
+      throw new InternalServerErrorException(
+        'Falha ao gerar chave SSH. Na imagem da API é necessário openssh-client (ssh-keygen).',
+      );
+    }
+
+    const created = await this.gitea.addDeployKey(vault.giteaRepo, {
+      title: `OpenSync agent ${vault.id.slice(0, 8)}`,
+      key: pair.publicKeyLine,
+      readOnly: false,
+    });
+
+    await this.prisma.vault.update({
+      where: { id: vaultId },
+      data: { agentDeployKeyGiteaId: created.id },
+    });
+
+    const cloneSshUrl = this.gitea.buildSshCloneUrl(vault.giteaRepo);
+
+    this.logger.log(
+      `${colors.green}✅ Deploy key Gitea criada:${colors.reset} vault=${vaultId} keyId=${created.id} repo=${vault.giteaRepo}`,
+    );
+
+    return {
+      vaultId: vault.id,
+      giteaRepo: vault.giteaRepo,
+      giteaDeployKeyId: created.id,
+      fingerprint: created.fingerprint ?? null,
+      publicKey: pair.publicKeyLine,
+      privateKeyOpenssh: pair.privateKeyPem,
+      cloneSshUrl,
+      instructions:
+        'Guarde a chave privada na VPS (chmod 600). Use GIT_SSH_COMMAND com ssh -i ... e IdentitiesOnly=yes. ' +
+        `Clone: git clone ${cloneSshUrl}. Cron OpenClaw: ver docs/dev/openclaw-agent-sync.md`,
+    };
+  }
+
+  async deleteAgentDeployKeyForUser(userId: string, vaultId: string) {
+    const vault = await this.prisma.vault.findFirst({
+      where: { id: vaultId, userId, isActive: true },
+      select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
+    });
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    if (vault.agentDeployKeyGiteaId == null) {
+      return { ok: true as const, removed: false };
+    }
+    await this.gitea.deleteDeployKey(vault.giteaRepo, vault.agentDeployKeyGiteaId);
+    await this.prisma.vault.update({
+      where: { id: vaultId },
+      data: { agentDeployKeyGiteaId: null },
+    });
+    this.logger.log(
+      `${colors.green}🗑️ Deploy key revogada:${colors.reset} vault=${vaultId} repo=${vault.giteaRepo}`,
+    );
+    return { ok: true as const, removed: true };
+  }
+
   async listVaultsForUser(userId: string) {
     const vaults = await this.prisma.vault.findMany({
       where: { userId, isActive: true },
@@ -125,12 +224,27 @@ export class VaultsService {
     if (!existing) {
       return;
     }
+
     await this.prisma.vault.update({
       where: { id: vaultId },
       data: { isActive: false },
     });
+
+    try {
+      await this.gitea.deleteRepo(existing.giteaRepo);
+    } catch (err) {
+      await this.prisma.vault.update({
+        where: { id: vaultId },
+        data: { isActive: true },
+      });
+      this.logger.error(
+        `${colors.red}↩️ Vault reativado (Gitea falhou ao apagar repo):${colors.reset} id=${vaultId}`,
+      );
+      throw err;
+    }
+
     this.logger.log(
-      `${colors.yellow}🗑️ Vault desativado:${colors.reset} id=${vaultId} repo=${existing.giteaRepo}`,
+      `${colors.green}🗑️ Vault desativado + repo Gitea apagado:${colors.reset} id=${vaultId} repo=${existing.giteaRepo}`,
     );
   }
 }

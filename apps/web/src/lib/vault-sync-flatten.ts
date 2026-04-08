@@ -2,6 +2,7 @@ import {
   docIdForFileInParent,
   docIdPrefixFromDirPath,
 } from "@/components/app/vault-tree-ops";
+import type { VaultMeta } from "@/components/app/vault-persistence";
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
 
 /**
@@ -55,4 +56,14 @@ const UUID_RE =
 /** Vault persistido no Nest (tem repo Gitea) vs cofre só local no browser. */
 export function isBackendSyncVaultId(vaultId: string): boolean {
   return UUID_RE.test(vaultId.trim());
+}
+
+/**
+ * Explorador carrega arvore/conteudo via API Git (evita snapshot monolitico).
+ * Vaults ligados ao perfil com import SSH mantem snapshot local completo.
+ */
+export function usesLazyGitRemote(vaultId: string, meta: VaultMeta | undefined): boolean {
+  if (!isBackendSyncVaultId(vaultId)) return false;
+  if (meta?.remoteSync === "ssh") return false;
+  return true;
 }

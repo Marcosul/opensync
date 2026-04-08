@@ -46,6 +46,7 @@ import {
   type MutableRefObject,
   type PointerEvent,
 } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { apiRequest } from "@/api/rest/generic";
@@ -54,13 +55,15 @@ import {
   clearPendingActiveVaultId,
   countTreeStats,
   getHydrationSafeVaultBoot,
-  loadSnapshot,
+  loadSnapshotWithSshBridge,
   peekPendingActiveVaultId,
   readActiveVaultId,
   readAndConsumePendingAgentProject,
+  clearActiveVaultId,
   readVaultMetas,
   saveSnapshot,
   vaultSnapshotKey,
+  emptyVaultPlaceholderSnapshot,
   writeActiveVaultId,
   writeVaultMetas,
   type VaultBookmark,
@@ -117,8 +120,18 @@ import {
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
 import {
+  fetchVaultGitBlob,
+  fetchVaultGitTree,
+} from "@/lib/vault-git-client";
+import {
+  GIT_LAZY_PLACEHOLDER_DOC_ID,
+  gitTreePathsToVaultSnapshot,
+  isGitLazyVaultTree,
+} from "@/lib/vault-git-tree-import";
+import {
   flattenVaultTreeToSyncFiles,
   isBackendSyncVaultId,
+  usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
 import { cn } from "@/lib/utils";
 
@@ -456,6 +469,13 @@ export function VaultView() {
   const [giteaSyncStatus, setGiteaSyncStatus] = useState<
     "idle" | "syncing" | "synced" | "error"
   >("idle");
+  const [blobLoadingDocId, setBlobLoadingDocId] = useState<string | null>(null);
+  const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
+
+  const activeVaultMeta = useMemo(
+    () => vaultMetas.find((m) => m.id === activeVaultId),
+    [vaultMetas, activeVaultId]
+  );
 
   const treeRootRef = useRef(treeRoot);
   const noteContentsRef = useRef(noteContents);
@@ -463,6 +483,7 @@ export function VaultView() {
   noteContentsRef.current = noteContents;
 
   const syncAbortRef = useRef<AbortController | null>(null);
+  const gitTreeAbortRef = useRef<AbortController | null>(null);
 
   const runVaultGiteaSync = useCallback(async (vaultId: string) => {
     if (!isBackendSyncVaultId(vaultId)) return;
@@ -471,6 +492,32 @@ export function VaultView() {
     syncAbortRef.current = ac;
     setGiteaSyncStatus("syncing");
     try {
+      let mergedContents = { ...noteContentsRef.current };
+      if (isGitLazyVaultTree(treeRootRef.current)) {
+        const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+        if (ac.signal.aborted) return;
+        const paths = entries.map((e) => e.path);
+        const concurrency = 8;
+        for (let i = 0; i < paths.length; i += concurrency) {
+          if (ac.signal.aborted) return;
+          const chunk = paths.slice(i, i + concurrency);
+          await Promise.all(
+            chunk.map(async (p) => {
+              if (mergedContents[p] !== undefined) return;
+              try {
+                const { content } = await fetchVaultGitBlob(vaultId, p, {
+                  signal: ac.signal,
+                });
+                mergedContents[p] = content;
+              } catch {
+                mergedContents[p] = "";
+              }
+            }),
+          );
+        }
+        noteContentsRef.current = mergedContents;
+        setNoteContents(mergedContents);
+      }
       const files = flattenVaultTreeToSyncFiles(
         treeRootRef.current,
         noteContentsRef.current,
@@ -492,11 +539,38 @@ export function VaultView() {
     }
   }, []);
 
+  const scheduleGitTreeRefresh = useCallback(
+    (vaultId: string, meta: VaultMeta | undefined) => {
+      if (!usesLazyGitRemote(vaultId, meta)) return;
+      gitTreeAbortRef.current?.abort();
+      const ac = new AbortController();
+      gitTreeAbortRef.current = ac;
+      void (async () => {
+        try {
+          const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+          if (ac.signal.aborted) return;
+          const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
+          setTreeRoot(next.tree);
+          setNoteContents({});
+          setExpandedPaths(new Set(next.expandedPaths));
+          setBookmarks([]);
+          dispatchUi({ type: "reset", state: next.ui });
+        } catch {
+          /* mantem snapshot local */
+        }
+      })();
+    },
+    []
+  );
+
   useLayoutEffect(() => {
     const metas = readVaultMetas();
     const id = readActiveVaultId(metas);
     const meta = metas.find((m) => m.id === id);
-    const snap = loadSnapshot(id, meta);
+    const snap =
+      !id && metas.length === 0
+        ? emptyVaultPlaceholderSnapshot()
+        : loadSnapshotWithSshBridge(id, meta);
     setVaultMetas(metas);
     setActiveVaultId(id);
     setTreeRoot(snap.tree);
@@ -513,8 +587,13 @@ export function VaultView() {
       let activeId = readActiveVaultId(metas);
 
       try {
-        const { vaults } = await apiRequest<{ vaults: VaultMeta[] }>("/api/vaults/list");
-        if (!cancelled && vaults.length > 0) {
+        const { vaults, scope } = await apiRequest<{
+          vaults: VaultMeta[];
+          scope: "guest" | "user";
+        }>("/api/vaults/list");
+        if (cancelled) return;
+
+        if (scope === "user") {
           metas = vaults;
           writeVaultMetas(vaults);
           activeId = readActiveVaultId(vaults);
@@ -526,13 +605,24 @@ export function VaultView() {
           writeActiveVaultId(activeId);
           setVaultMetas(vaults);
           setActiveVaultId(activeId);
-          const meta = vaults.find((m) => m.id === activeId);
-          const snap = loadSnapshot(activeId, meta);
-          setTreeRoot(snap.tree);
-          setNoteContents({ ...snap.noteContents });
-          setExpandedPaths(new Set(snap.expandedPaths));
-          setBookmarks([...snap.bookmarks]);
-          dispatchUi({ type: "reset", state: snap.ui });
+          if (vaults.length === 0) {
+            clearActiveVaultId();
+            const emptySnap = emptyVaultPlaceholderSnapshot();
+            setTreeRoot(emptySnap.tree);
+            setNoteContents({ ...emptySnap.noteContents });
+            setExpandedPaths(new Set(emptySnap.expandedPaths));
+            setBookmarks([...emptySnap.bookmarks]);
+            dispatchUi({ type: "reset", state: emptySnap.ui });
+          } else {
+            const meta = vaults.find((m) => m.id === activeId);
+            const snap = loadSnapshotWithSshBridge(activeId, meta);
+            setTreeRoot(snap.tree);
+            setNoteContents({ ...snap.noteContents });
+            setExpandedPaths(new Set(snap.expandedPaths));
+            setBookmarks([...snap.bookmarks]);
+            dispatchUi({ type: "reset", state: snap.ui });
+            scheduleGitTreeRefresh(activeId, meta);
+          }
         }
       } catch {
         /* mantem estado inicial (localStorage / migracao) */
@@ -542,9 +632,9 @@ export function VaultView() {
       const pending = readAndConsumePendingAgentProject();
       if (pending?.projectType === "agent_squad" && pending.squadMission?.trim()) {
         const meta = metas.find((m) => m.id === activeId);
-        if (meta) {
+        if (meta && activeId) {
           const parentPath = meta.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
-          const snap = loadSnapshot(activeId, meta);
+          const snap = loadSnapshotWithSshBridge(activeId, meta);
           const md = `# Missão da equipe — ${pending.vaultName}\n\n${pending.squadMission.trim()}\n`;
           const next = applyMissionMarkdownToSnapshot(snap, parentPath, md);
           saveSnapshot(activeId, next);
@@ -564,9 +654,10 @@ export function VaultView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scheduleGitTreeRefresh]);
 
   useEffect(() => {
+    if (!activeVaultId) return;
     const snap: VaultSnapshotV1 = {
       v: 1,
       tree: treeRoot,
@@ -584,37 +675,40 @@ export function VaultView() {
       setGiteaSyncStatus("idle");
       return;
     }
+    if (usesLazyGitRemote(activeVaultId, activeVaultMeta)) {
+      syncAbortRef.current?.abort();
+      setGiteaSyncStatus("idle");
+      return;
+    }
     const t = window.setTimeout(() => {
       void runVaultGiteaSync(activeVaultId);
     }, 3000);
     return () => window.clearTimeout(t);
-  }, [treeRoot, noteContents, activeVaultId, runVaultGiteaSync]);
+  }, [treeRoot, noteContents, activeVaultId, activeVaultMeta, runVaultGiteaSync]);
 
   useEffect(() => {
     return () => {
       syncAbortRef.current?.abort();
+      gitTreeAbortRef.current?.abort();
     };
   }, []);
 
-  const activeVaultMeta = useMemo(
-    () => vaultMetas.find((m) => m.id === activeVaultId),
-    [vaultMetas, activeVaultId]
-  );
-
   const switchVault = useCallback(
     (nextId: string) => {
-      if (nextId === activeVaultId) return;
-      const fromSnap: VaultSnapshotV1 = {
-        v: 1,
-        tree: treeRoot,
-        noteContents,
-        expandedPaths: [...expandedPaths],
-        bookmarks,
-        ui,
-      };
-      saveSnapshot(activeVaultId, fromSnap);
+      if (!nextId || nextId === activeVaultId) return;
+      if (activeVaultId) {
+        const fromSnap: VaultSnapshotV1 = {
+          v: 1,
+          tree: treeRoot,
+          noteContents,
+          expandedPaths: [...expandedPaths],
+          bookmarks,
+          ui,
+        };
+        saveSnapshot(activeVaultId, fromSnap);
+      }
       const nextMeta = vaultMetas.find((m) => m.id === nextId);
-      const snap = loadSnapshot(nextId, nextMeta);
+      const snap = loadSnapshotWithSshBridge(nextId, nextMeta);
       setActiveVaultId(nextId);
       writeActiveVaultId(nextId);
       setTreeRoot(snap.tree);
@@ -624,6 +718,9 @@ export function VaultView() {
       dispatchUi({ type: "reset", state: snap.ui });
       setFolderSearch(null);
       setRevealTarget(null);
+      setBlobLoadError(null);
+      setBlobLoadingDocId(null);
+      scheduleGitTreeRefresh(nextId, nextMeta);
     },
     [
       activeVaultId,
@@ -633,23 +730,26 @@ export function VaultView() {
       bookmarks,
       ui,
       vaultMetas,
+      scheduleGitTreeRefresh,
     ]
   );
 
   const removeVault = useCallback(
     async (id: string) => {
       const target = vaultMetas.find((m) => m.id === id);
-      if (target?.deletable === false) {
-        window.alert(
-          "Este cofre esta ligado ao agente no seu perfil. Para alterar, atualize a conexao no dashboard.",
-        );
-        return;
-      }
-      if (vaultMetas.length <= 1) {
-        window.alert("É preciso manter pelo menos um cofre.");
-        return;
-      }
-      if (target?.managedByProfile && target.deletable) {
+      if (target?.managedByProfile) {
+        try {
+          await apiRequest<{ ok: boolean }>("/api/vaults/unlink-agent-vault", {
+            method: "POST",
+            body: { vaultId: id },
+          });
+        } catch {
+          window.alert(
+            "Nao foi possivel remover o vault ligado ao agente (servidor ou perfil). Tente de novo.",
+          );
+          return;
+        }
+      } else if (isBackendSyncVaultId(id)) {
         try {
           await apiRequest(`/api/vaults/saved?id=${encodeURIComponent(id)}`, {
             method: "DELETE",
@@ -669,21 +769,34 @@ export function VaultView() {
       }
 
       if (id === activeVaultId) {
-        const nextId = nextMetas[0].id;
+        const nextId = nextMetas[0]?.id ?? "";
         const nextMeta = nextMetas[0];
         setActiveVaultId(nextId);
         writeActiveVaultId(nextId);
-        const snap = loadSnapshot(nextId, nextMeta);
-        setTreeRoot(snap.tree);
-        setNoteContents({ ...snap.noteContents });
-        setExpandedPaths(new Set(snap.expandedPaths));
-        setBookmarks([...snap.bookmarks]);
-        dispatchUi({ type: "reset", state: snap.ui });
+        if (!nextId) {
+          clearActiveVaultId();
+          const emptySnap = emptyVaultPlaceholderSnapshot();
+          setTreeRoot(emptySnap.tree);
+          setNoteContents({ ...emptySnap.noteContents });
+          setExpandedPaths(new Set(emptySnap.expandedPaths));
+          setBookmarks([...emptySnap.bookmarks]);
+          dispatchUi({ type: "reset", state: emptySnap.ui });
+        } else {
+          const snap = loadSnapshotWithSshBridge(nextId, nextMeta);
+          setTreeRoot(snap.tree);
+          setNoteContents({ ...snap.noteContents });
+          setExpandedPaths(new Set(snap.expandedPaths));
+          setBookmarks([...snap.bookmarks]);
+          dispatchUi({ type: "reset", state: snap.ui });
+          setBlobLoadError(null);
+          setBlobLoadingDocId(null);
+          scheduleGitTreeRefresh(nextId, nextMeta);
+        }
         setFolderSearch(null);
         setRevealTarget(null);
       }
     },
-    [vaultMetas, activeVaultId]
+    [vaultMetas, activeVaultId, scheduleGitTreeRefresh]
   );
 
   useEffect(() => {
@@ -752,6 +865,40 @@ export function VaultView() {
     },
     [activeTabId]
   );
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    if (
+      !usesLazyGitRemote(activeVaultId, activeVaultMeta) ||
+      DOC_BY_ID[activeTabId] ||
+      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
+    ) {
+      return;
+    }
+    if (noteContentsRef.current[activeTabId] !== undefined) return;
+
+    setBlobLoadError(null);
+    setBlobLoadingDocId(activeTabId);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { content } = await fetchVaultGitBlob(activeVaultId, activeTabId);
+        if (cancelled) return;
+        setNoteContents((prev) => ({ ...prev, [activeTabId]: content }));
+      } catch {
+        if (!cancelled) {
+          setBlobLoadError("Nao foi possivel carregar o ficheiro.");
+        }
+      } finally {
+        if (!cancelled) {
+          setBlobLoadingDocId((cur) => (cur === activeTabId ? null : cur));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, activeVaultId, activeVaultMeta]);
 
   const migrateDocPrefixes = useCallback(
     (from: string, to: string) => {
@@ -966,7 +1113,7 @@ export function VaultView() {
 
   const handleExplorerCommand = useCallback(
     (cmd: ExplorerCommand) => {
-      if (treeRoot.type !== "dir") return;
+      if (!activeVaultId || treeRoot.type !== "dir") return;
 
       switch (cmd.type) {
         case "new-note": {
@@ -1164,6 +1311,7 @@ export function VaultView() {
       }
     },
     [
+      activeVaultId,
       treeRoot,
       noteContents,
       treeChildren,
@@ -1187,6 +1335,7 @@ export function VaultView() {
   const collapseAllFolders = useCallback(() => setExpandedPaths(new Set()), []);
 
   const vaultStatsLine = `${treeStats.files} arquivos, ${treeStats.folders} pastas`;
+  const noVault = vaultMetas.length === 0;
 
   return (
     <>
@@ -1293,6 +1442,20 @@ export function VaultView() {
           />
         )}
 
+      {noVault ? (
+        <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 overflow-auto bg-background px-6 py-12 text-center">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">Nenhum cofre</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            Crie um cofre para guardar notas, ligar ao agente e sincronizar com o servidor.
+          </p>
+          <Link
+            href="/vaults/new"
+            className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            Criar primeiro cofre
+          </Link>
+        </div>
+      ) : (
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
           <TabButton active={viewMode === "graph"} onClick={openGraph}>
@@ -1485,6 +1648,17 @@ export function VaultView() {
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
+        ) : usesLazyGitRemote(activeVaultId, activeVaultMeta) &&
+          blobLoadingDocId === activeTabId ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            A carregar o ficheiro…
+          </div>
+        ) : usesLazyGitRemote(activeVaultId, activeVaultMeta) &&
+          blobLoadError &&
+          noteContents[activeTabId] === undefined ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
+            {blobLoadError}
+          </div>
         ) : (
           <VaultNoteEditor
             key={activeTabId}
@@ -1504,9 +1678,14 @@ export function VaultView() {
           />
         )}
       </div>
+      )}
 
       <div className="flex w-[200px] shrink-0 flex-col border-l border-border bg-sidebar/30">
-        {viewMode === "graph" ? (
+        {noVault ? (
+          <div className="flex flex-1 items-center px-3 py-6 text-center font-mono text-[10px] leading-snug text-muted-foreground/70">
+            Crie um cofre para ver backlinks e etiquetas aqui.
+          </div>
+        ) : viewMode === "graph" ? (
           <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
         ) : openTabs.length === 0 || !activeTabId ? (
           <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
@@ -2313,6 +2492,33 @@ function FileTree({
   }, [revealTarget, onRevealHandled]);
 
   const iconBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground";
+
+  if (vaultMetas.length === 0) {
+    return (
+      <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-3 py-8 text-center">
+          <p className="text-xs text-muted-foreground">
+            Nenhum cofre. Crie um para guardar notas e sincronizar com o servidor.
+          </p>
+          <Link
+            href="/vaults/new"
+            className="inline-flex w-full max-w-[11rem] items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Criar primeiro cofre
+          </Link>
+        </div>
+        <VaultSidebarFooter
+          vaults={vaultMetas}
+          activeId={activeVaultId}
+          activeName={activeVaultName}
+          pathTooltip={vaultPathTooltip}
+          statsLine={vaultStatsLine}
+          onSelectVault={onSelectVault}
+          onOpenManageVaults={onOpenManageVaults}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">

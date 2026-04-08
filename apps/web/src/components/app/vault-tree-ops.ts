@@ -45,6 +45,12 @@ export function docIdPrefixFromDirPath(dirPath: string): string {
   if (dirPath.startsWith("openclaw/")) {
     return `${dirPath.slice("openclaw/".length)}/`;
   }
+  /** Importacao SSH: arvore sob ssh-vault-root (paths alinhados ao remoto). */
+  if (dirPath === "ssh-vault-root" || dirPath.startsWith("ssh-vault-root/")) {
+    const rest =
+      dirPath === "ssh-vault-root" ? "" : dirPath.slice("ssh-vault-root/".length);
+    return rest ? `${rest}/` : "";
+  }
   return "";
 }
 

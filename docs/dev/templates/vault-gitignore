@@ -1,0 +1,15 @@
+# OpenSync / OpenClaw — modelo de .gitignore para workspace na VPS
+# Copie para a raiz do clone (ou funda o repo com este ficheiro).
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/credentials*
+**/secrets*
+**/node_modules/
+**/.openclaw/cache/
+**/sandboxes/
+**/.DS_Store
+Thumbs.db

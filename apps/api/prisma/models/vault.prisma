@@ -6,6 +6,8 @@ model Vault {
   giteaRepo   String   @map("gitea_repo")
   path        String   @default("./openclaw")
   isActive    Boolean  @default(true) @map("is_active")
+  /// ID da deploy key no Gitea (chave publica registada para o agente na VPS). A privada nunca e guardada na base.
+  agentDeployKeyGiteaId Int? @map("agent_deploy_key_gitea_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
   user      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -1,14 +1,20 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Param,
   Post,
+  Query,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { SyncVaultDto } from './dto/sync-vault.dto';
@@ -55,6 +61,61 @@ export class VaultsController {
     const uid = this.requireUserId(userId);
     await this.vaultsService.deleteVaultForUser(uid, id);
     return { ok: true };
+  }
+
+  @Post(':id/git/deploy-key')
+  @HttpCode(HttpStatus.CREATED)
+  async createAgentDeployKey(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    return this.vaultsService.createAgentDeployKeyForUser(uid, id.trim());
+  }
+
+  @Delete(':id/git/deploy-key')
+  async deleteAgentDeployKey(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    return this.vaultsService.deleteAgentDeployKeyForUser(uid, id.trim());
+  }
+
+  @Get(':id/git/tree')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 40, ttl: 60_000 } })
+  async getGitTree(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('ref') _ref?: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    const { commitHash, entries } = await this.vaultGitSync.readRepoTree(vault.giteaRepo);
+    return { commitHash, entries };
+  }
+
+  @Get(':id/git/blob')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getGitBlob(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('path') filePath: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    if (!filePath?.trim()) {
+      throw new BadRequestException('Query path e obrigatoria');
+    }
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    return this.vaultGitSync.readRepoBlob(vault.giteaRepo, filePath);
   }
 
   @Post(':id/sync')

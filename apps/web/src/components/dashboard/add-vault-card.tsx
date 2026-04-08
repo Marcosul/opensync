@@ -3,7 +3,7 @@
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-const NEW_VAULT_HREF = "/dashboard/vaults/new";
+const NEW_VAULT_HREF = "/vaults/new";
 
 export function AddVaultCard() {
   const router = useRouter();

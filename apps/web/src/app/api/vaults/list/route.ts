@@ -12,9 +12,9 @@ export async function GET() {
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    return NextResponse.json({ vaults: [] as VaultListItem[] });
+    return NextResponse.json({ vaults: [] as VaultListItem[], scope: "guest" as const });
   }
 
   const { items } = await fetchVaultListForUser(user);
-  return NextResponse.json({ vaults: items });
+  return NextResponse.json({ vaults: items, scope: "user" as const });
 }

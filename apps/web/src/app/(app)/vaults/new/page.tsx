@@ -7,9 +7,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import {
+  readVaultMetas,
   saveSnapshot,
+  writeActiveVaultId,
   writePendingActiveVaultId,
   writePendingAgentProject,
+  writeVaultMetas,
 } from "@/components/app/vault-persistence";
 import { AgentConnectionStep } from "@/components/onboarding/agent-connection-step";
 import { Button } from "@/components/ui/button";
@@ -219,9 +222,27 @@ export default function NewVaultPage() {
         throw new Error("Resposta incompleta do servidor.");
       }
 
+      const vaultId = doneBody.snapshotVaultId.trim();
       const snap = remoteTextFilesToVaultSnapshot(doneBody.initialFiles ?? {});
-      saveSnapshot(doneBody.snapshotVaultId.trim(), snap);
-      writePendingActiveVaultId(doneBody.snapshotVaultId.trim());
+      saveSnapshot(vaultId, snap);
+
+      /** Garantir que o novo cofre entra em metas antes de redirecionar — readActiveVaultId só ativa IDs presentes na lista. */
+      const label = vaultName.trim() || "Vault";
+      const metas = readVaultMetas();
+      if (!metas.some((m) => m.id === vaultId)) {
+        metas.push({
+          id: vaultId,
+          name: label,
+          pathLabel: "SSH / VPS",
+          kind: "blank",
+          managedByProfile: true,
+          deletable: false,
+          remoteSync: "ssh",
+        });
+        writeVaultMetas(metas);
+      }
+      writeActiveVaultId(vaultId);
+      writePendingActiveVaultId(vaultId);
       router.replace("/vault");
     } catch (error) {
       const message =
