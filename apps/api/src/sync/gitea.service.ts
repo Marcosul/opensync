@@ -74,7 +74,7 @@ export class GiteaService {
   }
 
   /**
-   * Cria a organização no Gitea (uma por workspace). Exige scope write:organization no PAT.
+   * Cria a organização no Gitea (uma por workspace). Exige PAT com write:organization (+ repo).
    */
   async ensureOrg(opts: { username: string; fullName: string }): Promise<void> {
     this.ensureConfigured();
@@ -117,21 +117,23 @@ export class GiteaService {
     }
     if (res.status === 403) {
       throw new BadGatewayException(
-        `Gitea recusou criar a org "${username}". O token (GITEA_ADMIN_TOKEN) precisa do scope ` +
-          `write:organization ou ser token de administrador com permissao para criar organizacoes. ${body}`,
+        `Gitea recusou criar a org "${username}". O GITEA_ADMIN_TOKEN precisa do scope ` +
+          `write:organization e permisso para criar repositorios (ex.: write:repository em todos os repos, ` +
+          `ou token de administrador). Veja docs/dev/gitea-ionos-first-install.md. Resposta: ${body}`,
       );
     }
     throw new BadGatewayException(`Falha ao criar org Gitea "${username}": ${body}`);
   }
 
   async createRepoForVault(
-    userId: string,
     vaultName: string,
     giteaOrg: string,
+    workspaceId: string,
   ): Promise<string> {
     this.ensureConfigured();
     const org = giteaOrg.trim().toLowerCase();
-    const repoName = `${this.slugify(vaultName)}-${userId.slice(0, 8)}`;
+    const wsFrag = workspaceId.replace(/-/g, '').slice(0, 12);
+    const repoName = `${this.slugify(vaultName)}-${wsFrag}`;
     this.logger.log(
       `${colors.cyan}📦 Criando repo na org do workspace:${colors.reset} ${org}/${repoName}`,
     );

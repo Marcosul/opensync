@@ -20,9 +20,10 @@ describe('GiteaService', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response('conflict', { status: 409 }));
 
+    const wsId = 'abcd1234-abcd-abcd-abcd-abcdef123456';
     await expect(
-      svc.createRepoForVault('abcd1234efgh5678', 'Meu Vault', 'opensync'),
-    ).resolves.toBe('opensync/meu-vault-abcd1234');
+      svc.createRepoForVault('Meu Vault', 'opensync', wsId),
+    ).resolves.toBe('opensync/meu-vault-abcd1234abcd');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -32,8 +33,9 @@ describe('GiteaService', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response('boom', { status: 500 }));
 
+    const wsId = 'abcd1234-abcd-abcd-abcd-abcdef123456';
     await expect(
-      svc.createRepoForVault('abcd1234efgh5678', 'Meu Vault', 'opensync'),
+      svc.createRepoForVault('Meu Vault', 'opensync', wsId),
     ).rejects.toBeInstanceOf(BadGatewayException);
   });
 });

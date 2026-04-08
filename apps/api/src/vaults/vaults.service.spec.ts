@@ -3,6 +3,7 @@ import { VaultsService } from './vaults.service';
 
 const WORKSPACE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const GITEA_ORG_SLUG = 'wsaaaaaaaabbbb4ccc8ddeeeeeeeeeeee';
+const REPO_WS_FRAG = 'aaaaaaaabbbb';
 
 describe('VaultsService', () => {
   const prisma = {
@@ -45,28 +46,30 @@ describe('VaultsService', () => {
     });
     prisma.workspace.update.mockResolvedValue({});
     gitea.ensureOrg.mockResolvedValue(undefined);
-    gitea.createRepoForVault.mockResolvedValue(`${GITEA_ORG_SLUG}/meu-vault-user-1`);
+    gitea.createRepoForVault.mockResolvedValue(
+      `${GITEA_ORG_SLUG}/meu-vault-${REPO_WS_FRAG}`,
+    );
     prisma.vault.create.mockResolvedValue({
       id: 'vault-1',
       workspaceId: WORKSPACE_ID,
       name: 'Meu Vault',
       description: null,
       path: './openclaw',
-      giteaRepo: `${GITEA_ORG_SLUG}/meu-vault-user-1`,
+      giteaRepo: `${GITEA_ORG_SLUG}/meu-vault-${REPO_WS_FRAG}`,
       createdAt: new Date().toISOString(),
     });
 
     const service = new VaultsService(prisma, gitea, workspaces);
     const result = await service.createVaultForUser('user-1', 'u@e.com', { name: 'Meu Vault' });
-    expect(result.giteaRepo).toBe(`${GITEA_ORG_SLUG}/meu-vault-user-1`);
+    expect(result.giteaRepo).toBe(`${GITEA_ORG_SLUG}/meu-vault-${REPO_WS_FRAG}`);
     expect(gitea.ensureOrg).toHaveBeenCalledWith({
       username: GITEA_ORG_SLUG,
       fullName: 'Meu Workspace',
     });
     expect(gitea.createRepoForVault).toHaveBeenCalledWith(
-      'user-1',
       'Meu Vault',
       GITEA_ORG_SLUG,
+      WORKSPACE_ID,
     );
     expect(prisma.vault.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -97,14 +100,18 @@ describe('VaultsService', () => {
       name: 'W',
       giteaOrg: GITEA_ORG_SLUG,
     });
-    gitea.createRepoForVault.mockResolvedValue(`${GITEA_ORG_SLUG}/compensar-user-1`);
+    gitea.createRepoForVault.mockResolvedValue(
+      `${GITEA_ORG_SLUG}/compensar-${REPO_WS_FRAG}`,
+    );
     prisma.vault.create.mockRejectedValue(new Error('db down'));
 
     const service = new VaultsService(prisma, gitea, workspaces);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Compensar' }),
     ).rejects.toThrow('db down');
-    expect(gitea.deleteRepo).toHaveBeenCalledWith(`${GITEA_ORG_SLUG}/compensar-user-1`);
+    expect(gitea.deleteRepo).toHaveBeenCalledWith(
+      `${GITEA_ORG_SLUG}/compensar-${REPO_WS_FRAG}`,
+    );
     expect(gitea.ensureOrg).not.toHaveBeenCalled();
   });
 

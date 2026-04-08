@@ -42,3 +42,5 @@ cd apps/api && npx prisma migrate deploy
 ```
 
 (ou `prisma migrate dev` em desenvolvimento.)
+
+No **Fly** (`opensync-api`), o [`fly.toml`](../../apps/api/fly.toml) define `release_command = "npx prisma migrate deploy"` para aplicar migrações em cada deploy. Se aparecer erro **P2022** (coluna inexistente), a migração ainda não correu na base: faz **um deploy** com este `fly.toml` ou corre o comando acima localmente com `DATABASE_URL` / `DIRECT_URL` apontando para a mesma base.

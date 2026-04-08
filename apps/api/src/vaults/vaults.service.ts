@@ -103,7 +103,7 @@ export class VaultsService {
     );
 
     const giteaOrg = await this.resolveGiteaOrgForWorkspace(userId, workspaceId);
-    const giteaRepo = await this.gitea.createRepoForVault(userId, name, giteaOrg);
+    const giteaRepo = await this.gitea.createRepoForVault(name, giteaOrg, workspaceId);
     try {
       const vault = await this.prisma.vault.create({
         data: {

@@ -53,6 +53,25 @@ A API em Fly (`opensync-api`) precisa de alcançar `http://216.250.124.232:3000`
 
 > Segurança: não armazenar token nem senha em Markdown. Em caso de exposição, revogar o token no Gitea e atualizar `.env` + Fly.
 
+#### Permissões obrigatórias do token (OpenSync)
+
+A API NestJS cria **uma organização Gitea por workspace** (`POST /api/v1/orgs`) e **repositórios privados** nessa org (`POST /api/v1/orgs/{org}/repos`). O **Personal Access Token** (PAT) tem de incluir pelo menos:
+
+| Scope (Gitea 1.22+ / token com scopes finos) | Motivo |
+|-----------------------------------------------|--------|
+| **write:organization** | Criar org por workspace (`ws` + UUID sem hífens). |
+| **write:repository** | Criar repos dentro dessas orgs (em geral “All repositories” ou equivalente na UI). |
+
+Se o Gitea só oferecer token **clássico** (“full access” / todas as permissões de API), esse formato também serve para a conta `opensync-admin` (ou a que gerires).
+
+**Regenerar e guardar**
+
+1. Gitea → utilizador **opensync-admin** (ou o dono do token) → **Settings** → **Applications** → **Generate New Token**.
+2. Marcar os scopes acima (ou token clássico com acesso total à API).
+3. Local: colar em `apps/api/.env` → `GITEA_ADMIN_TOKEN=gta_...` (ficheiro não versionado).
+4. Fly: `fly secrets set GITEA_ADMIN_TOKEN='gta_...' -a opensync-api` (usa aspas se o shell interpretar caracteres especiais).
+5. `fly deploy -a opensync-api` (ou reiniciar a máquina) para carregar o novo secret.
+
 ## 2. Assistente — valores recomendados
 
 Preenche **exatamente** como abaixo (ajusta só o IP se não for o teu).
@@ -113,8 +132,8 @@ docker compose logs -f gitea
 
 ### 4.1 Token para a API NestJS
 
-1. No Gitea: **Settings** (utilizador) ou **Site Administration** → **Applications** → **Generate New Token**.
-2. Permissões mínimas típicas para criar repos e Git: **repository** (read/write) e **admin** se a API for criar organizações/repos em teu nome (ajusta ao que implementares).
+1. No Gitea: **Settings** → **Applications** → **Generate New Token** (utilizador que deve ser dono das orgs/repos criados pela API, p.ex. `opensync-admin`).
+2. **Scopes mínimos:** **write:organization** e **write:repository** (ver tabela na secção “Permissões obrigatórias” acima). Alternativa: token clássico com acesso completo à API.
 3. Coloca o token em:
 
 | Ambiente | Variável |
