@@ -60,10 +60,6 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  if (user && pathname.startsWith("/dashboard") && !onboardingDone) {
-    return NextResponse.redirect(new URL("/onboarding", request.url));
-  }
-
   if (user && pathname.startsWith("/onboarding") && onboardingDone) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }

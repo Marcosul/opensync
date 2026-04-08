@@ -93,7 +93,7 @@ function VaultCard({ vault }: { vault: VaultItem }) {
   return (
     <div className="group relative z-0 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
     <Link
-      href={`/vault?vault=${encodeURIComponent(vault.id)}`}
+      href={`/vault?vaultId=${encodeURIComponent(vault.id)}`}
       className="flex min-w-0 flex-1 flex-col gap-3 outline-none"
     >
       {/* Header */}

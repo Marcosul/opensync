@@ -48,7 +48,7 @@ import {
   type PointerEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryStates, type inferParserType } from "nuqs";
 
 import { apiRequest } from "@/api/rest/generic";
 import {
@@ -124,6 +124,7 @@ import {
 } from "@/lib/vault-git-client";
 import {
   GIT_LAZY_PLACEHOLDER_DOC_ID,
+  collectLazyGitRepoRelativePaths,
   gitTreePathsToVaultSnapshot,
   isGitLazyVaultTree,
 } from "@/lib/vault-git-tree-import";
@@ -132,9 +133,16 @@ import {
   isBackendSyncVaultId,
   usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
+import {
+  vaultPageQueryOptions,
+  vaultPageSearchParams,
+} from "@/lib/vault-page-search-params";
+import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import { cn } from "@/lib/utils";
 
 const DOC_BY_ID = Object.fromEntries(DOCS.map((d) => [d.id, d])) as Record<string, MockDoc>;
+
+type VaultPageQueryState = inferParserType<typeof vaultPageSearchParams>;
 
 function treePathAncestors(path: string): string[] {
   const out: string[] = [];
@@ -445,10 +453,22 @@ export function VaultView() {
   const [activeVaultId, setActiveVaultId] = useState(() => ssrBoot.id);
   const [serverVaultsFetched, setServerVaultsFetched] = useState(false);
 
+  const [vaultPageQuery, setVaultPageQuery] = useQueryStates(
+    vaultPageSearchParams,
+    vaultPageQueryOptions,
+  );
+
+  const vaultIdFromUrl = vaultPageQuery.vaultId ?? vaultPageQuery.vault;
+
   const activeVaultMeta = useMemo(
     () => (activeVaultId ? vaultMetas.find((m) => m.id === activeVaultId) : undefined),
     [vaultMetas, activeVaultId],
   );
+
+  useEffect(() => {
+    if (!vaultPageQuery.vault || vaultPageQuery.vaultId) return;
+    void setVaultPageQuery({ vaultId: vaultPageQuery.vault, vault: null });
+  }, [vaultPageQuery.vault, vaultPageQuery.vaultId, setVaultPageQuery]);
 
   useLayoutEffect(() => {
     const metas = readVaultMetas();
@@ -496,6 +516,41 @@ export function VaultView() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!serverVaultsFetched || !vaultIdFromUrl) return;
+    if (!vaultMetas.some((m) => m.id === vaultIdFromUrl)) return;
+    if (vaultIdFromUrl === activeVaultId) return;
+    writeActiveVaultId(vaultIdFromUrl);
+    setActiveVaultId(vaultIdFromUrl);
+  }, [serverVaultsFetched, vaultIdFromUrl, vaultMetas, activeVaultId]);
+
+  useEffect(() => {
+    if (!serverVaultsFetched || !activeVaultId) return;
+    if (vaultPageQuery.vaultId || vaultPageQuery.vault) return;
+    void setVaultPageQuery({ vaultId: activeVaultId });
+  }, [
+    serverVaultsFetched,
+    activeVaultId,
+    vaultPageQuery.vaultId,
+    vaultPageQuery.vault,
+    setVaultPageQuery,
+  ]);
+
+  const handleActiveVaultIdChange = useCallback(
+    (id: string) => {
+      setActiveVaultId(id);
+      writeActiveVaultId(id);
+      void setVaultPageQuery({
+        vaultId: id || null,
+        vault: null,
+        file: null,
+        folder: null,
+        view: null,
+      });
+    },
+    [setVaultPageQuery],
+  );
+
   const removeVault = useCallback(
     async (id: string) => {
       const target = vaultMetas.find((m) => m.id === id);
@@ -535,9 +590,16 @@ export function VaultView() {
         writeActiveVaultId(nextId);
         setActiveVaultId(nextId);
         if (!nextId) clearActiveVaultId();
+        void setVaultPageQuery({
+          vaultId: nextId || null,
+          vault: null,
+          file: null,
+          folder: null,
+          view: null,
+        });
       }
     },
-    [vaultMetas, activeVaultId],
+    [vaultMetas, activeVaultId, setVaultPageQuery],
   );
 
   const hasOpenVault = Boolean(activeVaultMeta);
@@ -551,7 +613,9 @@ export function VaultView() {
           vaultId={activeVaultId}
           activeVaultMeta={activeVaultMeta}
           vaultMetas={vaultMetas}
-          onActiveVaultIdChange={setActiveVaultId}
+          vaultPageQuery={vaultPageQuery}
+          setVaultPageQuery={setVaultPageQuery}
+          onActiveVaultIdChange={handleActiveVaultIdChange}
           removeVault={removeVault}
         />
       ) : showVaultListLoading ? (
@@ -1611,6 +1675,8 @@ type VaultOpenWorkspaceProps = {
   vaultId: string;
   activeVaultMeta: VaultMeta;
   vaultMetas: VaultMeta[];
+  vaultPageQuery: VaultPageQueryState;
+  setVaultPageQuery: (updates: Partial<VaultPageQueryState>) => void | Promise<unknown>;
   onActiveVaultIdChange: (id: string) => void;
   removeVault: (id: string) => Promise<void>;
 };
@@ -1619,13 +1685,18 @@ function VaultOpenWorkspace({
   vaultId,
   activeVaultMeta,
   vaultMetas,
+  vaultPageQuery,
+  setVaultPageQuery,
   onActiveVaultIdChange,
   removeVault,
 }: VaultOpenWorkspaceProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
   const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
+  const [urlSyncReady, setUrlSyncReady] = useState(
+    () =>
+      !vaultPageQuery.file &&
+      !vaultPageQuery.folder &&
+      vaultPageQuery.view !== "graph",
+  );
 
   const bootSnapRef = useRef<VaultSnapshotV1 | null>(null);
   if (bootSnapRef.current === null) {
@@ -1683,11 +1754,21 @@ function VaultOpenWorkspace({
     void (async () => {
       try {
         const data = await fetchVaultGitTree(vaultId);
-        const allowed = new Set(data.entries.map((e) => e.path));
-        if (data.entries.length === 0) {
+        const remotePaths = data.entries.map((e) => e.path);
+        const prevRoot = treeRootRef.current;
+        const localPaths = isGitLazyVaultTree(prevRoot)
+          ? collectLazyGitRepoRelativePaths(prevRoot)
+          : [];
+        const unionPaths = [...new Set([...remotePaths, ...localPaths])];
+        const pathsForSnapshot =
+          unionPaths.length > 0 ? unionPaths : remotePaths.length > 0 ? remotePaths : [];
+        const next = gitTreePathsToVaultSnapshot(pathsForSnapshot);
+        const allowed = new Set(
+          pathsForSnapshot.length > 0 ? pathsForSnapshot : remotePaths,
+        );
+        if (allowed.size === 0) {
           allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
         }
-        const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
         setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
         setTreeRoot(next.tree);
         setNoteContents((prev) => {
@@ -1776,9 +1857,19 @@ function VaultOpenWorkspace({
           const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
           if (ac.signal.aborted) return;
           setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
-          const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
-          const allowed = new Set(data.entries.map((e) => e.path));
-          if (data.entries.length === 0) {
+          const remotePaths = data.entries.map((e) => e.path);
+          const prevRoot = treeRootRef.current;
+          const localPaths = isGitLazyVaultTree(prevRoot)
+            ? collectLazyGitRepoRelativePaths(prevRoot)
+            : [];
+          const unionPaths = [...new Set([...remotePaths, ...localPaths])];
+          const pathsForSnapshot =
+            unionPaths.length > 0 ? unionPaths : remotePaths.length > 0 ? remotePaths : [];
+          const next = gitTreePathsToVaultSnapshot(pathsForSnapshot);
+          const allowed = new Set(
+            pathsForSnapshot.length > 0 ? pathsForSnapshot : remotePaths,
+          );
+          if (allowed.size === 0) {
             allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
           }
           setTreeRoot(next.tree);
@@ -1869,14 +1960,10 @@ function VaultOpenWorkspace({
       setGiteaSyncStatus("idle");
       return;
     }
-    if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
-      syncAbortRef.current?.abort();
-      setGiteaSyncStatus("idle");
-      return;
-    }
+    const delayMs = usesLazyGitRemote(vaultId, activeVaultMeta) ? 4500 : 3000;
     const t = window.setTimeout(() => {
       void runVaultGiteaSync(vaultId);
-    }, 3000);
+    }, delayMs);
     return () => window.clearTimeout(t);
   }, [treeRoot, noteContents, vaultId, activeVaultMeta, runVaultGiteaSync]);
 
@@ -1907,18 +1994,6 @@ function VaultOpenWorkspace({
     [vaultId, treeRoot, noteContents, expandedPaths, bookmarks, ui, onActiveVaultIdChange]
   );
 
-
-  useEffect(() => {
-    const vid = searchParams.get("vault");
-    if (!vid) return;
-    if (!vaultMetas.some((m) => m.id === vid)) return;
-    if (vid === vaultId) {
-      router.replace("/vault", { scroll: false });
-      return;
-    }
-    switchVault(vid);
-    router.replace("/vault", { scroll: false });
-  }, [searchParams, vaultMetas, vaultId, switchVault, router]);
 
   const treeChildren = useMemo(
     () => (treeRoot.type === "dir" ? treeRoot.children : []),
@@ -1977,6 +2052,122 @@ function VaultOpenWorkspace({
     },
     [activeTabId]
   );
+
+  const urlTargetKey = `${vaultId}|${vaultPageQuery.file ?? ""}|${vaultPageQuery.folder ?? ""}|${vaultPageQuery.view ?? ""}`;
+  const appliedUrlTargetRef = useRef("");
+
+  useEffect(() => {
+    appliedUrlTargetRef.current = "";
+  }, [vaultId]);
+
+  useEffect(() => {
+    if (appliedUrlTargetRef.current === urlTargetKey) return;
+
+    const file = vaultPageQuery.file;
+    const folder = vaultPageQuery.folder;
+    const viewGraph = vaultPageQuery.view === "graph";
+
+    if (!file && !folder && !viewGraph) {
+      appliedUrlTargetRef.current = urlTargetKey;
+      setUrlSyncReady(true);
+      return;
+    }
+
+    if (viewGraph && !file && !folder) {
+      appliedUrlTargetRef.current = urlTargetKey;
+      dispatchUi({ type: "showGraph" });
+      setUrlSyncReady(true);
+      return;
+    }
+
+    if (file) {
+      const ids = collectDocIdsFromTree(treeChildren);
+      if (ids.includes(file)) {
+        const expandForFile = () => {
+          setExpandedPaths((prev) => {
+            const next = new Set(prev);
+            for (const p of findAncestorDirPathsForDoc(treeChildren, file)) {
+              next.add(p);
+            }
+            return next;
+          });
+        };
+        if (file !== activeTabId || viewMode !== "editor") {
+          browseSelectFile(file);
+        }
+        expandForFile();
+        appliedUrlTargetRef.current = urlTargetKey;
+        setUrlSyncReady(true);
+      }
+      return;
+    }
+
+    if (folder && treeRoot.type === "dir") {
+      const treePath = findDirTreePathByRelativePath(treeRoot, folder);
+      if (treePath) {
+        appliedUrlTargetRef.current = urlTargetKey;
+        setExpandedPaths((prev) => {
+          const next = new Set(prev);
+          for (const anc of treePathAncestors(treePath)) {
+            next.add(anc);
+          }
+          next.add(treePath);
+          return next;
+        });
+        setRevealTarget({ type: "folder", path: treePath });
+        dispatchUi({ type: "showGraph" });
+        setUrlSyncReady(true);
+      }
+    }
+  }, [
+    urlTargetKey,
+    vaultPageQuery.file,
+    vaultPageQuery.folder,
+    vaultPageQuery.view,
+    treeChildren,
+    treeRoot,
+    browseSelectFile,
+    activeTabId,
+    viewMode,
+  ]);
+
+  useEffect(() => {
+    if (urlSyncReady) return;
+    if (!vaultPageQuery.file && !vaultPageQuery.folder) return;
+    const t = window.setTimeout(() => {
+      setUrlSyncReady(true);
+    }, 12000);
+    return () => window.clearTimeout(t);
+  }, [vaultPageQuery.file, vaultPageQuery.folder, urlSyncReady]);
+
+  useEffect(() => {
+    if (!urlSyncReady) return;
+
+    const nextFile = viewMode === "graph" ? null : activeTabId || null;
+    const nextView = viewMode === "graph" ? "graph" : null;
+
+    if (
+      vaultPageQuery.file === nextFile &&
+      vaultPageQuery.view === nextView &&
+      !vaultPageQuery.folder
+    ) {
+      return;
+    }
+
+    void setVaultPageQuery({
+      file: nextFile,
+      folder: null,
+      view: nextView,
+    });
+  }, [
+    urlSyncReady,
+    viewMode,
+    activeTabId,
+    vaultPageQuery.file,
+    vaultPageQuery.view,
+    vaultPageQuery.folder,
+    setVaultPageQuery,
+  ]);
 
   useEffect(() => {
     if (!activeTabId) return;

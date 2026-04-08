@@ -51,6 +51,12 @@ export function docIdPrefixFromDirPath(dirPath: string): string {
       dirPath === "ssh-vault-root" ? "" : dirPath.slice("ssh-vault-root/".length);
     return rest ? `${rest}/` : "";
   }
+  /** Git lazy (Gitea): docIds coincidem com paths relativos do repo. */
+  if (dirPath === "git-vault-root" || dirPath.startsWith("git-vault-root/")) {
+    const rest =
+      dirPath === "git-vault-root" ? "" : dirPath.slice("git-vault-root/".length);
+    return rest ? `${rest}/` : "";
+  }
   return "";
 }
 

@@ -180,128 +180,141 @@ export default function OnboardingPage() {
       : "Vamos configurar o OpenSync para o seu objetivo";
 
   return (
-    <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Onboarding OpenClaw - Etapa {step} de {TOTAL_STEPS}
-      </p>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">{pageTitle}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        {step === 1
-          ? "Escolha um nome que identifique seu projeto ou equipa. Voce pode alterar depois."
-          : `Responda ${TOTAL_STEPS} etapas rapidas para personalizar sua experiencia.`}
-      </p>
+    <div className="box-border flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex min-h-full w-full flex-col items-center justify-center px-4 py-6 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
+        <section className="w-full max-w-2xl shrink-0 rounded-2xl border bg-card p-5 shadow-sm sm:p-8">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Onboarding OpenClaw - Etapa {step} de {TOTAL_STEPS}
+          </p>
+          <h1 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{pageTitle}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {step === 1
+              ? "Escolha um nome que identifique seu projeto ou equipa. Voce pode alterar depois."
+              : `Responda ${TOTAL_STEPS} etapas rapidas para personalizar sua experiencia.`}
+          </p>
 
-      <div className="mt-6">
-        {step === 1 ? (
-          <div className="space-y-3">
-            {bootstrapLoading ? (
-              <p className="text-sm text-muted-foreground">
-                A sincronizar com o servidor... Voce ja pode escrever o nome abaixo.
-              </p>
-            ) : null}
-            {bootstrapError ? (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                <p className="text-destructive">{bootstrapError}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={() => void loadWorkspaceBootstrap()}
-                >
-                  Tentar novamente
-                </Button>
+          <div className="mt-6">
+            {step === 1 ? (
+              <div className="space-y-3">
+                {bootstrapLoading ? (
+                  <p className="text-sm text-muted-foreground">
+                    A sincronizar com o servidor... Voce ja pode escrever o nome abaixo.
+                  </p>
+                ) : null}
+                {bootstrapError ? (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                    <p className="text-destructive">{bootstrapError}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => void loadWorkspaceBootstrap()}
+                    >
+                      Tentar novamente
+                    </Button>
+                  </div>
+                ) : null}
+                <div>
+                  <label
+                    htmlFor="workspace-name"
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    Nome do workspace
+                  </label>
+                  <input
+                    id="workspace-name"
+                    type="text"
+                    autoComplete="organization"
+                    placeholder="Ex.: marco's Workspace"
+                    value={workspaceName}
+                    onChange={(e) => setWorkspaceName(e.target.value)}
+                    disabled={isSubmitting}
+                    className={workspaceInputClass}
+                    maxLength={120}
+                  />
+                </div>
               </div>
             ) : null}
-            <div>
-              <label htmlFor="workspace-name" className="block text-sm font-medium text-foreground">
-                Nome do workspace
-              </label>
-              <input
-                id="workspace-name"
-                type="text"
-                autoComplete="organization"
-                placeholder="Ex.: marco's Workspace"
-                value={workspaceName}
-                onChange={(e) => setWorkspaceName(e.target.value)}
-                disabled={isSubmitting}
-                className={workspaceInputClass}
-                maxLength={120}
+
+            {step === 2 ? (
+              <StepOptions
+                title="Qual resultado voce quer com o OpenSync?"
+                options={goalOptions}
+                selected={formData.goals}
+                allowMultiple
+                onSelect={(value) =>
+                  setFormData((prev) => {
+                    const hasValue = prev.goals.includes(value);
+                    return {
+                      ...prev,
+                      goals: hasValue
+                        ? prev.goals.filter((item) => item !== value)
+                        : [...prev.goals, value],
+                    };
+                  })
+                }
               />
-            </div>
+            ) : null}
+
+            {step === 3 ? (
+              <StepOptions
+                title="Como voce pretende usar no dia a dia?"
+                options={contextOptions}
+                selected={formData.usageContext ? [formData.usageContext] : []}
+                onSelect={(value) =>
+                  setFormData((prev) => ({ ...prev, usageContext: value }))
+                }
+              />
+            ) : null}
+
+            {step === 4 ? (
+              <StepOptions
+                title="Com que frequencia seus arquivos mudam?"
+                options={frequencyOptions}
+                selected={formData.frequency ? [formData.frequency] : []}
+                onSelect={(value) =>
+                  setFormData((prev) => ({ ...prev, frequency: value }))
+                }
+              />
+            ) : null}
           </div>
-        ) : null}
 
-        {step === 2 ? (
-          <StepOptions
-            title="Qual resultado voce quer com o OpenSync?"
-            options={goalOptions}
-            selected={formData.goals}
-            allowMultiple
-            onSelect={(value) =>
-              setFormData((prev) => {
-                const hasValue = prev.goals.includes(value);
-                return {
-                  ...prev,
-                  goals: hasValue
-                    ? prev.goals.filter((item) => item !== value)
-                    : [...prev.goals, value],
-                };
-              })
-            }
-          />
-        ) : null}
+          {submitError ? (
+            <p className="mt-4 text-sm text-destructive">{submitError}</p>
+          ) : null}
 
-        {step === 3 ? (
-          <StepOptions
-            title="Como voce pretende usar no dia a dia?"
-            options={contextOptions}
-            selected={formData.usageContext ? [formData.usageContext] : []}
-            onSelect={(value) =>
-              setFormData((prev) => ({ ...prev, usageContext: value }))
-            }
-          />
-        ) : null}
+          <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setStep((prev) => Math.max(1, prev - 1))}
+              disabled={step === 1 || isSubmitting}
+            >
+              Voltar
+            </Button>
 
-        {step === 4 ? (
-          <StepOptions
-            title="Com que frequencia seus arquivos mudam?"
-            options={frequencyOptions}
-            selected={formData.frequency ? [formData.frequency] : []}
-            onSelect={(value) => setFormData((prev) => ({ ...prev, frequency: value }))}
-          />
-        ) : null}
+            {step < TOTAL_STEPS ? (
+              <Button
+                type="button"
+                onClick={() => void goNext()}
+                disabled={!canContinue || isSubmitting}
+              >
+                {step === 1 && isSubmitting ? "Salvando..." : "Continuar"}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleFinish}
+                disabled={!canContinue || isSubmitting}
+              >
+                {isSubmitting ? "Finalizando..." : "Finalizar onboarding"}
+              </Button>
+            )}
+          </div>
+        </section>
       </div>
-
-      {submitError ? (
-        <p className="mt-4 text-sm text-destructive">{submitError}</p>
-      ) : null}
-
-      <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => setStep((prev) => Math.max(1, prev - 1))}
-          disabled={step === 1 || isSubmitting}
-        >
-          Voltar
-        </Button>
-
-        {step < TOTAL_STEPS ? (
-          <Button
-            type="button"
-            onClick={() => void goNext()}
-            disabled={!canContinue || isSubmitting}
-          >
-            {step === 1 && isSubmitting ? "Salvando..." : "Continuar"}
-          </Button>
-        ) : (
-          <Button type="button" onClick={handleFinish} disabled={!canContinue || isSubmitting}>
-            {isSubmitting ? "Finalizando..." : "Finalizar onboarding"}
-          </Button>
-        )}
-      </div>
-    </section>
+    </div>
   );
 }
 

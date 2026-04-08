@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FolderOpen, LayoutDashboard, LogOut, PanelLeft, Settings } from "lucide-react";
+import { FolderOpen, LogOut, PanelLeft, PanelsTopLeft, Settings } from "lucide-react";
 import { useState } from "react";
 
 import { OpensyncLogo } from "@/components/brand/opensync-logo";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/dashboard", icon: LayoutDashboard, label: "Vaults" },
+  { href: "/dashboard", icon: PanelsTopLeft, label: "Vaults" },
   { href: "/vault", icon: FolderOpen, label: "Explorador" },
   { href: "/settings", icon: Settings, label: "Configurações" },
 ];

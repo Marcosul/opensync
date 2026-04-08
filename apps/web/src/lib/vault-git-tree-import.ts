@@ -115,3 +115,19 @@ export function gitTreePathsToVaultSnapshot(paths: string[]): VaultSnapshotV1 {
 export function isGitLazyVaultTree(tree: TreeEntry): boolean {
   return tree.type === "dir" && tree.path === ROOT_PATH;
 }
+
+/** Caminhos relativos no repo (docIds) a partir da arvore lazy atual; exclui placeholder. */
+export function collectLazyGitRepoRelativePaths(tree: TreeEntry): string[] {
+  if (!isGitLazyVaultTree(tree)) return [];
+  const out: string[] = [];
+  function walk(entries: TreeEntry[]) {
+    for (const e of entries) {
+      if (e.type === "dir") walk(e.children);
+      else if ("docId" in e && e.docId !== GIT_LAZY_PLACEHOLDER_DOC_ID) {
+        out.push(e.docId);
+      }
+    }
+  }
+  walk(tree.children);
+  return out;
+}

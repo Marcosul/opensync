@@ -245,7 +245,7 @@ export default function NewVaultPage() {
       }
       writeActiveVaultId(vaultId);
       writePendingActiveVaultId(vaultId);
-      router.replace("/vault");
+      router.replace(`/vault?vaultId=${encodeURIComponent(vaultId)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Nao foi possivel conectar o vault.";
@@ -279,7 +279,7 @@ export default function NewVaultPage() {
       saveSnapshot(vault.id, blankVaultSnapshot());
       writeActiveVaultId(vault.id);
       writePendingActiveVaultId(vault.id);
-      router.push("/vault");
+      router.push(`/vault?vaultId=${encodeURIComponent(vault.id)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Nao foi possivel salvar o vault.";
