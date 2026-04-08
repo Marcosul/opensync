@@ -15,6 +15,7 @@ import {
   writeVaultMetas,
 } from "@/components/app/vault-persistence";
 import { AgentConnectionStep } from "@/components/onboarding/agent-connection-step";
+import { OpenSyncAgentSkillInstructions } from "@/components/onboarding/opensync-agent-skill-instructions";
 import { Button } from "@/components/ui/button";
 import {
   buildAgentConnectionPayload,
@@ -68,7 +69,7 @@ const startOptions: { id: StartChoice; label: string; hint: string }[] = [
   {
     id: "connect_agent",
     label: "Conectar com meu agente",
-    hint: "SSH (chave ou senha) para importar o workspace da sua VPS.",
+    hint: "Importacao SSH inicial + skill OpenSync (sync programático). Alternativa: vault vazio + Git no dashboard.",
   },
   {
     id: "empty_vault",
@@ -341,7 +342,7 @@ export default function NewVaultPage() {
       : step === 2
         ? "Escolha um nome para identificar este vault no dashboard."
         : startChoice === "connect_agent"
-          ? "SSH le a pasta ~/.openclaw na VPS (arvore completa) e importa ficheiros de texto. O servidor testa a ligacao ao guardar."
+          ? "Siga primeiro o bloco da skill OpenSync (instalação no OpenClaw e sync via Git/script). A importação SSH abaixo traz um snapshot inicial do ~/.openclaw para o explorador."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
             : `O vault "${vaultName.trim() || "…"}" sera criado no servidor (banco de dados + repositorio no Gitea) quando voce confirmar. Depois voce entra no explorador; conectar um agente pode ser feito depois.`;
@@ -483,7 +484,10 @@ export default function NewVaultPage() {
             ) : null}
 
             {step === 3 && startChoice === "connect_agent" ? (
-              <AgentConnectionStep form={form} onChange={setForm} hideIntro />
+              <>
+                <OpenSyncAgentSkillInstructions />
+                <AgentConnectionStep form={form} onChange={setForm} hideIntro />
+              </>
             ) : null}
 
             {step === 3 && startChoice === "connect_agent" && (isSubmitting || connectLog.length > 0) ? (

@@ -63,7 +63,6 @@ import {
   readVaultMetas,
   saveSnapshot,
   vaultSnapshotKey,
-  emptyVaultPlaceholderSnapshot,
   writeActiveVaultId,
   writeVaultMetas,
   type VaultBookmark,
@@ -113,7 +112,6 @@ import {
 import {
   DOCS,
   OPENCLAW_ROOT_LABEL,
-  OPENCLAW_TREE_ROOT,
   findDocBreadcrumbFromEntries,
   mockDocToMarkdown,
   type MockDoc,
@@ -441,151 +439,27 @@ const EXPLORER_INLINE_RENAME_INPUT_CLASS =
   "min-w-0 flex-1 rounded-sm border border-border/80 bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground outline-none selection:bg-muted focus-visible:ring-1 focus-visible:ring-border dark:bg-background";
 
 export function VaultView() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
   const ssrBoot = useMemo(() => getHydrationSafeVaultBoot(), []);
-
   const [vaultMetas, setVaultMetas] = useState<VaultMeta[]>(() => ssrBoot.metas);
   const [activeVaultId, setActiveVaultId] = useState(() => ssrBoot.id);
-  const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
-
-  const [ui, dispatchUi] = useReducer(vaultUiReducer, ssrBoot.snap.ui);
-  const [treeRoot, setTreeRoot] = useState<TreeEntry>(() => ssrBoot.snap.tree);
-  const [noteContents, setNoteContents] = useState<Record<string, string>>(
-    () => ({ ...ssrBoot.snap.noteContents })
-  );
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
-    () => new Set(ssrBoot.snap.expandedPaths)
-  );
-  const [folderSearch, setFolderSearch] = useState<{ path: string; query: string } | null>(null);
-  const [revealTarget, setRevealTarget] = useState<
-    { type: "file"; docId: string } | { type: "folder"; path: string } | null
-  >(null);
-  const [bookmarks, setBookmarks] = useState<VaultBookmark[]>(() => [...ssrBoot.snap.bookmarks]);
-  const [explorerInlineRename, setExplorerInlineRename] = useState<ExplorerInlineRenameState>(null);
-  const [explorerDeleteItems, setExplorerDeleteItems] = useState<ExplorerItemRef[] | null>(null);
-  const [explorerTreeNonce, setExplorerTreeNonce] = useState(0);
-  const [giteaSyncStatus, setGiteaSyncStatus] = useState<
-    "idle" | "syncing" | "synced" | "error"
-  >("idle");
-  const [blobLoadingDocId, setBlobLoadingDocId] = useState<string | null>(null);
-  const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
 
   const activeVaultMeta = useMemo(
-    () => vaultMetas.find((m) => m.id === activeVaultId),
-    [vaultMetas, activeVaultId]
+    () => (activeVaultId ? vaultMetas.find((m) => m.id === activeVaultId) : undefined),
+    [vaultMetas, activeVaultId],
   );
 
-  const treeRootRef = useRef(treeRoot);
-  const noteContentsRef = useRef(noteContents);
-  treeRootRef.current = treeRoot;
-  noteContentsRef.current = noteContents;
-
-  const syncAbortRef = useRef<AbortController | null>(null);
-  const gitTreeAbortRef = useRef<AbortController | null>(null);
-
-  const runVaultGiteaSync = useCallback(async (vaultId: string) => {
-    if (!isBackendSyncVaultId(vaultId)) return;
-    syncAbortRef.current?.abort();
-    const ac = new AbortController();
-    syncAbortRef.current = ac;
-    setGiteaSyncStatus("syncing");
-    try {
-      let mergedContents = { ...noteContentsRef.current };
-      if (isGitLazyVaultTree(treeRootRef.current)) {
-        const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
-        if (ac.signal.aborted) return;
-        const paths = entries.map((e) => e.path);
-        const concurrency = 8;
-        for (let i = 0; i < paths.length; i += concurrency) {
-          if (ac.signal.aborted) return;
-          const chunk = paths.slice(i, i + concurrency);
-          await Promise.all(
-            chunk.map(async (p) => {
-              if (mergedContents[p] !== undefined) return;
-              try {
-                const { content } = await fetchVaultGitBlob(vaultId, p, {
-                  signal: ac.signal,
-                });
-                mergedContents[p] = content;
-              } catch {
-                mergedContents[p] = "";
-              }
-            }),
-          );
-        }
-        noteContentsRef.current = mergedContents;
-        setNoteContents(mergedContents);
-      }
-      const files = flattenVaultTreeToSyncFiles(
-        treeRootRef.current,
-        noteContentsRef.current,
-      );
-      await apiRequest<{ ok: boolean; commitHash: string }>(
-        `/api/vaults/${encodeURIComponent(vaultId)}/sync`,
-        {
-          method: "POST",
-          body: { files },
-          signal: ac.signal,
-        },
-      );
-      if (ac.signal.aborted) return;
-      setGiteaSyncStatus("synced");
-    } catch (err) {
-      if (ac.signal.aborted) return;
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      setGiteaSyncStatus("error");
-    }
-  }, []);
-
-  const scheduleGitTreeRefresh = useCallback(
-    (vaultId: string, meta: VaultMeta | undefined) => {
-      if (!usesLazyGitRemote(vaultId, meta)) return;
-      gitTreeAbortRef.current?.abort();
-      const ac = new AbortController();
-      gitTreeAbortRef.current = ac;
-      void (async () => {
-        try {
-          const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
-          if (ac.signal.aborted) return;
-          const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
-          setTreeRoot(next.tree);
-          setNoteContents({});
-          setExpandedPaths(new Set(next.expandedPaths));
-          setBookmarks([]);
-          dispatchUi({ type: "reset", state: next.ui });
-        } catch {
-          /* mantem snapshot local */
-        }
-      })();
-    },
-    []
-  );
-
-  useLayoutEffect(() => {
-    const metas = readVaultMetas();
-    const id = readActiveVaultId(metas);
-    const meta = metas.find((m) => m.id === id);
-    const snap =
-      !id && metas.length === 0
-        ? emptyVaultPlaceholderSnapshot()
-        : loadSnapshotWithSshBridge(id, meta);
-    setVaultMetas(metas);
-    setActiveVaultId(id);
-    setTreeRoot(snap.tree);
-    setNoteContents({ ...snap.noteContents });
-    setExpandedPaths(new Set(snap.expandedPaths));
-    setBookmarks([...snap.bookmarks]);
-    dispatchUi({ type: "reset", state: snap.ui });
+  useEffect(() => {
+    queueMicrotask(() => {
+      const metas = readVaultMetas();
+      const id = readActiveVaultId(metas);
+      setVaultMetas(metas);
+      setActiveVaultId(id);
+    });
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let metas = readVaultMetas();
-      let activeId = readActiveVaultId(metas);
-
       try {
         const { vaults, scope } = await apiRequest<{
           vaults: VaultMeta[];
@@ -594,9 +468,8 @@ export function VaultView() {
         if (cancelled) return;
 
         if (scope === "user") {
-          metas = vaults;
           writeVaultMetas(vaults);
-          activeId = readActiveVaultId(vaults);
+          let activeId = readActiveVaultId(vaults);
           const preferredId = peekPendingActiveVaultId();
           if (preferredId && vaults.some((m) => m.id === preferredId)) {
             activeId = preferredId;
@@ -607,132 +480,17 @@ export function VaultView() {
           setActiveVaultId(activeId);
           if (vaults.length === 0) {
             clearActiveVaultId();
-            const emptySnap = emptyVaultPlaceholderSnapshot();
-            setTreeRoot(emptySnap.tree);
-            setNoteContents({ ...emptySnap.noteContents });
-            setExpandedPaths(new Set(emptySnap.expandedPaths));
-            setBookmarks([...emptySnap.bookmarks]);
-            dispatchUi({ type: "reset", state: emptySnap.ui });
-          } else {
-            const meta = vaults.find((m) => m.id === activeId);
-            const snap = loadSnapshotWithSshBridge(activeId, meta);
-            setTreeRoot(snap.tree);
-            setNoteContents({ ...snap.noteContents });
-            setExpandedPaths(new Set(snap.expandedPaths));
-            setBookmarks([...snap.bookmarks]);
-            dispatchUi({ type: "reset", state: snap.ui });
-            scheduleGitTreeRefresh(activeId, meta);
+            setActiveVaultId("");
           }
         }
       } catch {
         /* mantem estado inicial (localStorage / migracao) */
       }
-
-      if (cancelled) return;
-      const pending = readAndConsumePendingAgentProject();
-      if (pending?.projectType === "agent_squad" && pending.squadMission?.trim()) {
-        const meta = metas.find((m) => m.id === activeId);
-        if (meta && activeId) {
-          const parentPath = meta.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
-          const snap = loadSnapshotWithSshBridge(activeId, meta);
-          const md = `# Missão da equipe — ${pending.vaultName}\n\n${pending.squadMission.trim()}\n`;
-          const next = applyMissionMarkdownToSnapshot(snap, parentPath, md);
-          saveSnapshot(activeId, next);
-          setTreeRoot(next.tree);
-          setNoteContents((prev) => ({ ...prev, ...next.noteContents }));
-          setExpandedPaths((p) => {
-            const n = new Set(p);
-            n.add(parentPath);
-            for (const anc of treePathAncestors(parentPath)) {
-              n.add(anc);
-            }
-            return n;
-          });
-        }
-      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [scheduleGitTreeRefresh]);
-
-  useEffect(() => {
-    if (!activeVaultId) return;
-    const snap: VaultSnapshotV1 = {
-      v: 1,
-      tree: treeRoot,
-      noteContents,
-      expandedPaths: [...expandedPaths],
-      bookmarks,
-      ui,
-    };
-    saveSnapshot(activeVaultId, snap);
-  }, [activeVaultId, treeRoot, noteContents, expandedPaths, bookmarks, ui]);
-
-  useEffect(() => {
-    if (!isBackendSyncVaultId(activeVaultId)) {
-      syncAbortRef.current?.abort();
-      setGiteaSyncStatus("idle");
-      return;
-    }
-    if (usesLazyGitRemote(activeVaultId, activeVaultMeta)) {
-      syncAbortRef.current?.abort();
-      setGiteaSyncStatus("idle");
-      return;
-    }
-    const t = window.setTimeout(() => {
-      void runVaultGiteaSync(activeVaultId);
-    }, 3000);
-    return () => window.clearTimeout(t);
-  }, [treeRoot, noteContents, activeVaultId, activeVaultMeta, runVaultGiteaSync]);
-
-  useEffect(() => {
-    return () => {
-      syncAbortRef.current?.abort();
-      gitTreeAbortRef.current?.abort();
-    };
   }, []);
-
-  const switchVault = useCallback(
-    (nextId: string) => {
-      if (!nextId || nextId === activeVaultId) return;
-      if (activeVaultId) {
-        const fromSnap: VaultSnapshotV1 = {
-          v: 1,
-          tree: treeRoot,
-          noteContents,
-          expandedPaths: [...expandedPaths],
-          bookmarks,
-          ui,
-        };
-        saveSnapshot(activeVaultId, fromSnap);
-      }
-      const nextMeta = vaultMetas.find((m) => m.id === nextId);
-      const snap = loadSnapshotWithSshBridge(nextId, nextMeta);
-      setActiveVaultId(nextId);
-      writeActiveVaultId(nextId);
-      setTreeRoot(snap.tree);
-      setNoteContents({ ...snap.noteContents });
-      setExpandedPaths(new Set(snap.expandedPaths));
-      setBookmarks([...snap.bookmarks]);
-      dispatchUi({ type: "reset", state: snap.ui });
-      setFolderSearch(null);
-      setRevealTarget(null);
-      setBlobLoadError(null);
-      setBlobLoadingDocId(null);
-      scheduleGitTreeRefresh(nextId, nextMeta);
-    },
-    [
-      activeVaultId,
-      treeRoot,
-      noteContents,
-      expandedPaths,
-      bookmarks,
-      ui,
-      vaultMetas,
-      scheduleGitTreeRefresh,
-    ]
-  );
 
   const removeVault = useCallback(
     async (id: string) => {
@@ -770,953 +528,43 @@ export function VaultView() {
 
       if (id === activeVaultId) {
         const nextId = nextMetas[0]?.id ?? "";
-        const nextMeta = nextMetas[0];
-        setActiveVaultId(nextId);
         writeActiveVaultId(nextId);
-        if (!nextId) {
-          clearActiveVaultId();
-          const emptySnap = emptyVaultPlaceholderSnapshot();
-          setTreeRoot(emptySnap.tree);
-          setNoteContents({ ...emptySnap.noteContents });
-          setExpandedPaths(new Set(emptySnap.expandedPaths));
-          setBookmarks([...emptySnap.bookmarks]);
-          dispatchUi({ type: "reset", state: emptySnap.ui });
-        } else {
-          const snap = loadSnapshotWithSshBridge(nextId, nextMeta);
-          setTreeRoot(snap.tree);
-          setNoteContents({ ...snap.noteContents });
-          setExpandedPaths(new Set(snap.expandedPaths));
-          setBookmarks([...snap.bookmarks]);
-          dispatchUi({ type: "reset", state: snap.ui });
-          setBlobLoadError(null);
-          setBlobLoadingDocId(null);
-          scheduleGitTreeRefresh(nextId, nextMeta);
-        }
-        setFolderSearch(null);
-        setRevealTarget(null);
+        setActiveVaultId(nextId);
+        if (!nextId) clearActiveVaultId();
       }
     },
-    [vaultMetas, activeVaultId, scheduleGitTreeRefresh]
+    [vaultMetas, activeVaultId],
   );
 
-  useEffect(() => {
-    const vid = searchParams.get("vault");
-    if (!vid) return;
-    if (!vaultMetas.some((m) => m.id === vid)) return;
-    if (vid === activeVaultId) {
-      router.replace("/vault", { scroll: false });
-      return;
-    }
-    switchVault(vid);
-    router.replace("/vault", { scroll: false });
-  }, [searchParams, vaultMetas, activeVaultId, switchVault, router]);
-
-  const treeChildren = treeRoot.type === "dir" ? treeRoot.children : [];
-  const treeStats = useMemo(() => countTreeStats(treeChildren), [treeChildren]);
-  const rootExplorerLabel =
-    activeVaultMeta?.kind === "openclaw" ? OPENCLAW_ROOT_LABEL : (activeVaultMeta?.pathLabel ?? "~");
-  const graphData = useMemo(
-    () => buildGraphFromVault(treeRoot, noteContents),
-    [treeRoot, noteContents]
-  );
-  const topTags = useMemo(
-    () => computeTopTags(treeRoot, noteContents),
-    [treeRoot, noteContents]
-  );
-
-  const { viewMode, openTabs, activeTabId } = ui;
-  const activeDoc = activeTabId ? DOC_BY_ID[activeTabId] : undefined;
-
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
-  const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
-  const [histPast, setHistPast] = useState<string[]>([]);
-  const [histFuture, setHistFuture] = useState<string[]>([]);
-  const [editorSourceMode, setEditorSourceMode] = useState(false);
-
-  useEffect(() => {
-    setHistPast([]);
-    setHistFuture([]);
-  }, [activeVaultId]);
-
-  useEffect(() => {
-    setEditorSourceMode(false);
-  }, [activeTabId]);
-
-  useEffect(() => {
-    setExplorerInlineRename(null);
-  }, [activeVaultId]);
-
-  const defaultNewItemParent = useMemo(() => {
-    if (treeRoot.type !== "dir") return "openclaw-root";
-    if (activeVaultMeta?.kind === "openclaw") {
-      if (findDir(treeRoot.children, "openclaw/workspace")) return "openclaw/workspace";
-    }
-    return treeRoot.path;
-  }, [treeRoot, activeVaultMeta?.kind]);
-
-  const browseSelectFile = useCallback(
-    (id: string) => {
-      if (id !== activeTabId && activeTabId) {
-        setHistPast((p) => [...p, activeTabId]);
-        setHistFuture([]);
-      }
-      dispatchUi({ type: "open", id });
-    },
-    [activeTabId]
-  );
-
-  useEffect(() => {
-    if (!activeTabId) return;
-    if (
-      !usesLazyGitRemote(activeVaultId, activeVaultMeta) ||
-      DOC_BY_ID[activeTabId] ||
-      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
-    ) {
-      return;
-    }
-    if (noteContentsRef.current[activeTabId] !== undefined) return;
-
-    setBlobLoadError(null);
-    setBlobLoadingDocId(activeTabId);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { content } = await fetchVaultGitBlob(activeVaultId, activeTabId);
-        if (cancelled) return;
-        setNoteContents((prev) => ({ ...prev, [activeTabId]: content }));
-      } catch {
-        if (!cancelled) {
-          setBlobLoadError("Nao foi possivel carregar o ficheiro.");
-        }
-      } finally {
-        if (!cancelled) {
-          setBlobLoadingDocId((cur) => (cur === activeTabId ? null : cur));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTabId, activeVaultId, activeVaultMeta]);
-
-  const migrateDocPrefixes = useCallback(
-    (from: string, to: string) => {
-      if (from === to) return;
-      setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
-      const openIds = [...new Set([...openTabs, activeTabId].filter(Boolean))];
-      const map = buildDocIdRemapFromPrefixes(from, to, openIds);
-      if (Object.keys(map).length > 0) dispatchUi({ type: "remapDocIds", map });
-    },
-    [openTabs, activeTabId]
-  );
-
-  const explorerRenameSessionRef = useRef(explorerInlineRename);
-  explorerRenameSessionRef.current = explorerInlineRename;
-
-  const commitExplorerInlineRename = useCallback(() => {
-    const session = explorerRenameSessionRef.current;
-    if (!session) return;
-    const trimmed = session.draft.trim();
-    if (!trimmed) {
-      setExplorerInlineRename(null);
-      return;
-    }
-    if (trimmed === session.initialName) {
-      setExplorerInlineRename(null);
-      return;
-    }
-    if (session.kind === "file") {
-      const r = renameFile(treeRoot, session.docId, trimmed);
-      if (!r.ok) {
-        window.alert(r.reason);
-        return;
-      }
-      setTreeRoot(r.root);
-      if (r.newDocId && r.newDocId !== session.docId) {
-        setNoteContents((prev) => {
-          const next = { ...prev };
-          const v = next[session.docId];
-          if (v !== undefined) {
-            delete next[session.docId];
-            next[r.newDocId!] = v;
-          }
-          return next;
-        });
-        dispatchUi({ type: "replaceDoc", from: session.docId, to: r.newDocId });
-      }
-    } else {
-      const r = renameDirectory(treeRoot, session.treePath, trimmed);
-      if (!r.ok) {
-        window.alert(r.reason);
-        return;
-      }
-      setTreeRoot(r.root);
-      migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
-    }
-    setExplorerInlineRename(null);
-  }, [treeRoot, migrateDocPrefixes]);
-
-  const cancelExplorerInlineRename = useCallback(() => setExplorerInlineRename(null), []);
-
-  const setExplorerRenameDraft = useCallback((draft: string) => {
-    setExplorerInlineRename((prev) => (prev ? { ...prev, draft } : null));
-  }, []);
-
-  const skipExplorerRenameBlurCommitRef = useRef(false);
-
-  const explorerRenameTargetKey = useMemo(() => {
-    if (!explorerInlineRename) return null;
-    return explorerInlineRename.kind === "file"
-      ? `f:${explorerInlineRename.parentTreePath}:${explorerInlineRename.docId}`
-      : `d:${explorerInlineRename.treePath}`;
-  }, [explorerInlineRename]);
-
-  /** Evita commit no blur disparado ao fechar o menu de contexto / restauração de foco. */
-  useEffect(() => {
-    if (explorerRenameTargetKey === null) return;
-    skipExplorerRenameBlurCommitRef.current = true;
-    let cancelled = false;
-    const id1 = requestAnimationFrame(() => {
-      if (cancelled) return;
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        skipExplorerRenameBlurCommitRef.current = false;
-      });
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(id1);
-    };
-  }, [explorerRenameTargetKey]);
-
-  const openExplorerInlineRename = useCallback((session: NonNullable<ExplorerInlineRenameState>) => {
-    queueMicrotask(() => setExplorerInlineRename(session));
-  }, []);
-
-  const bumpExplorerTree = useCallback(() => setExplorerTreeNonce((n) => n + 1), []);
-
-  const openExplorerDeleteDialog = useCallback((items: ExplorerItemRef[]) => {
-    if (items.length === 0) return;
-    setExplorerDeleteItems(items);
-  }, []);
-
-  const performExplorerMoveToFolder = useCallback(
-    (targetParentPath: string, items: ExplorerItemRef[]) => {
-      if (treeRoot.type !== "dir") return;
-      const r = moveExplorerItemsToParent(treeRoot, items, targetParentPath);
-      if (!r.ok) {
-        window.alert(r.reason);
-        return;
-      }
-      setTreeRoot(r.root);
-      for (const { from, to } of r.prefixMigrations) {
-        migrateDocPrefixes(from, to);
-      }
-      for (const { from, to } of r.docIdReplacements) {
-        setNoteContents((prev) => {
-          const next = { ...prev };
-          const v = next[from];
-          if (v !== undefined) {
-            delete next[from];
-            next[to] = v;
-          }
-          return next;
-        });
-        dispatchUi({ type: "replaceDoc", from, to });
-      }
-      bumpExplorerTree();
-    },
-    [treeRoot, migrateDocPrefixes, bumpExplorerTree]
-  );
-
-  const confirmExplorerDeleteFromDialog = useCallback(() => {
-    if (!explorerDeleteItems || treeRoot.type !== "dir") return;
-    const r = deleteExplorerItems(treeRoot, explorerDeleteItems);
-    if (!r.ok) {
-      window.alert(r.reason);
-      return;
-    }
-    setTreeRoot(r.root);
-    dispatchUi({ type: "closeMany", ids: r.closedDocIds });
-    setNoteContents((prev) => {
-      const next = { ...prev };
-      for (const id of r.closedDocIds) delete next[id];
-      return next;
-    });
-    setExplorerDeleteItems(null);
-    bumpExplorerTree();
-  }, [explorerDeleteItems, treeRoot, bumpExplorerTree]);
-
-  const explorerDeleteDialogCopy = useMemo(() => {
-    if (!explorerDeleteItems?.length) return { title: "", body: "" };
-    const n = explorerDeleteItems.length;
-    const title = n === 1 ? "Apagar item?" : `Apagar ${n} itens?`;
-    const lines: string[] = [];
-    for (const it of explorerDeleteItems.slice(0, 10)) {
-      if (it.kind === "file") {
-        const name = findFileNameForDocId(treeChildren, it.docId) ?? it.docId;
-        lines.push(`• ${name}`);
-      } else {
-        const d = findDir(treeChildren, it.path);
-        lines.push(`• ${d?.name ?? it.path}`);
-      }
-    }
-    if (n > 10) lines.push(`… e mais ${n - 10}`);
-    const body = `${lines.join("\n")}\n\nEsta ação não pode ser desfeita.`;
-    return { title, body };
-  }, [explorerDeleteItems, treeChildren]);
-
-  const goNavBack = useCallback(() => {
-    if (histPast.length === 0) return;
-    const prev = histPast[histPast.length - 1];
-    setHistPast((p) => p.slice(0, -1));
-    if (activeTabId) setHistFuture((f) => [activeTabId, ...f]);
-    dispatchUi({ type: "open", id: prev });
-  }, [histPast, activeTabId]);
-
-  const goNavForward = useCallback(() => {
-    if (histFuture.length === 0) return;
-    const next = histFuture[0];
-    setHistFuture((f) => f.slice(1));
-    if (activeTabId) setHistPast((p) => [...p, activeTabId]);
-    dispatchUi({ type: "open", id: next });
-  }, [histFuture, activeTabId]);
-
-  const cycleTreeSort = useCallback(() => {
-    setTreeSortOrder((o) => (o === "default" ? "name" : o === "name" ? "name-desc" : "default"));
-  }, []);
-
-  const selectFile = useCallback((id: string) => {
-    dispatchUi({ type: "open", id });
-  }, []);
-
-  const closeTab = useCallback((id: string) => {
-    dispatchUi({ type: "close", id });
-  }, []);
-
-  const activateTab = useCallback((id: string) => {
-    dispatchUi({ type: "activate", id });
-  }, []);
-
-  const openGraph = useCallback(() => {
-    dispatchUi({ type: "showGraph" });
-  }, []);
-
-  const graphHighlightId = activeTabId || null;
-
-  const editorBreadcrumb = useMemo(
-    () => findDocBreadcrumbFromEntries(treeChildren, activeTabId || ""),
-    [treeChildren, activeTabId]
-  );
-  const editorBreadcrumbLabel = editorBreadcrumb.join(" / ");
-
-  const handleExplorerCommand = useCallback(
-    (cmd: ExplorerCommand) => {
-      if (!activeVaultId || treeRoot.type !== "dir") return;
-
-      switch (cmd.type) {
-        case "new-note": {
-          const r = addNoteToParent(treeRoot, cmd.parentTreePath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          const title = r.fileName.replace(/\.md$/i, "");
-          const body = `# ${title}\n\n`;
-          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
-          browseSelectFile(r.docId);
-          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
-          break;
-        }
-        case "new-folder": {
-          const r = addFolderToParent(treeRoot, cmd.parentTreePath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
-          break;
-        }
-        case "new-canvas": {
-          const r = addCanvasToParent(treeRoot, cmd.parentTreePath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          const body = '{\n  "nodes": [],\n  "edges": []\n}\n';
-          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
-          browseSelectFile(r.docId);
-          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
-          break;
-        }
-        case "new-base": {
-          const r = addBaseToParent(treeRoot, cmd.parentTreePath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          setNoteContents((prev) => ({ ...prev, [r.docId]: "{}\n" }));
-          browseSelectFile(r.docId);
-          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
-          break;
-        }
-        case "duplicate": {
-          const r = duplicateFile(treeRoot, cmd.docId);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          const src = noteMarkdown(cmd.docId, noteContents);
-          const copyId = r.newDocId;
-          if (!copyId) break;
-          setNoteContents((prev) => ({ ...prev, [copyId]: src }));
-          browseSelectFile(copyId);
-          break;
-        }
-        case "move-file": {
-          const dest = window.prompt(
-            "Caminho da pasta de destino (ex.: openclaw/workspace/skills):",
-            "openclaw/workspace"
-          );
-          if (dest === null || !dest.trim()) return;
-          const targetPath = dest.trim();
-          const destExists =
-            treeRoot.type === "dir" && targetPath === treeRoot.path
-              ? true
-              : findDir(treeRoot.children, targetPath) != null;
-          if (!destExists) {
-            window.alert("Pasta não encontrada. Use um caminho como openclaw/workspace/memory.");
-            return;
-          }
-          const r = moveFile(treeRoot, cmd.docId, targetPath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          if (r.newDocId && r.newDocId !== cmd.docId) {
-            setNoteContents((prev) => {
-              const next = { ...prev };
-              const v = next[cmd.docId];
-              if (v !== undefined) {
-                delete next[cmd.docId];
-                next[r.newDocId!] = v;
-              }
-              return next;
-            });
-            dispatchUi({ type: "replaceDoc", from: cmd.docId, to: r.newDocId });
-          }
-          break;
-        }
-        case "move-folder": {
-          const dest = window.prompt(
-            "Caminho da pasta pai de destino (ex.: openclaw/workspace):",
-            "openclaw/workspace"
-          );
-          if (dest === null || !dest.trim()) return;
-          const targetPath = dest.trim();
-          const destFolderExists =
-            treeRoot.type === "dir" && targetPath === treeRoot.path
-              ? true
-              : findDir(treeRoot.children, targetPath) != null;
-          if (!destFolderExists) {
-            window.alert("Pasta de destino não encontrada.");
-            return;
-          }
-          const r = moveDirectory(treeRoot, cmd.treePath, targetPath);
-          if (!r.ok) {
-            window.alert(r.reason);
-            return;
-          }
-          setTreeRoot(r.root);
-          migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
-          break;
-        }
-        case "search-in-folder": {
-          setFolderSearch({ path: cmd.treePath, query: "" });
-          setExpandedPaths((p) => new Set([...p, ...treePathAncestors(cmd.treePath), cmd.treePath]));
-          break;
-        }
-        case "bookmark": {
-          const t = cmd.target;
-          if (t.kind === "pane") return;
-          if (t.kind === "file") {
-            const b: VaultBookmark = { kind: "file", docId: t.docId, label: t.name };
-            setBookmarks((prev) => {
-              if (prev.some((x) => x.kind === "file" && x.docId === t.docId)) return prev;
-              return [...prev, b];
-            });
-          } else {
-            const b: VaultBookmark = { kind: "folder", path: t.treePath, label: t.name };
-            setBookmarks((prev) => {
-              if (prev.some((x) => x.kind === "folder" && x.path === t.treePath)) return prev;
-              return [...prev, b];
-            });
-          }
-          break;
-        }
-        case "show-in-folder": {
-          const t = cmd.target;
-          if (t.kind === "pane") return;
-          if (t.kind === "file") {
-            setRevealTarget({ type: "file", docId: t.docId });
-            const anc = findAncestorDirPathsForDoc(treeChildren, t.docId);
-            setExpandedPaths((p) => new Set([...p, ...anc]));
-          } else {
-            setRevealTarget({ type: "folder", path: t.treePath });
-            setExpandedPaths((p) => new Set([...p, ...treePathAncestors(t.treePath), t.treePath]));
-          }
-          setFolderSearch(null);
-          break;
-        }
-        case "rename": {
-          const t = cmd.target;
-          if (t.kind === "pane") return;
-          if (t.kind === "file") {
-            openExplorerInlineRename({
-              kind: "file",
-              docId: t.docId,
-              parentTreePath: t.parentTreePath,
-              draft: t.name,
-              initialName: t.name,
-            });
-          } else {
-            openExplorerInlineRename({
-              kind: "folder",
-              treePath: t.treePath,
-              draft: t.name,
-              initialName: t.name,
-            });
-          }
-          break;
-        }
-        case "delete": {
-          const t = cmd.target;
-          if (t.kind === "pane") return;
-          if (t.kind === "file") {
-            openExplorerDeleteDialog([{ kind: "file", docId: t.docId }]);
-          } else {
-            openExplorerDeleteDialog([{ kind: "folder", path: t.treePath }]);
-          }
-          break;
-        }
-        default:
-          break;
-      }
-    },
-    [
-      activeVaultId,
-      treeRoot,
-      noteContents,
-      treeChildren,
-      browseSelectFile,
-      migrateDocPrefixes,
-      openExplorerDeleteDialog,
-      openExplorerInlineRename,
-    ]
-  );
-
-  const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
-
-  const quickNewNoteFromToolbar = useCallback(() => {
-    handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent });
-  }, [handleExplorerCommand, defaultNewItemParent]);
-
-  const quickNewFolderFromToolbar = useCallback(() => {
-    handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent });
-  }, [handleExplorerCommand, defaultNewItemParent]);
-
-  const collapseAllFolders = useCallback(() => setExpandedPaths(new Set()), []);
-
-  const vaultStatsLine = `${treeStats.files} arquivos, ${treeStats.folders} pastas`;
-  const noVault = vaultMetas.length === 0;
+  const hasOpenVault = Boolean(activeVaultMeta);
 
   return (
     <>
-      <div className="flex h-full overflow-hidden">
-        {sidebarCollapsed ? (
-          <div className="flex w-8 shrink-0 flex-col border-r border-border bg-sidebar/30 py-1">
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed(false)}
-              className="mx-auto flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              title="Mostrar explorador de arquivos"
-              aria-label="Mostrar explorador de arquivos"
-            >
-              <PanelLeft className="size-4" />
-            </button>
-          </div>
-        ) : (
-          <FileTree
-            treeRootLabel={rootExplorerLabel}
-            treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
-            treeChildren={treeChildren}
-            selectedId={activeTabId || null}
-            onSelect={browseSelectFile}
-            expandedPaths={expandedPaths}
-            onToggleDir={(path) =>
-              setExpandedPaths((prev) => {
-                const next = new Set(prev);
-                if (next.has(path)) next.delete(path);
-                else next.add(path);
-                return next;
-              })
-            }
-            folderSearch={folderSearch}
-            onFolderSearchChange={setFolderSearch}
-            bookmarks={bookmarks}
-            onOpenBookmark={(b) => {
-              if (b.kind === "file") browseSelectFile(b.docId);
-              else {
-                setFolderSearch(null);
-                setRevealTarget({ type: "folder", path: b.path });
-                setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
-              }
-            }}
-            onRemoveBookmark={(b) => {
-              setBookmarks((prev) =>
-                prev.filter((x) =>
-                  b.kind === "file"
-                    ? !(x.kind === "file" && x.docId === b.docId)
-                    : !(x.kind === "folder" && x.path === b.path)
-                )
-              );
-            }}
-            revealTarget={revealTarget}
-            onRevealHandled={clearRevealTarget}
-            onExplorerCommand={handleExplorerCommand}
-            vaultMetas={vaultMetas}
-            activeVaultId={activeVaultId}
-            activeVaultName={activeVaultMeta?.name ?? "cofre"}
-            vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
-            vaultStatsLine={vaultStatsLine}
-            onSelectVault={switchVault}
-            onOpenManageVaults={() => setManageVaultsOpen(true)}
-            sidebarMode={sidebarMode}
-            onSidebarModeChange={setSidebarMode}
-            treeSortOrder={treeSortOrder}
-            onCycleSort={cycleTreeSort}
-            onQuickNewNote={quickNewNoteFromToolbar}
-            onQuickNewFolder={quickNewFolderFromToolbar}
-            onCollapseAllFolders={collapseAllFolders}
-            onCollapseSidebar={() => setSidebarCollapsed(true)}
-            explorerInlineRename={explorerInlineRename}
-            onExplorerRenameDraftChange={setExplorerRenameDraft}
-            onExplorerRenameCommit={commitExplorerInlineRename}
-            onExplorerRenameCancel={cancelExplorerInlineRename}
-            skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
-            explorerTreeNonce={explorerTreeNonce}
-            vaultTreeRoot={treeRoot}
-            onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
-            onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
-            onExplorerNewNote={() =>
-              handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
-            }
-            onExplorerNewFolder={() =>
-              handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
-            }
-            onExplorerRenameRow={(row) => {
-              if (row.kind === "file") {
-                openExplorerInlineRename({
-                  kind: "file",
-                  docId: row.docId,
-                  parentTreePath: row.parentTreePath,
-                  draft: row.name,
-                  initialName: row.name,
-                });
-              } else {
-                openExplorerInlineRename({
-                  kind: "folder",
-                  treePath: row.path,
-                  draft: row.name,
-                  initialName: row.name,
-                });
-              }
-            }}
-          />
-        )}
-
-      {noVault ? (
-        <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 overflow-auto bg-background px-6 py-12 text-center">
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">Nenhum cofre</h2>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Crie um cofre para guardar notas, ligar ao agente e sincronizar com o servidor.
-          </p>
-          <Link
-            href="/vaults/new"
-            className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Criar primeiro cofre
-          </Link>
-        </div>
+      {hasOpenVault && activeVaultMeta ? (
+        <VaultOpenWorkspace
+          key={activeVaultId}
+          vaultId={activeVaultId}
+          activeVaultMeta={activeVaultMeta}
+          vaultMetas={vaultMetas}
+          onActiveVaultIdChange={setActiveVaultId}
+          removeVault={removeVault}
+        />
       ) : (
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
-          <TabButton active={viewMode === "graph"} onClick={openGraph}>
-            <GitBranch className="size-3.5" />
-            Grafo
-          </TabButton>
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
-            {openTabs.map((id) => (
-              <FileTab
-                key={id}
-                fileId={id}
-                active={viewMode === "editor" && activeTabId === id}
-                onSelect={() => activateTab(id)}
-                onClose={() => closeTab(id)}
-              />
-            ))}
+        <div className="flex h-full overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 overflow-auto bg-background px-6 py-12 text-center">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Nenhum cofre</h2>
+            <p className="max-w-md text-sm text-muted-foreground">
+              Crie um cofre para guardar notas, ligar ao agente e sincronizar com o servidor.
+            </p>
+            <Link
+              href="/vaults/new"
+              className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Criar primeiro cofre
+            </Link>
           </div>
-          <button
-            type="button"
-            title="Nova nota (nova aba)"
-            onClick={quickNewNoteFromToolbar}
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Nova aba"
-          >
-            <Plus className="size-4" />
-          </button>
-          <Menu.Root>
-            <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
-              <ChevronDown className="size-4" aria-label="Lista de abas" />
-            </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
-                <Menu.Popup
-                  className={cn(
-                    "min-w-[200px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
-                    "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
-                  )}
-                >
-                  {openTabs.length === 0 ? (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">Nenhuma aba</div>
-                  ) : (
-                    openTabs.map((id) => (
-                      <Menu.Item
-                        key={id}
-                        className={vaultChromeMenuItemClass}
-                        onClick={() => activateTab(id)}
-                      >
-                        <span className="min-w-0 truncate font-mono text-xs">{id}</span>
-                        {id === activeTabId && <Check className="ml-auto size-3.5 shrink-0" aria-hidden />}
-                      </Menu.Item>
-                    ))
-                  )}
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-          <button
-            type="button"
-            disabled
-            title="Dividir editor (em breve)"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
-            aria-label="Dividir editor"
-          >
-            <Columns className="size-4" />
-          </button>
-          {isBackendSyncVaultId(activeVaultId) ? (
-            <div className="ml-0.5 flex shrink-0 border-l border-border/60 pl-1.5">
-              <button
-                type="button"
-                title={
-                  giteaSyncStatus === "syncing"
-                    ? "A sincronizar com o Gitea…"
-                    : giteaSyncStatus === "synced"
-                      ? "Sincronizado com o Gitea"
-                      : giteaSyncStatus === "error"
-                        ? "Erro ao sincronizar — clique para tentar de novo"
-                        : `Sincronizar com o Gitea${activeVaultMeta?.pathLabel ? ` (${activeVaultMeta.pathLabel})` : ""}`
-                }
-                onClick={() => void runVaultGiteaSync(activeVaultId)}
-                disabled={giteaSyncStatus === "syncing"}
-                aria-label={
-                  giteaSyncStatus === "syncing"
-                    ? "A sincronizar com o Gitea"
-                    : giteaSyncStatus === "synced"
-                      ? "Sincronizado — clique para sincronizar de novo"
-                      : giteaSyncStatus === "error"
-                        ? "Erro na sincronização — clique para tentar de novo"
-                        : "Sincronizar agora com o Gitea"
-                }
-                className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-all duration-200",
-                  giteaSyncStatus === "idle" &&
-                    "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  giteaSyncStatus === "syncing" &&
-                    "cursor-wait text-sky-600 ring-2 ring-sky-500/45 motion-safe:animate-pulse dark:text-sky-400 dark:ring-sky-400/40 disabled:opacity-100",
-                  giteaSyncStatus === "synced" &&
-                    "text-emerald-600 shadow-[0_0_10px_-2px_rgba(16,185,129,0.55)] hover:bg-emerald-500/10 dark:text-emerald-400 dark:shadow-[0_0_12px_-2px_rgba(52,211,153,0.4)]",
-                  giteaSyncStatus === "error" &&
-                    "text-destructive ring-2 ring-destructive/40 hover:bg-destructive/10 motion-safe:animate-pulse",
-                )}
-              >
-                <CloudUpload
-                  className={cn(
-                    "size-4",
-                    giteaSyncStatus === "syncing" && "motion-safe:scale-110",
-                  )}
-                />
-              </button>
-            </div>
-          ) : null}
         </div>
-
-        {viewMode === "editor" && activeTabId ? (
-          <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card/20 px-1">
-            <button
-              type="button"
-              disabled={histPast.length === 0}
-              onClick={goNavBack}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              title="Voltar"
-              aria-label="Voltar"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <button
-              type="button"
-              disabled={histFuture.length === 0}
-              onClick={goNavForward}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              title="Avançar"
-              aria-label="Avançar"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-            <span
-              className="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground sm:text-[11px]"
-              title={editorBreadcrumbLabel}
-            >
-              {editorBreadcrumbLabel}
-            </span>
-            <button
-              type="button"
-              disabled
-              title="Modo leitura (em breve)"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
-              aria-label="Modo leitura"
-            >
-              <BookOpen className="size-4" />
-            </button>
-            <Menu.Root>
-              <Menu.Trigger className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
-                <MoreVertical className="size-4" aria-label="Mais opções" />
-              </Menu.Trigger>
-              <Menu.Portal>
-                <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
-                  <Menu.Popup
-                    className={cn(
-                      "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
-                      "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
-                    )}
-                  >
-                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => quickNewNoteFromToolbar()}>
-                      Nova nota
-                    </Menu.Item>
-                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => openGraph()}>
-                      Abrir grafo
-                    </Menu.Item>
-                  </Menu.Popup>
-                </Menu.Positioner>
-              </Menu.Portal>
-            </Menu.Root>
-            <button
-              type="button"
-              onClick={() => setEditorSourceMode((v) => !v)}
-              className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
-                editorSourceMode && "bg-muted text-foreground"
-              )}
-              title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
-              aria-pressed={editorSourceMode}
-            >
-              <FileCode2 className="size-4" />
-            </button>
-          </div>
-        ) : null}
-
-        {viewMode === "graph" ? (
-          <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
-        ) : openTabs.length === 0 || !activeTabId ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
-            Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
-          </div>
-        ) : usesLazyGitRemote(activeVaultId, activeVaultMeta) &&
-          blobLoadingDocId === activeTabId ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            A carregar o ficheiro…
-          </div>
-        ) : usesLazyGitRemote(activeVaultId, activeVaultMeta) &&
-          blobLoadError &&
-          noteContents[activeTabId] === undefined ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
-            {blobLoadError}
-          </div>
-        ) : (
-          <VaultNoteEditor
-            key={activeTabId}
-            docId={activeTabId}
-            value={
-              noteContents[activeTabId] ??
-              (activeDoc ? mockDocToMarkdown(activeDoc) : `# ${activeTabId}\n\n`)
-            }
-            onChange={(next) =>
-              setNoteContents((prev) => ({ ...prev, [activeTabId]: next }))
-            }
-            breadcrumb={editorBreadcrumb}
-            onSelectFile={browseSelectFile}
-            hideTopChrome
-            sourceMode={editorSourceMode}
-            onSourceModeChange={setEditorSourceMode}
-          />
-        )}
-      </div>
       )}
-
-      <div className="flex w-[200px] shrink-0 flex-col border-l border-border bg-sidebar/30">
-        {noVault ? (
-          <div className="flex flex-1 items-center px-3 py-6 text-center font-mono text-[10px] leading-snug text-muted-foreground/70">
-            Crie um cofre para ver backlinks e etiquetas aqui.
-          </div>
-        ) : viewMode === "graph" ? (
-          <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
-        ) : openTabs.length === 0 || !activeTabId ? (
-          <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
-            Abra um arquivo para ver backlinks.
-          </div>
-        ) : (
-          <BacklinksPanel
-            docId={activeTabId}
-            treeChildren={treeChildren}
-            noteContents={noteContents}
-            onSelect={browseSelectFile}
-          />
-        )}
-      </div>
-    </div>
-
-      <VaultManageDialog
-        open={manageVaultsOpen}
-        onClose={() => setManageVaultsOpen(false)}
-        vaults={vaultMetas}
-        activeId={activeVaultId}
-        onSelectVault={(id) => switchVault(id)}
-        onRemoveVault={removeVault}
-      />
-      <VaultExplorerDeleteConfirmDialog
-        open={explorerDeleteItems !== null}
-        title={explorerDeleteDialogCopy.title}
-        message={explorerDeleteDialogCopy.body}
-        onCancel={() => setExplorerDeleteItems(null)}
-        onConfirm={confirmExplorerDeleteFromDialog}
-      />
     </>
   );
 }
@@ -2493,33 +1341,6 @@ function FileTree({
 
   const iconBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground";
 
-  if (vaultMetas.length === 0) {
-    return (
-      <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-3 py-8 text-center">
-          <p className="text-xs text-muted-foreground">
-            Nenhum cofre. Crie um para guardar notas e sincronizar com o servidor.
-          </p>
-          <Link
-            href="/vaults/new"
-            className="inline-flex w-full max-w-[11rem] items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Criar primeiro cofre
-          </Link>
-        </div>
-        <VaultSidebarFooter
-          vaults={vaultMetas}
-          activeId={activeVaultId}
-          activeName={activeVaultName}
-          pathTooltip={vaultPathTooltip}
-          statsLine={vaultStatsLine}
-          onSelectVault={onSelectVault}
-          onOpenManageVaults={onOpenManageVaults}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">
       <div className="flex shrink-0 items-center justify-center gap-0.5 border-b border-border px-1 py-1">
@@ -2773,6 +1594,1232 @@ function FileTree({
         onOpenManageVaults={onOpenManageVaults}
       />
     </div>
+  );
+}
+
+type VaultOpenWorkspaceProps = {
+  vaultId: string;
+  activeVaultMeta: VaultMeta;
+  vaultMetas: VaultMeta[];
+  onActiveVaultIdChange: (id: string) => void;
+  removeVault: (id: string) => Promise<void>;
+};
+
+function VaultOpenWorkspace({
+  vaultId,
+  activeVaultMeta,
+  vaultMetas,
+  onActiveVaultIdChange,
+  removeVault,
+}: VaultOpenWorkspaceProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
+
+  const bootSnapRef = useRef<VaultSnapshotV1 | null>(null);
+  if (bootSnapRef.current === null) {
+    bootSnapRef.current = loadSnapshotWithSshBridge(vaultId, activeVaultMeta);
+  }
+  const bootSnap = bootSnapRef.current;
+
+  const [ui, dispatchUi] = useReducer(vaultUiReducer, bootSnap.ui);
+  const [treeRoot, setTreeRoot] = useState<TreeEntry>(() => bootSnap.tree);
+  const [noteContents, setNoteContents] = useState<Record<string, string>>(() => ({
+    ...bootSnap.noteContents,
+  }));
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(bootSnap.expandedPaths),
+  );
+  const [folderSearch, setFolderSearch] = useState<{ path: string; query: string } | null>(null);
+  const [revealTarget, setRevealTarget] = useState<
+    { type: "file"; docId: string } | { type: "folder"; path: string } | null
+  >(null);
+  const [bookmarks, setBookmarks] = useState<VaultBookmark[]>(() => [...bootSnap.bookmarks]);
+  const [explorerInlineRename, setExplorerInlineRename] = useState<ExplorerInlineRenameState>(null);
+  const [explorerDeleteItems, setExplorerDeleteItems] = useState<ExplorerItemRef[] | null>(null);
+  const [explorerTreeNonce, setExplorerTreeNonce] = useState(0);
+  const [giteaSyncStatus, setGiteaSyncStatus] = useState<
+    "idle" | "syncing" | "synced" | "error"
+  >("idle");
+  const [blobLoadingDocId, setBlobLoadingDocId] = useState<string | null>(null);
+  const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
+  const [lastGiteaCommitHash, setLastGiteaCommitHash] = useState<string | null>(null);
+  const [giteaSyncError, setGiteaSyncError] = useState<string | null>(null);
+
+
+  const treeRootRef = useRef(treeRoot);
+  const noteContentsRef = useRef(noteContents);
+  treeRootRef.current = treeRoot;
+  noteContentsRef.current = noteContents;
+
+  const syncAbortRef = useRef<AbortController | null>(null);
+  const gitTreeAbortRef = useRef<AbortController | null>(null);
+  /** Apenas para vault Git lazy: notas gravadas em localStorage (reduz quota). */
+  const lazyGitDirtyDocIdsRef = useRef<Set<string>>(new Set());
+
+  const activeVaultMetaRef = useRef(activeVaultMeta);
+  activeVaultMetaRef.current = activeVaultMeta;
+  const vaultIdRef = useRef(vaultId);
+  vaultIdRef.current = vaultId;
+
+  const markLazyGitDirtyDoc = useCallback((docId: string) => {
+    if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) {
+      lazyGitDirtyDocIdsRef.current.add(docId);
+    }
+  }, []);
+
+  const refreshGitTreeAfterSync = useCallback((vaultId: string) => {
+    void (async () => {
+      try {
+        const data = await fetchVaultGitTree(vaultId);
+        const allowed = new Set(data.entries.map((e) => e.path));
+        if (data.entries.length === 0) {
+          allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
+        }
+        const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
+        setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
+        setTreeRoot(next.tree);
+        setNoteContents((prev) => {
+          const merged: Record<string, string> = { ...next.noteContents };
+          for (const [k, v] of Object.entries(prev)) {
+            if (allowed.has(k)) merged[k] = v;
+          }
+          return merged;
+        });
+        lazyGitDirtyDocIdsRef.current.clear();
+      } catch {
+        /* arvore local mantem-se; commit ja veio do push */
+      }
+    })();
+  }, []);
+
+  const runVaultGiteaSync = useCallback(
+    async (vaultId: string) => {
+      if (!isBackendSyncVaultId(vaultId)) return;
+      syncAbortRef.current?.abort();
+      const ac = new AbortController();
+      syncAbortRef.current = ac;
+      setGiteaSyncStatus("syncing");
+      setGiteaSyncError(null);
+      try {
+        const mergedContents = { ...noteContentsRef.current };
+        if (isGitLazyVaultTree(treeRootRef.current)) {
+          const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+          if (ac.signal.aborted) return;
+          const paths = entries.map((e) => e.path);
+          const concurrency = 8;
+          for (let i = 0; i < paths.length; i += concurrency) {
+            if (ac.signal.aborted) return;
+            const chunk = paths.slice(i, i + concurrency);
+            await Promise.all(
+              chunk.map(async (p) => {
+                if (mergedContents[p] !== undefined) return;
+                const { content } = await fetchVaultGitBlob(vaultId, p, {
+                  signal: ac.signal,
+                });
+                mergedContents[p] = content;
+              }),
+            );
+          }
+          noteContentsRef.current = mergedContents;
+          setNoteContents(mergedContents);
+        }
+        const files = flattenVaultTreeToSyncFiles(
+          treeRootRef.current,
+          noteContentsRef.current,
+        );
+        const { commitHash } = await apiRequest<{ ok: boolean; commitHash: string }>(
+          `/api/vaults/${encodeURIComponent(vaultId)}/sync`,
+          {
+            method: "POST",
+            body: { files },
+            signal: ac.signal,
+          },
+        );
+        if (ac.signal.aborted) return;
+        setGiteaSyncStatus("synced");
+        const short = commitHash.trim().slice(0, 12);
+        setLastGiteaCommitHash(short);
+        lazyGitDirtyDocIdsRef.current.clear();
+        if (isGitLazyVaultTree(treeRootRef.current)) {
+          refreshGitTreeAfterSync(vaultId);
+        }
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setGiteaSyncStatus("error");
+        setGiteaSyncError(err instanceof Error ? err.message : "Falha ao sincronizar");
+      }
+    },
+    [refreshGitTreeAfterSync],
+  );
+
+  const scheduleGitTreeRefresh = useCallback(
+    (vaultId: string, meta: VaultMeta | undefined) => {
+      if (!usesLazyGitRemote(vaultId, meta)) return;
+      gitTreeAbortRef.current?.abort();
+      const ac = new AbortController();
+      gitTreeAbortRef.current = ac;
+      void (async () => {
+        try {
+          const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+          if (ac.signal.aborted) return;
+          setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
+          const next = gitTreePathsToVaultSnapshot(data.entries.map((e) => e.path));
+          const allowed = new Set(data.entries.map((e) => e.path));
+          if (data.entries.length === 0) {
+            allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
+          }
+          setTreeRoot(next.tree);
+          setNoteContents((prev) => {
+            const merged: Record<string, string> = { ...next.noteContents };
+            for (const [k, v] of Object.entries(prev)) {
+              if (allowed.has(k)) merged[k] = v;
+            }
+            return merged;
+          });
+          setExpandedPaths(new Set(next.expandedPaths));
+          setBookmarks([]);
+          dispatchUi({ type: "reset", state: next.ui });
+        } catch {
+          /* mantem snapshot local */
+        }
+      })();
+    },
+    []
+  );
+  useEffect(() => {
+    const pending = readAndConsumePendingAgentProject();
+    if (pending?.projectType !== "agent_squad" || !pending.squadMission?.trim()) return;
+    const parentPath =
+      activeVaultMeta.kind === "openclaw" ? "openclaw/workspace" : "vault-root";
+    const snap = loadSnapshotWithSshBridge(vaultId, activeVaultMeta);
+    const md = `# Missão da equipe — ${pending.vaultName}\n\n${pending.squadMission.trim()}\n`;
+    const next = applyMissionMarkdownToSnapshot(snap, parentPath, md);
+    saveSnapshot(vaultId, next);
+    setTreeRoot(next.tree);
+    setNoteContents((prev) => ({ ...prev, ...next.noteContents }));
+    setExpandedPaths((p) => {
+      const n = new Set(p);
+      n.add(parentPath);
+      for (const anc of treePathAncestors(parentPath)) {
+        n.add(anc);
+      }
+      return n;
+    });
+  }, [vaultId, activeVaultMeta]);
+
+  useEffect(() => {
+    scheduleGitTreeRefresh(vaultId, activeVaultMeta);
+  }, [vaultId, activeVaultMeta, scheduleGitTreeRefresh]);
+
+
+
+  useEffect(() => {
+    if (!vaultId) return;
+    const lazy = usesLazyGitRemote(vaultId, activeVaultMeta);
+    const dirty = lazyGitDirtyDocIdsRef.current;
+    let noteContentsToPersist = noteContents;
+    if (lazy) {
+      noteContentsToPersist = Object.fromEntries(
+        [...dirty]
+          .filter((id) => noteContents[id] !== undefined)
+          .map((id) => [id, noteContents[id] as string]),
+      );
+    }
+    const snap: VaultSnapshotV1 = {
+      v: 1,
+      tree: treeRoot,
+      noteContents: noteContentsToPersist,
+      expandedPaths: [...expandedPaths],
+      bookmarks,
+      ui,
+    };
+    saveSnapshot(vaultId, snap);
+  }, [
+    vaultId,
+    activeVaultMeta,
+    treeRoot,
+    noteContents,
+    expandedPaths,
+    bookmarks,
+    ui,
+  ]);
+
+  useEffect(() => {
+    lazyGitDirtyDocIdsRef.current.clear();
+    setLastGiteaCommitHash(null);
+    setGiteaSyncError(null);
+  }, [vaultId]);
+
+  useEffect(() => {
+    if (!isBackendSyncVaultId(vaultId)) {
+      syncAbortRef.current?.abort();
+      setGiteaSyncStatus("idle");
+      return;
+    }
+    if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+      syncAbortRef.current?.abort();
+      setGiteaSyncStatus("idle");
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void runVaultGiteaSync(vaultId);
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [treeRoot, noteContents, vaultId, activeVaultMeta, runVaultGiteaSync]);
+
+  useEffect(() => {
+    return () => {
+      syncAbortRef.current?.abort();
+      gitTreeAbortRef.current?.abort();
+    };
+  }, []);
+
+  const switchVault = useCallback(
+    (nextId: string) => {
+      if (!nextId || nextId === vaultId) return;
+      if (vaultId) {
+        const fromSnap: VaultSnapshotV1 = {
+          v: 1,
+          tree: treeRoot,
+          noteContents,
+          expandedPaths: [...expandedPaths],
+          bookmarks,
+          ui,
+        };
+        saveSnapshot(vaultId, fromSnap);
+      }
+      writeActiveVaultId(nextId);
+      onActiveVaultIdChange(nextId);
+    },
+    [vaultId, treeRoot, noteContents, expandedPaths, bookmarks, ui, onActiveVaultIdChange]
+  );
+
+
+  useEffect(() => {
+    const vid = searchParams.get("vault");
+    if (!vid) return;
+    if (!vaultMetas.some((m) => m.id === vid)) return;
+    if (vid === vaultId) {
+      router.replace("/vault", { scroll: false });
+      return;
+    }
+    switchVault(vid);
+    router.replace("/vault", { scroll: false });
+  }, [searchParams, vaultMetas, vaultId, switchVault, router]);
+
+  const treeChildren = useMemo(
+    () => (treeRoot.type === "dir" ? treeRoot.children : []),
+    [treeRoot]
+  );
+  const treeStats = useMemo(() => countTreeStats(treeChildren), [treeChildren]);
+  const rootExplorerLabel =
+    activeVaultMeta?.kind === "openclaw" ? OPENCLAW_ROOT_LABEL : (activeVaultMeta?.pathLabel ?? "~");
+  const graphData = useMemo(
+    () => buildGraphFromVault(treeRoot, noteContents),
+    [treeRoot, noteContents]
+  );
+  const topTags = useMemo(
+    () => computeTopTags(treeRoot, noteContents),
+    [treeRoot, noteContents]
+  );
+
+  const { viewMode, openTabs, activeTabId } = ui;
+  const activeDoc = activeTabId ? DOC_BY_ID[activeTabId] : undefined;
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
+  const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
+  const [histPast, setHistPast] = useState<string[]>([]);
+  const [histFuture, setHistFuture] = useState<string[]>([]);
+  const [editorSourceMode, setEditorSourceMode] = useState(false);
+
+  useEffect(() => {
+    setHistPast([]);
+    setHistFuture([]);
+  }, [vaultId]);
+
+  useEffect(() => {
+    setEditorSourceMode(false);
+  }, [activeTabId]);
+
+  useEffect(() => {
+    setExplorerInlineRename(null);
+  }, [vaultId]);
+
+  const defaultNewItemParent = useMemo(() => {
+    if (treeRoot.type !== "dir") return "openclaw-root";
+    if (activeVaultMeta?.kind === "openclaw") {
+      if (findDir(treeRoot.children, "openclaw/workspace")) return "openclaw/workspace";
+    }
+    return treeRoot.path;
+  }, [treeRoot, activeVaultMeta?.kind]);
+
+  const browseSelectFile = useCallback(
+    (id: string) => {
+      if (id !== activeTabId && activeTabId) {
+        setHistPast((p) => [...p, activeTabId]);
+        setHistFuture([]);
+      }
+      dispatchUi({ type: "open", id });
+    },
+    [activeTabId]
+  );
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    if (
+      !usesLazyGitRemote(vaultId, activeVaultMeta) ||
+      DOC_BY_ID[activeTabId] ||
+      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
+    ) {
+      return;
+    }
+    if (noteContentsRef.current[activeTabId] !== undefined) return;
+
+    setBlobLoadError(null);
+    setBlobLoadingDocId(activeTabId);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { content } = await fetchVaultGitBlob(vaultId, activeTabId);
+        if (cancelled) return;
+        setNoteContents((prev) => ({ ...prev, [activeTabId]: content }));
+      } catch {
+        if (!cancelled) {
+          setBlobLoadError("Nao foi possivel carregar o ficheiro.");
+        }
+      } finally {
+        if (!cancelled) {
+          setBlobLoadingDocId((cur) => (cur === activeTabId ? null : cur));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, vaultId, activeVaultMeta]);
+
+  const migrateDocPrefixes = useCallback(
+    (from: string, to: string) => {
+      if (from === to) return;
+      setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
+      const openIds = [...new Set([...openTabs, activeTabId].filter(Boolean))];
+      const map = buildDocIdRemapFromPrefixes(from, to, openIds);
+      if (Object.keys(map).length > 0) dispatchUi({ type: "remapDocIds", map });
+    },
+    [openTabs, activeTabId]
+  );
+
+  const explorerRenameSessionRef = useRef(explorerInlineRename);
+  explorerRenameSessionRef.current = explorerInlineRename;
+
+  const commitExplorerInlineRename = useCallback(() => {
+    const session = explorerRenameSessionRef.current;
+    if (!session) return;
+    const trimmed = session.draft.trim();
+    if (!trimmed) {
+      setExplorerInlineRename(null);
+      return;
+    }
+    if (trimmed === session.initialName) {
+      setExplorerInlineRename(null);
+      return;
+    }
+    if (session.kind === "file") {
+      const r = renameFile(treeRoot, session.docId, trimmed);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      if (r.newDocId && r.newDocId !== session.docId) {
+        markLazyGitDirtyDoc(r.newDocId);
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          const v = next[session.docId];
+          if (v !== undefined) {
+            delete next[session.docId];
+            next[r.newDocId!] = v;
+          }
+          return next;
+        });
+        dispatchUi({ type: "replaceDoc", from: session.docId, to: r.newDocId });
+      }
+    } else {
+      const r = renameDirectory(treeRoot, session.treePath, trimmed);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+    }
+    setExplorerInlineRename(null);
+  }, [treeRoot, migrateDocPrefixes, markLazyGitDirtyDoc]);
+
+  const cancelExplorerInlineRename = useCallback(() => setExplorerInlineRename(null), []);
+
+  const setExplorerRenameDraft = useCallback((draft: string) => {
+    setExplorerInlineRename((prev) => (prev ? { ...prev, draft } : null));
+  }, []);
+
+  const skipExplorerRenameBlurCommitRef = useRef(false);
+
+  const explorerRenameTargetKey = useMemo(() => {
+    if (!explorerInlineRename) return null;
+    return explorerInlineRename.kind === "file"
+      ? `f:${explorerInlineRename.parentTreePath}:${explorerInlineRename.docId}`
+      : `d:${explorerInlineRename.treePath}`;
+  }, [explorerInlineRename]);
+
+  /** Evita commit no blur disparado ao fechar o menu de contexto / restauração de foco. */
+  useEffect(() => {
+    if (explorerRenameTargetKey === null) return;
+    skipExplorerRenameBlurCommitRef.current = true;
+    let cancelled = false;
+    const id1 = requestAnimationFrame(() => {
+      if (cancelled) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        skipExplorerRenameBlurCommitRef.current = false;
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id1);
+    };
+  }, [explorerRenameTargetKey]);
+
+  const openExplorerInlineRename = useCallback((session: NonNullable<ExplorerInlineRenameState>) => {
+    queueMicrotask(() => setExplorerInlineRename(session));
+  }, []);
+
+  const bumpExplorerTree = useCallback(() => setExplorerTreeNonce((n) => n + 1), []);
+
+  const openExplorerDeleteDialog = useCallback((items: ExplorerItemRef[]) => {
+    if (items.length === 0) return;
+    setExplorerDeleteItems(items);
+  }, []);
+
+  const performExplorerMoveToFolder = useCallback(
+    (targetParentPath: string, items: ExplorerItemRef[]) => {
+      if (treeRoot.type !== "dir") return;
+      const r = moveExplorerItemsToParent(treeRoot, items, targetParentPath);
+      if (!r.ok) {
+        window.alert(r.reason);
+        return;
+      }
+      setTreeRoot(r.root);
+      for (const { from, to } of r.prefixMigrations) {
+        migrateDocPrefixes(from, to);
+      }
+      for (const { from, to } of r.docIdReplacements) {
+        markLazyGitDirtyDoc(to);
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          const v = next[from];
+          if (v !== undefined) {
+            delete next[from];
+            next[to] = v;
+          }
+          return next;
+        });
+        dispatchUi({ type: "replaceDoc", from, to });
+      }
+      bumpExplorerTree();
+    },
+    [treeRoot, migrateDocPrefixes, bumpExplorerTree, markLazyGitDirtyDoc]
+  );
+
+  const confirmExplorerDeleteFromDialog = useCallback(() => {
+    if (!explorerDeleteItems || treeRoot.type !== "dir") return;
+    const r = deleteExplorerItems(treeRoot, explorerDeleteItems);
+    if (!r.ok) {
+      window.alert(r.reason);
+      return;
+    }
+    setTreeRoot(r.root);
+    dispatchUi({ type: "closeMany", ids: r.closedDocIds });
+    setNoteContents((prev) => {
+      const next = { ...prev };
+      for (const id of r.closedDocIds) delete next[id];
+      return next;
+    });
+    setExplorerDeleteItems(null);
+    bumpExplorerTree();
+  }, [explorerDeleteItems, treeRoot, bumpExplorerTree]);
+
+  const explorerDeleteDialogCopy = useMemo(() => {
+    if (!explorerDeleteItems?.length) return { title: "", body: "" };
+    const n = explorerDeleteItems.length;
+    const title = n === 1 ? "Apagar item?" : `Apagar ${n} itens?`;
+    const lines: string[] = [];
+    for (const it of explorerDeleteItems.slice(0, 10)) {
+      if (it.kind === "file") {
+        const name = findFileNameForDocId(treeChildren, it.docId) ?? it.docId;
+        lines.push(`• ${name}`);
+      } else {
+        const d = findDir(treeChildren, it.path);
+        lines.push(`• ${d?.name ?? it.path}`);
+      }
+    }
+    if (n > 10) lines.push(`… e mais ${n - 10}`);
+    const body = `${lines.join("\n")}\n\nEsta ação não pode ser desfeita.`;
+    return { title, body };
+  }, [explorerDeleteItems, treeChildren]);
+
+  const goNavBack = useCallback(() => {
+    if (histPast.length === 0) return;
+    const prev = histPast[histPast.length - 1];
+    setHistPast((p) => p.slice(0, -1));
+    if (activeTabId) setHistFuture((f) => [activeTabId, ...f]);
+    dispatchUi({ type: "open", id: prev });
+  }, [histPast, activeTabId]);
+
+  const goNavForward = useCallback(() => {
+    if (histFuture.length === 0) return;
+    const next = histFuture[0];
+    setHistFuture((f) => f.slice(1));
+    if (activeTabId) setHistPast((p) => [...p, activeTabId]);
+    dispatchUi({ type: "open", id: next });
+  }, [histFuture, activeTabId]);
+
+  const cycleTreeSort = useCallback(() => {
+    setTreeSortOrder((o) => (o === "default" ? "name" : o === "name" ? "name-desc" : "default"));
+  }, []);
+
+  const closeTab = useCallback((id: string) => {
+    dispatchUi({ type: "close", id });
+  }, []);
+
+  const activateTab = useCallback((id: string) => {
+    dispatchUi({ type: "activate", id });
+  }, []);
+
+  const openGraph = useCallback(() => {
+    dispatchUi({ type: "showGraph" });
+  }, []);
+
+  const graphHighlightId = activeTabId || null;
+
+  const editorBreadcrumb = useMemo(
+    () => findDocBreadcrumbFromEntries(treeChildren, activeTabId || ""),
+    [treeChildren, activeTabId]
+  );
+  const editorBreadcrumbLabel = editorBreadcrumb.join(" / ");
+
+  const handleExplorerCommand = useCallback(
+    (cmd: ExplorerCommand) => {
+      if (!vaultId || treeRoot.type !== "dir") return;
+
+      switch (cmd.type) {
+        case "new-note": {
+          const r = addNoteToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const title = r.fileName.replace(/\.md$/i, "");
+          const body = `# ${title}\n\n`;
+          markLazyGitDirtyDoc(r.docId);
+          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "new-folder": {
+          const r = addFolderToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
+          break;
+        }
+        case "new-canvas": {
+          const r = addCanvasToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const body = '{\n  "nodes": [],\n  "edges": []\n}\n';
+          markLazyGitDirtyDoc(r.docId);
+          setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "new-base": {
+          const r = addBaseToParent(treeRoot, cmd.parentTreePath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          markLazyGitDirtyDoc(r.docId);
+          setNoteContents((prev) => ({ ...prev, [r.docId]: "{}\n" }));
+          browseSelectFile(r.docId);
+          setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          break;
+        }
+        case "duplicate": {
+          const r = duplicateFile(treeRoot, cmd.docId);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          const src = noteMarkdown(cmd.docId, noteContents);
+          const copyId = r.newDocId;
+          if (!copyId) break;
+          markLazyGitDirtyDoc(copyId);
+          setNoteContents((prev) => ({ ...prev, [copyId]: src }));
+          browseSelectFile(copyId);
+          break;
+        }
+        case "move-file": {
+          const dest = window.prompt(
+            "Caminho da pasta de destino (ex.: openclaw/workspace/skills):",
+            "openclaw/workspace"
+          );
+          if (dest === null || !dest.trim()) return;
+          const targetPath = dest.trim();
+          const destExists =
+            treeRoot.type === "dir" && targetPath === treeRoot.path
+              ? true
+              : findDir(treeRoot.children, targetPath) != null;
+          if (!destExists) {
+            window.alert("Pasta não encontrada. Use um caminho como openclaw/workspace/memory.");
+            return;
+          }
+          const r = moveFile(treeRoot, cmd.docId, targetPath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          if (r.newDocId && r.newDocId !== cmd.docId) {
+            markLazyGitDirtyDoc(r.newDocId);
+            setNoteContents((prev) => {
+              const next = { ...prev };
+              const v = next[cmd.docId];
+              if (v !== undefined) {
+                delete next[cmd.docId];
+                next[r.newDocId!] = v;
+              }
+              return next;
+            });
+            dispatchUi({ type: "replaceDoc", from: cmd.docId, to: r.newDocId });
+          }
+          break;
+        }
+        case "move-folder": {
+          const dest = window.prompt(
+            "Caminho da pasta pai de destino (ex.: openclaw/workspace):",
+            "openclaw/workspace"
+          );
+          if (dest === null || !dest.trim()) return;
+          const targetPath = dest.trim();
+          const destFolderExists =
+            treeRoot.type === "dir" && targetPath === treeRoot.path
+              ? true
+              : findDir(treeRoot.children, targetPath) != null;
+          if (!destFolderExists) {
+            window.alert("Pasta de destino não encontrada.");
+            return;
+          }
+          const r = moveDirectory(treeRoot, cmd.treePath, targetPath);
+          if (!r.ok) {
+            window.alert(r.reason);
+            return;
+          }
+          setTreeRoot(r.root);
+          migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+          break;
+        }
+        case "search-in-folder": {
+          setFolderSearch({ path: cmd.treePath, query: "" });
+          setExpandedPaths((p) => new Set([...p, ...treePathAncestors(cmd.treePath), cmd.treePath]));
+          break;
+        }
+        case "bookmark": {
+          const t = cmd.target;
+          if (t.kind === "pane") return;
+          if (t.kind === "file") {
+            const b: VaultBookmark = { kind: "file", docId: t.docId, label: t.name };
+            setBookmarks((prev) => {
+              if (prev.some((x) => x.kind === "file" && x.docId === t.docId)) return prev;
+              return [...prev, b];
+            });
+          } else {
+            const b: VaultBookmark = { kind: "folder", path: t.treePath, label: t.name };
+            setBookmarks((prev) => {
+              if (prev.some((x) => x.kind === "folder" && x.path === t.treePath)) return prev;
+              return [...prev, b];
+            });
+          }
+          break;
+        }
+        case "show-in-folder": {
+          const t = cmd.target;
+          if (t.kind === "pane") return;
+          if (t.kind === "file") {
+            setRevealTarget({ type: "file", docId: t.docId });
+            const anc = findAncestorDirPathsForDoc(treeChildren, t.docId);
+            setExpandedPaths((p) => new Set([...p, ...anc]));
+          } else {
+            setRevealTarget({ type: "folder", path: t.treePath });
+            setExpandedPaths((p) => new Set([...p, ...treePathAncestors(t.treePath), t.treePath]));
+          }
+          setFolderSearch(null);
+          break;
+        }
+        case "rename": {
+          const t = cmd.target;
+          if (t.kind === "pane") return;
+          if (t.kind === "file") {
+            openExplorerInlineRename({
+              kind: "file",
+              docId: t.docId,
+              parentTreePath: t.parentTreePath,
+              draft: t.name,
+              initialName: t.name,
+            });
+          } else {
+            openExplorerInlineRename({
+              kind: "folder",
+              treePath: t.treePath,
+              draft: t.name,
+              initialName: t.name,
+            });
+          }
+          break;
+        }
+        case "delete": {
+          const t = cmd.target;
+          if (t.kind === "pane") return;
+          if (t.kind === "file") {
+            openExplorerDeleteDialog([{ kind: "file", docId: t.docId }]);
+          } else {
+            openExplorerDeleteDialog([{ kind: "folder", path: t.treePath }]);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [
+      vaultId,
+      treeRoot,
+      noteContents,
+      treeChildren,
+      browseSelectFile,
+      migrateDocPrefixes,
+      markLazyGitDirtyDoc,
+      openExplorerDeleteDialog,
+      openExplorerInlineRename,
+    ]
+  );
+
+  const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
+
+  const quickNewNoteFromToolbar = useCallback(() => {
+    handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent });
+  }, [handleExplorerCommand, defaultNewItemParent]);
+
+  const quickNewFolderFromToolbar = useCallback(() => {
+    handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent });
+  }, [handleExplorerCommand, defaultNewItemParent]);
+
+  const collapseAllFolders = useCallback(() => setExpandedPaths(new Set()), []);
+
+  const vaultStatsLine = `${treeStats.files} arquivos, ${treeStats.folders} pastas`;
+  return (
+    <>
+      <div className="flex h-full overflow-hidden">
+        {sidebarCollapsed ? (
+            <div className="flex w-8 shrink-0 flex-col border-r border-border bg-sidebar/30 py-1">
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                className="mx-auto flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="Mostrar explorador de arquivos"
+                aria-label="Mostrar explorador de arquivos"
+              >
+                <PanelLeft className="size-4" />
+              </button>
+            </div>
+          ) : (
+            <FileTree
+            treeRootLabel={rootExplorerLabel}
+            treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
+            treeChildren={treeChildren}
+            selectedId={activeTabId || null}
+            onSelect={browseSelectFile}
+            expandedPaths={expandedPaths}
+            onToggleDir={(path) =>
+              setExpandedPaths((prev) => {
+                const next = new Set(prev);
+                if (next.has(path)) next.delete(path);
+                else next.add(path);
+                return next;
+              })
+            }
+            folderSearch={folderSearch}
+            onFolderSearchChange={setFolderSearch}
+            bookmarks={bookmarks}
+            onOpenBookmark={(b) => {
+              if (b.kind === "file") browseSelectFile(b.docId);
+              else {
+                setFolderSearch(null);
+                setRevealTarget({ type: "folder", path: b.path });
+                setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+              }
+            }}
+            onRemoveBookmark={(b) => {
+              setBookmarks((prev) =>
+                prev.filter((x) =>
+                  b.kind === "file"
+                    ? !(x.kind === "file" && x.docId === b.docId)
+                    : !(x.kind === "folder" && x.path === b.path)
+                )
+              );
+            }}
+            revealTarget={revealTarget}
+            onRevealHandled={clearRevealTarget}
+            onExplorerCommand={handleExplorerCommand}
+            vaultMetas={vaultMetas}
+            vaultId={vaultId}
+            activeVaultName={activeVaultMeta?.name ?? "cofre"}
+            vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
+            vaultStatsLine={vaultStatsLine}
+            onSelectVault={switchVault}
+            onOpenManageVaults={() => setManageVaultsOpen(true)}
+            sidebarMode={sidebarMode}
+            onSidebarModeChange={setSidebarMode}
+            treeSortOrder={treeSortOrder}
+            onCycleSort={cycleTreeSort}
+            onQuickNewNote={quickNewNoteFromToolbar}
+            onQuickNewFolder={quickNewFolderFromToolbar}
+            onCollapseAllFolders={collapseAllFolders}
+            onCollapseSidebar={() => setSidebarCollapsed(true)}
+            explorerInlineRename={explorerInlineRename}
+            onExplorerRenameDraftChange={setExplorerRenameDraft}
+            onExplorerRenameCommit={commitExplorerInlineRename}
+            onExplorerRenameCancel={cancelExplorerInlineRename}
+            skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
+            explorerTreeNonce={explorerTreeNonce}
+            vaultTreeRoot={treeRoot}
+            onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
+            onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
+            onExplorerNewNote={() =>
+              handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
+            }
+            onExplorerNewFolder={() =>
+              handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
+            }
+            onExplorerRenameRow={(row) => {
+              if (row.kind === "file") {
+                openExplorerInlineRename({
+                  kind: "file",
+                  docId: row.docId,
+                  parentTreePath: row.parentTreePath,
+                  draft: row.name,
+                  initialName: row.name,
+                });
+              } else {
+                openExplorerInlineRename({
+                  kind: "folder",
+                  treePath: row.path,
+                  draft: row.name,
+                  initialName: row.name,
+                });
+              }
+            }}
+          />
+        )}
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
+          <TabButton active={viewMode === "graph"} onClick={openGraph}>
+            <GitBranch className="size-3.5" />
+            Grafo
+          </TabButton>
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
+            {openTabs.map((id) => (
+              <FileTab
+                key={id}
+                fileId={id}
+                active={viewMode === "editor" && activeTabId === id}
+                onSelect={() => activateTab(id)}
+                onClose={() => closeTab(id)}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            title="Nova nota (nova aba)"
+            onClick={quickNewNoteFromToolbar}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Nova aba"
+          >
+            <Plus className="size-4" />
+          </button>
+          <Menu.Root>
+            <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+              <ChevronDown className="size-4" aria-label="Lista de abas" />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                <Menu.Popup
+                  className={cn(
+                    "min-w-[200px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                    "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                  )}
+                >
+                  {openTabs.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">Nenhuma aba</div>
+                  ) : (
+                    openTabs.map((id) => (
+                      <Menu.Item
+                        key={id}
+                        className={vaultChromeMenuItemClass}
+                        onClick={() => activateTab(id)}
+                      >
+                        <span className="min-w-0 truncate font-mono text-xs">{id}</span>
+                        {id === activeTabId && <Check className="ml-auto size-3.5 shrink-0" aria-hidden />}
+                      </Menu.Item>
+                    ))
+                  )}
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+          <button
+            type="button"
+            disabled
+            title="Dividir editor (em breve)"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
+            aria-label="Dividir editor"
+          >
+            <Columns className="size-4" />
+          </button>
+          {isBackendSyncVaultId(vaultId) ? (
+            <div className="ml-0.5 flex min-w-0 shrink-0 items-center gap-1 border-l border-border/60 pl-1.5">
+              <button
+                type="button"
+                title={
+                  giteaSyncError
+                    ? giteaSyncError
+                    : giteaSyncStatus === "syncing"
+                      ? "A sincronizar com o Gitea…"
+                      : giteaSyncStatus === "synced"
+                        ? lastGiteaCommitHash
+                          ? `Sincronizado (${lastGiteaCommitHash})`
+                          : "Sincronizado com o Gitea"
+                        : giteaSyncStatus === "error"
+                          ? "Erro ao sincronizar — clique para tentar de novo"
+                          : usesLazyGitRemote(vaultId, activeVaultMeta)
+                            ? `Sincronizar com o Gitea (Git lazy: descarrega ficheiros em falta antes do push)${activeVaultMeta?.pathLabel ? ` — ${activeVaultMeta.pathLabel}` : ""}`
+                            : `Sincronizar com o Gitea${activeVaultMeta?.pathLabel ? ` (${activeVaultMeta.pathLabel})` : ""}`
+                }
+                onClick={() => void runVaultGiteaSync(vaultId)}
+                disabled={giteaSyncStatus === "syncing"}
+                aria-label={
+                  giteaSyncStatus === "syncing"
+                    ? "A sincronizar com o Gitea"
+                    : giteaSyncStatus === "synced"
+                      ? "Sincronizado — clique para sincronizar de novo"
+                      : giteaSyncStatus === "error"
+                        ? "Erro na sincronização — clique para tentar de novo"
+                        : "Sincronizar agora com o Gitea"
+                }
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-all duration-200",
+                  giteaSyncStatus === "idle" &&
+                    "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  giteaSyncStatus === "syncing" &&
+                    "cursor-wait text-sky-600 ring-2 ring-sky-500/45 motion-safe:animate-pulse dark:text-sky-400 dark:ring-sky-400/40 disabled:opacity-100",
+                  giteaSyncStatus === "synced" &&
+                    "text-emerald-600 shadow-[0_0_10px_-2px_rgba(16,185,129,0.55)] hover:bg-emerald-500/10 dark:text-emerald-400 dark:shadow-[0_0_12px_-2px_rgba(52,211,153,0.4)]",
+                  giteaSyncStatus === "error" &&
+                    "text-destructive ring-2 ring-destructive/40 hover:bg-destructive/10 motion-safe:animate-pulse",
+                )}
+              >
+                <CloudUpload
+                  className={cn(
+                    "size-4",
+                    giteaSyncStatus === "syncing" && "motion-safe:scale-110",
+                  )}
+                />
+              </button>
+              {lastGiteaCommitHash && giteaSyncStatus === "synced" ? (
+                <span
+                  className="hidden max-w-[4.5rem] truncate font-mono text-[9px] text-muted-foreground sm:inline"
+                  title={lastGiteaCommitHash}
+                >
+                  {lastGiteaCommitHash}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        {viewMode === "editor" && activeTabId ? (
+          <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card/20 px-1">
+            <button
+              type="button"
+              disabled={histPast.length === 0}
+              onClick={goNavBack}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              title="Voltar"
+              aria-label="Voltar"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <button
+              type="button"
+              disabled={histFuture.length === 0}
+              onClick={goNavForward}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              title="Avançar"
+              aria-label="Avançar"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+            <span
+              className="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground sm:text-[11px]"
+              title={editorBreadcrumbLabel}
+            >
+              {editorBreadcrumbLabel}
+            </span>
+            <button
+              type="button"
+              disabled
+              title="Modo leitura (em breve)"
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
+              aria-label="Modo leitura"
+            >
+              <BookOpen className="size-4" />
+            </button>
+            <Menu.Root>
+              <Menu.Trigger className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+                <MoreVertical className="size-4" aria-label="Mais opções" />
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                  <Menu.Popup
+                    className={cn(
+                      "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                      "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                    )}
+                  >
+                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => quickNewNoteFromToolbar()}>
+                      Nova nota
+                    </Menu.Item>
+                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => openGraph()}>
+                      Abrir grafo
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
+            <button
+              type="button"
+              onClick={() => setEditorSourceMode((v) => !v)}
+              className={cn(
+                "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                editorSourceMode && "bg-muted text-foreground"
+              )}
+              title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
+              aria-pressed={editorSourceMode}
+            >
+              <FileCode2 className="size-4" />
+            </button>
+          </div>
+        ) : null}
+
+        {viewMode === "graph" ? (
+          <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
+        ) : openTabs.length === 0 || !activeTabId ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
+            Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
+          </div>
+        ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
+          blobLoadingDocId === activeTabId ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            A carregar o ficheiro…
+          </div>
+        ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
+          blobLoadError &&
+          noteContents[activeTabId] === undefined ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
+            {blobLoadError}
+          </div>
+        ) : (
+          <VaultNoteEditor
+            key={activeTabId}
+            docId={activeTabId}
+            value={
+              noteContents[activeTabId] ??
+              (activeDoc ? mockDocToMarkdown(activeDoc) : `# ${activeTabId}\n\n`)
+            }
+            onChange={(next) => {
+              if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+                markLazyGitDirtyDoc(activeTabId);
+              }
+              setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
+            }}
+            breadcrumb={editorBreadcrumb}
+            onSelectFile={browseSelectFile}
+            hideTopChrome
+            sourceMode={editorSourceMode}
+            onSourceModeChange={setEditorSourceMode}
+          />
+        )}
+      </div>
+
+      <div className="flex w-[200px] shrink-0 flex-col border-l border-border bg-sidebar/30">
+          {viewMode === "graph" ? (
+            <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
+          ) : openTabs.length === 0 || !activeTabId ? (
+            <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
+              Abra um arquivo para ver backlinks.
+            </div>
+          ) : (
+            <BacklinksPanel
+              docId={activeTabId}
+              treeChildren={treeChildren}
+              noteContents={noteContents}
+              onSelect={browseSelectFile}
+            />
+          )}
+        </div>
+    </div>
+
+      <VaultManageDialog
+        open={manageVaultsOpen}
+        onClose={() => setManageVaultsOpen(false)}
+        vaults={vaultMetas}
+        activeId={vaultId}
+        onSelectVault={(id) => switchVault(id)}
+        onRemoveVault={removeVault}
+      />
+      <VaultExplorerDeleteConfirmDialog
+        open={explorerDeleteItems !== null}
+        title={explorerDeleteDialogCopy.title}
+        message={explorerDeleteDialogCopy.body}
+        onCancel={() => setExplorerDeleteItems(null)}
+        onConfirm={confirmExplorerDeleteFromDialog}
+      />
+    </>
   );
 }
 

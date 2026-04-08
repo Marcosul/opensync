@@ -182,6 +182,9 @@
   },
   "active": "3a272238c815df43",
   "lastOpenFiles": [
+    "packages/plugin/skill/README.md",
+    "docs/dev/opensync-openclaw-skill.md",
+    "apps/web/src/components/onboarding/opensync-agent-skill-instructions.tsx",
     "apps/web/src/app/(app)/vaults/new/page.tsx",
     "apps/web/src/app/(app)/vaults/new",
     "apps/web/src/app/(app)/vaults",
@@ -191,8 +194,6 @@
     "apps/web/src/lib/vault-git-client.ts",
     "apps/web/src/lib/vault-git-tree-import.ts",
     "apps/web/src/app/api/vaults/[id]/git/blob/route.ts",
-    "apps/web/src/app/api/vaults/[id]/git/blob",
-    "apps/web/src/app/api/vaults/[id]/git/tree/route.ts",
     "docs/dev/vault-git-api.md",
     "docs/dev/openclaw-agent-sync.md",
     "docs/dev/sync-architecture.md",

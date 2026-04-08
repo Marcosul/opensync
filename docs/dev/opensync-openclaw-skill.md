@@ -1,3 +1,35 @@
+# Skill OpenSync para o OpenClaw
+
+## Onde está a nossa skill
+
+O ficheiro **oficial** que deve ser instalado no OpenClaw é:
+
+[`packages/plugin/skill/SKILL.md`](../../packages/plugin/skill/SKILL.md)
+
+O código do plugin (watcher, comandos) vive em [`packages/plugin/src/`](../../packages/plugin/src/).
+
+## Instalar na VPS / workspace do agente
+
+```bash
+mkdir -p ~/.openclaw/skills/opensync
+# A partir da raiz do clone do repositório OpenSync:
+cp packages/plugin/skill/SKILL.md ~/.openclaw/skills/opensync/SKILL.md
+```
+
+O OpenClaw também pode carregar skills de outras pastas (`~/.openclaw/workspace/skills/`, `~/.agents/skills/`, etc.). Ver [Skills — OpenClaw](https://docs.openclaw.ai/tools/skills).
+
+Depois de copiar, ajuste no `SKILL.md` o caminho `git -C …` se o clone do vault **não** for `~/.openclaw/workspace`.
+
+## Ligação ao OpenSync
+
+- Deploy key e Git: [vault-git-api.md](./vault-git-api.md), fluxo **Ligar Git na VPS** no dashboard.
+- Script e cron: [openclaw-agent-sync.md](./openclaw-agent-sync.md) e [scripts/opensync-vps-git-sync.sh](./scripts/opensync-vps-git-sync.sh).
+
+## Cópia integral do `SKILL.md` (referência)
+
+O conteúdo abaixo é o mesmo que em `packages/plugin/skill/SKILL.md` — útil para colar noutro sítio sem abrir o ficheiro no editor.
+
+~~~markdown
 ---
 name: opensync
 description: Integração OpenSync — Git, commits e sincronização com o vault no Gitea.
@@ -68,3 +100,4 @@ Se `git pull --rebase` falhar, **não** forçar push; reportar ao utilizador e p
 ## Plugin (avançado)
 
 No monorepo OpenSync existe `packages/plugin` com comandos tipo `/sync` quando o Gateway expõe o plugin e variáveis `OPENSYNC_API_URL`, token e `OPENSYNC_VAULT_ID` estão definidos — uso típico é self-hosted.
+~~~

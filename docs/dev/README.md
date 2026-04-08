@@ -10,6 +10,7 @@
 | [vault-git-api.md](./vault-git-api.md) | Deploy key, `GET .../git/tree` e `GET .../git/blob`, proxy Next, rate limit. |
 | [templates/vault-gitignore](./templates/vault-gitignore) | Modelo `.gitignore` para o workspace na VPS. |
 | [openclaw-agent-sync.md](./openclaw-agent-sync.md) | Clone na VPS, cron OpenClaw, plugin opcional, conflitos `pull --rebase`. |
+| [opensync-openclaw-skill.md](./opensync-openclaw-skill.md) | Onde está a skill (`packages/plugin/skill/SKILL.md`), instalação no OpenClaw, cópia integral. |
 | [scripts/opensync-vps-git-sync.sh](./scripts/opensync-vps-git-sync.sh) | Script bash: pull --rebase, commit, push. |
 
 ## Infra existente
