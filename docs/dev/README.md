@@ -43,4 +43,10 @@ cd apps/api && npx prisma migrate deploy
 
 (ou `prisma migrate dev` em desenvolvimento.)
 
-No **Fly** (`opensync-api`), o [`fly.toml`](../../apps/api/fly.toml) define `release_command = "npx prisma migrate deploy"` para aplicar migrações em cada deploy. Se aparecer erro **P2022** (coluna inexistente), a migração ainda não correu na base: faz **um deploy** com este `fly.toml` ou corre o comando acima localmente com `DATABASE_URL` / `DIRECT_URL` apontando para a mesma base.
+No **Fly** (`opensync-api`), o [`fly.toml`](../../apps/api/fly.toml) define `release_command = "npx prisma migrate deploy"`. O datasource Prisma usa **`DATABASE_URL`** (pode ser o pooler Supabase **:6543**) e **`DIRECT_URL`** (conexão **direta :5432**). Sem `DIRECT_URL`, o `migrate deploy` contra o pooler costuma falhar com `prepared statement "s1" already exists`. Define na Fly:
+
+`fly secrets set DIRECT_URL='postgresql://...:5432/postgres' -a opensync-api`
+
+(alinha com o mesmo host/user/password do direct no Supabase; não uses o pooler na `DIRECT_URL`.)
+
+Se aparecer erro **P2022** (coluna inexistente), a migração ainda não correu na base: faz deploy após `migrate deploy` passar ou corre o comando localmente com as duas URLs.

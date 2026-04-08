@@ -5,6 +5,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Runtime: pooler Supabase (6543). Migrações: DIRECT_URL na porta 5432 (evita "prepared statement already exists" no PgBouncer).
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }

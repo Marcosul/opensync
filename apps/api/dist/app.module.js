@@ -12,6 +12,7 @@ const throttler_1 = require("@nestjs/throttler");
 const ionos_module_1 = require("./ionos/ionos.module");
 const auth_module_1 = require("./auth/auth.module");
 const vaults_module_1 = require("./vaults/vaults.module");
+const workspaces_module_1 = require("./workspaces/workspaces.module");
 const sync_module_1 = require("./sync/sync.module");
 const commits_module_1 = require("./commits/commits.module");
 const graph_module_1 = require("./graph/graph.module");
@@ -31,6 +32,7 @@ exports.AppModule = AppModule = __decorate([
             ionos_module_1.IonosModule,
             auth_module_1.AuthModule,
             vaults_module_1.VaultsModule,
+            workspaces_module_1.WorkspacesModule,
             sync_module_1.SyncModule,
             commits_module_1.CommitsModule,
             graph_module_1.GraphModule,

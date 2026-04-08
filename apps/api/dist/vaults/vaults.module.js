@@ -10,6 +10,7 @@ exports.VaultsModule = void 0;
 const common_1 = require("@nestjs/common");
 const throttler_1 = require("@nestjs/throttler");
 const sync_module_1 = require("../sync/sync.module");
+const workspaces_module_1 = require("../workspaces/workspaces.module");
 const vaults_controller_1 = require("./vaults.controller");
 const vaults_service_1 = require("./vaults.service");
 let VaultsModule = class VaultsModule {
@@ -17,7 +18,7 @@ let VaultsModule = class VaultsModule {
 exports.VaultsModule = VaultsModule;
 exports.VaultsModule = VaultsModule = __decorate([
     (0, common_1.Module)({
-        imports: [sync_module_1.SyncModule, throttler_1.ThrottlerModule],
+        imports: [sync_module_1.SyncModule, workspaces_module_1.WorkspacesModule, throttler_1.ThrottlerModule],
         controllers: [vaults_controller_1.VaultsController],
         providers: [vaults_service_1.VaultsService],
     })

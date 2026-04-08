@@ -25,6 +25,7 @@ import {
   Folder,
   FolderPlus,
   GitBranch,
+  Loader2,
   MoreVertical,
   PanelLeft,
   Plus,
@@ -442,19 +443,18 @@ export function VaultView() {
   const ssrBoot = useMemo(() => getHydrationSafeVaultBoot(), []);
   const [vaultMetas, setVaultMetas] = useState<VaultMeta[]>(() => ssrBoot.metas);
   const [activeVaultId, setActiveVaultId] = useState(() => ssrBoot.id);
+  const [serverVaultsFetched, setServerVaultsFetched] = useState(false);
 
   const activeVaultMeta = useMemo(
     () => (activeVaultId ? vaultMetas.find((m) => m.id === activeVaultId) : undefined),
     [vaultMetas, activeVaultId],
   );
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      const metas = readVaultMetas();
-      const id = readActiveVaultId(metas);
-      setVaultMetas(metas);
-      setActiveVaultId(id);
-    });
+  useLayoutEffect(() => {
+    const metas = readVaultMetas();
+    const id = readActiveVaultId(metas);
+    setVaultMetas(metas);
+    setActiveVaultId(id);
   }, []);
 
   useEffect(() => {
@@ -485,6 +485,10 @@ export function VaultView() {
         }
       } catch {
         /* mantem estado inicial (localStorage / migracao) */
+      } finally {
+        if (!cancelled) {
+          setServerVaultsFetched(true);
+        }
       }
     })();
     return () => {
@@ -537,6 +541,7 @@ export function VaultView() {
   );
 
   const hasOpenVault = Boolean(activeVaultMeta);
+  const showVaultListLoading = !serverVaultsFetched && !hasOpenVault;
 
   return (
     <>
@@ -549,6 +554,11 @@ export function VaultView() {
           onActiveVaultIdChange={setActiveVaultId}
           removeVault={removeVault}
         />
+      ) : showVaultListLoading ? (
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-background px-6 py-12 text-center">
+          <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
+          <p className="text-sm text-muted-foreground">A carregar os seus cofres…</p>
+        </div>
       ) : (
         <div className="flex h-full overflow-hidden">
           <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 overflow-auto bg-background px-6 py-12 text-center">

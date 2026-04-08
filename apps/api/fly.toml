@@ -5,6 +5,7 @@ primary_region = "gru"
   dockerfile = "Dockerfile"
 
 [deploy]
+  # Migrações usam DIRECT_URL (5432). DATABASE_URL pode ser pooler Supabase (6543) — ver apps/api/prisma/schema.prisma
   release_command = "npx prisma migrate deploy"
 
 [env]

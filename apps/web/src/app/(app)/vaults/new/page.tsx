@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import {
+  blankVaultSnapshot,
   readVaultMetas,
   saveSnapshot,
   writeActiveVaultId,
@@ -262,6 +263,21 @@ export default function NewVaultPage() {
         method: "POST",
         body: { vaultName: vaultName.trim() },
       });
+      const metas = readVaultMetas();
+      if (!metas.some((m) => m.id === vault.id)) {
+        metas.push({
+          id: vault.id,
+          name: vault.name,
+          pathLabel: vault.pathLabel,
+          kind: vault.kind,
+          managedByProfile: vault.managedByProfile,
+          deletable: vault.deletable,
+          remoteSync: vault.remoteSync ?? "git",
+        });
+        writeVaultMetas(metas);
+      }
+      saveSnapshot(vault.id, blankVaultSnapshot());
+      writeActiveVaultId(vault.id);
       writePendingActiveVaultId(vault.id);
       router.push("/vault");
     } catch (error) {

@@ -44,6 +44,7 @@ export async function POST(request: Request) {
       kind: "blank",
       managedByProfile: false,
       deletable: true,
+      remoteSync: "git",
     };
     return NextResponse.json({ vault });
   } catch (error) {
