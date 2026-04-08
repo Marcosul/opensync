@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest } from "@/api/rest/generic";
@@ -19,7 +19,7 @@ type OnboardingData = {
   frequency: string;
 } & AgentConnectionForm;
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
 const defaultAgentFields: AgentConnectionForm = {
   agentMode: "ssh_key",
@@ -44,6 +44,9 @@ const contextOptions = [
 ];
 const frequencyOptions = ["Todo dia", "Algumas vezes por semana", "De vez em quando"];
 
+const workspaceInputClass =
+  "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40";
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -56,13 +59,59 @@ export default function OnboardingPage() {
     ...defaultAgentFields,
   });
 
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [bootstrapLoading, setBootstrapLoading] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+
+  const loadWorkspaceBootstrap = useCallback(async () => {
+    setBootstrapLoading(true);
+    setBootstrapError(null);
+    try {
+      const res = await apiRequest<{ workspace: { id: string; name: string } }>(
+        "/api/onboarding/bootstrap",
+        { method: "POST" },
+      );
+      setWorkspaceId(res.workspace.id);
+      setWorkspaceName(res.workspace.name);
+    } catch (error) {
+      let message =
+        error instanceof Error
+          ? error.message
+          : "Nao foi possivel preparar seu workspace.";
+      try {
+        const parsed = JSON.parse(message) as { error?: string };
+        if (parsed.error) {
+          message = parsed.error;
+        }
+      } catch {
+        // keep raw message
+      }
+      setBootstrapError(message);
+      setWorkspaceId(null);
+    } finally {
+      setBootstrapLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWorkspaceBootstrap();
+  }, [loadWorkspaceBootstrap]);
+
   const canContinue = useMemo(() => {
-    if (step === 1) return formData.goals.length > 0;
-    if (step === 2) return Boolean(formData.usageContext);
-    if (step === 3) return Boolean(formData.frequency);
-    if (step === 4) return isAgentConnectionValid(formData);
+    if (step === 1) {
+      return (
+        workspaceName.trim().length > 0 &&
+        !bootstrapLoading &&
+        Boolean(workspaceId)
+      );
+    }
+    if (step === 2) return formData.goals.length > 0;
+    if (step === 3) return Boolean(formData.usageContext);
+    if (step === 4) return Boolean(formData.frequency);
+    if (step === 5) return isAgentConnectionValid(formData);
     return false;
-  }, [formData, step]);
+  }, [formData, step, workspaceName, bootstrapLoading, workspaceId]);
 
   async function handleFinish() {
     setSubmitError(null);
@@ -107,20 +156,101 @@ export default function OnboardingPage() {
     }
   }
 
+  async function goNext() {
+    if (step < TOTAL_STEPS) {
+      if (step === 1) {
+        if (!canContinue || !workspaceId) return;
+        setIsSubmitting(true);
+        setSubmitError(null);
+        try {
+          await apiRequest<{ workspace: { id: string; name: string } }>(
+            `/api/workspaces/${encodeURIComponent(workspaceId)}`,
+            {
+              method: "PATCH",
+              body: { name: workspaceName.trim() },
+            },
+          );
+          setStep(2);
+        } catch (error) {
+          let message =
+            error instanceof Error
+              ? error.message
+              : "Nao foi possivel salvar o nome do workspace.";
+          try {
+            const parsed = JSON.parse(message) as { error?: string };
+            if (parsed.error) {
+              message = parsed.error;
+            }
+          } catch {
+            // keep raw message
+          }
+          setSubmitError(message);
+        } finally {
+          setIsSubmitting(false);
+        }
+        return;
+      }
+      setStep((prev) => Math.min(TOTAL_STEPS, prev + 1));
+    }
+  }
+
+  const pageTitle =
+    step === 1
+      ? "Como devemos chamar seu workspace?"
+      : "Vamos configurar o OpenSync para o seu objetivo";
+
   return (
     <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Onboarding OpenClaw - Etapa {step} de {TOTAL_STEPS}
       </p>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-        Vamos configurar o OpenSync para o seu objetivo
-      </h1>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">{pageTitle}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        Responda {TOTAL_STEPS} etapas rapidas para personalizar sua experiencia.
+        {step === 1
+          ? "Escolha um nome que identifique seu projeto ou equipa. Voce pode alterar depois."
+          : `Responda ${TOTAL_STEPS} etapas rapidas para personalizar sua experiencia.`}
       </p>
 
       <div className="mt-6">
         {step === 1 ? (
+          <div className="space-y-3">
+            {bootstrapLoading ? (
+              <p className="text-sm text-muted-foreground">Preparando seu workspace...</p>
+            ) : null}
+            {bootstrapError ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                <p className="text-destructive">{bootstrapError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => void loadWorkspaceBootstrap()}
+                >
+                  Tentar novamente
+                </Button>
+              </div>
+            ) : null}
+            <div>
+              <label htmlFor="workspace-name" className="block text-sm font-medium text-foreground">
+                Nome do workspace
+              </label>
+              <input
+                id="workspace-name"
+                type="text"
+                autoComplete="organization"
+                placeholder="Ex.: Meu projeto, Equipa Alpha, OpenClaw casa"
+                value={workspaceName}
+                onChange={(e) => setWorkspaceName(e.target.value)}
+                disabled={bootstrapLoading || Boolean(bootstrapError)}
+                className={workspaceInputClass}
+                maxLength={120}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
           <StepOptions
             title="Qual resultado voce quer com o OpenSync?"
             options={goalOptions}
@@ -140,7 +270,7 @@ export default function OnboardingPage() {
           />
         ) : null}
 
-        {step === 2 ? (
+        {step === 3 ? (
           <StepOptions
             title="Como voce pretende usar no dia a dia?"
             options={contextOptions}
@@ -151,7 +281,7 @@ export default function OnboardingPage() {
           />
         ) : null}
 
-        {step === 3 ? (
+        {step === 4 ? (
           <StepOptions
             title="Com que frequencia seus arquivos mudam?"
             options={frequencyOptions}
@@ -160,7 +290,7 @@ export default function OnboardingPage() {
           />
         ) : null}
 
-        {step === 4 ? (
+        {step === 5 ? (
           <AgentConnectionStep
             form={formData}
             onChange={(next) =>
@@ -190,10 +320,10 @@ export default function OnboardingPage() {
         {step < TOTAL_STEPS ? (
           <Button
             type="button"
-            onClick={() => setStep((prev) => Math.min(TOTAL_STEPS, prev + 1))}
-            disabled={!canContinue}
+            onClick={() => void goNext()}
+            disabled={!canContinue || isSubmitting}
           >
-            Continuar
+            {step === 1 && isSubmitting ? "Salvando..." : "Continuar"}
           </Button>
         ) : (
           <Button type="button" onClick={handleFinish} disabled={!canContinue || isSubmitting}>

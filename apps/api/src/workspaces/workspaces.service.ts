@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
 const colors = {
   reset: '\x1b[0m',
@@ -25,11 +26,12 @@ export class WorkspacesService {
   }
 
   /**
-   * Garante um workspace "Default" (trigger no Supabase também cria em INSERT em profiles).
+   * Garante um workspace para o utilizador: reutiliza o primeiro (ex.: trigger no Supabase)
+   * ou cria um "Default" se ainda não existir nenhum.
    */
   async ensureDefaultWorkspace(userId: string): Promise<string> {
     const existing = await this.prisma.workspace.findFirst({
-      where: { userId, name: 'Default' },
+      where: { userId },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
@@ -95,6 +97,50 @@ export class WorkspacesService {
       });
       this.logger.log(
         `${colors.green}✅ Workspace criado:${colors.reset} user=${userId} id=${ws.id} name=${ws.name}`,
+      );
+      return ws;
+    } catch (e: unknown) {
+      const code =
+        e && typeof e === 'object' && 'code' in e
+          ? (e as { code?: string }).code
+          : undefined;
+      if (code === 'P2002') {
+        throw new ConflictException(`Já existe um workspace com o nome "${name}"`);
+      }
+      throw e;
+    }
+  }
+
+  async getByIdForUser(userId: string, workspaceId: string) {
+    const ws = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, userId },
+      select: { id: true, name: true, createdAt: true },
+    });
+    if (!ws) {
+      throw new NotFoundException('Workspace não encontrado');
+    }
+    return ws;
+  }
+
+  /**
+   * Garante o workspace Default e devolve o registro (para o onboarding).
+   */
+  async ensureDefaultWithInfo(userId: string) {
+    const id = await this.ensureDefaultWorkspace(userId);
+    return this.getByIdForUser(userId, id);
+  }
+
+  async updateForUser(userId: string, workspaceId: string, dto: UpdateWorkspaceDto) {
+    await this.getByIdForUser(userId, workspaceId);
+    const name = this.normalizeName(dto.name);
+    try {
+      const ws = await this.prisma.workspace.update({
+        where: { id: workspaceId },
+        data: { name },
+        select: { id: true, name: true, createdAt: true },
+      });
+      this.logger.log(
+        `${colors.green}✏️ Workspace atualizado:${colors.reset} user=${userId} id=${ws.id} name=${ws.name}`,
       );
       return ws;
     } catch (e: unknown) {

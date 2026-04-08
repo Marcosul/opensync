@@ -3,10 +3,13 @@ import {
   Controller,
   Get,
   Headers,
+  Param,
+  Patch,
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
 @Controller('workspaces')
@@ -28,6 +31,13 @@ export class WorkspacesController {
     return { workspaces };
   }
 
+  @Post('ensure-default')
+  async ensureDefault(@Headers('x-opensync-user-id') userId: string | undefined) {
+    const uid = this.requireUserId(userId);
+    const workspace = await this.workspacesService.ensureDefaultWithInfo(uid);
+    return { workspace };
+  }
+
   @Post()
   async create(
     @Headers('x-opensync-user-id') userId: string | undefined,
@@ -35,6 +45,17 @@ export class WorkspacesController {
   ) {
     const uid = this.requireUserId(userId);
     const workspace = await this.workspacesService.createForUser(uid, body);
+    return { workspace };
+  }
+
+  @Patch(':id')
+  async update(
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Param('id') workspaceId: string,
+    @Body() body: UpdateWorkspaceDto,
+  ) {
+    const uid = this.requireUserId(userId);
+    const workspace = await this.workspacesService.updateForUser(uid, workspaceId, body);
     return { workspace };
   }
 }
