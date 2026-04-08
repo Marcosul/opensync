@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // bookworm-slim (Fly/Docker) usa OpenSSL 3; dev local continua com "native"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

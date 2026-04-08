@@ -45,7 +45,7 @@ const contextOptions = [
 const frequencyOptions = ["Todo dia", "Algumas vezes por semana", "De vez em quando"];
 
 const workspaceInputClass =
-  "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40";
+  "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -64,16 +64,21 @@ export default function OnboardingPage() {
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
+  const requestWorkspaceBootstrap = useCallback(async () => {
+    const res = await apiRequest<{ workspace: { id: string; name: string } }>(
+      "/api/onboarding/bootstrap",
+      { method: "POST" },
+    );
+    return res.workspace;
+  }, []);
+
   const loadWorkspaceBootstrap = useCallback(async () => {
     setBootstrapLoading(true);
     setBootstrapError(null);
     try {
-      const res = await apiRequest<{ workspace: { id: string; name: string } }>(
-        "/api/onboarding/bootstrap",
-        { method: "POST" },
-      );
-      setWorkspaceId(res.workspace.id);
-      setWorkspaceName(res.workspace.name);
+      const ws = await requestWorkspaceBootstrap();
+      setWorkspaceId(ws.id);
+      setWorkspaceName((prev) => (prev.trim() ? prev : ws.name));
     } catch (error) {
       let message =
         error instanceof Error
@@ -92,7 +97,7 @@ export default function OnboardingPage() {
     } finally {
       setBootstrapLoading(false);
     }
-  }, []);
+  }, [requestWorkspaceBootstrap]);
 
   useEffect(() => {
     void loadWorkspaceBootstrap();
@@ -100,18 +105,14 @@ export default function OnboardingPage() {
 
   const canContinue = useMemo(() => {
     if (step === 1) {
-      return (
-        workspaceName.trim().length > 0 &&
-        !bootstrapLoading &&
-        Boolean(workspaceId)
-      );
+      return workspaceName.trim().length > 0;
     }
     if (step === 2) return formData.goals.length > 0;
     if (step === 3) return Boolean(formData.usageContext);
     if (step === 4) return Boolean(formData.frequency);
     if (step === 5) return isAgentConnectionValid(formData);
     return false;
-  }, [formData, step, workspaceName, bootstrapLoading, workspaceId]);
+  }, [formData, step, workspaceName]);
 
   async function handleFinish() {
     setSubmitError(null);
@@ -159,15 +160,24 @@ export default function OnboardingPage() {
   async function goNext() {
     if (step < TOTAL_STEPS) {
       if (step === 1) {
-        if (!canContinue || !workspaceId) return;
+        const name = workspaceName.trim();
+        if (!name) return;
         setIsSubmitting(true);
         setSubmitError(null);
         try {
+          let id = workspaceId;
+          if (!id) {
+            const ws = await requestWorkspaceBootstrap();
+            id = ws.id;
+            setWorkspaceId(ws.id);
+            setWorkspaceName((prev) => (prev.trim() ? prev : ws.name));
+            setBootstrapError(null);
+          }
           await apiRequest<{ workspace: { id: string; name: string } }>(
-            `/api/workspaces/${encodeURIComponent(workspaceId)}`,
+            `/api/workspaces/${encodeURIComponent(id)}`,
             {
               method: "PATCH",
-              body: { name: workspaceName.trim() },
+              body: { name },
             },
           );
           setStep(2);
@@ -215,7 +225,9 @@ export default function OnboardingPage() {
         {step === 1 ? (
           <div className="space-y-3">
             {bootstrapLoading ? (
-              <p className="text-sm text-muted-foreground">Preparando seu workspace...</p>
+              <p className="text-sm text-muted-foreground">
+                A sincronizar com o servidor... Voce ja pode escrever o nome abaixo.
+              </p>
             ) : null}
             {bootstrapError ? (
               <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
@@ -242,7 +254,7 @@ export default function OnboardingPage() {
                 placeholder="Ex.: Meu projeto, Equipa Alpha, OpenClaw casa"
                 value={workspaceName}
                 onChange={(e) => setWorkspaceName(e.target.value)}
-                disabled={bootstrapLoading || Boolean(bootstrapError)}
+                disabled={isSubmitting}
                 className={workspaceInputClass}
                 maxLength={120}
               />
