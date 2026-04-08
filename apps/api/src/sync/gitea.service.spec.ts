@@ -20,7 +20,7 @@ describe('GiteaService', () => {
     const fetchMock = jest
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({}), { status: 200 }),
+        new Response(JSON.stringify({ message: 'already exists' }), { status: 422 }),
       )
       .mockResolvedValueOnce(new Response('conflict', { status: 409 }));
 
@@ -35,7 +35,7 @@ describe('GiteaService', () => {
     jest
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({}), { status: 200 }),
+        new Response(JSON.stringify({ message: 'already exists' }), { status: 422 }),
       )
       .mockResolvedValueOnce(new Response('boom', { status: 500 }));
 

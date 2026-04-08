@@ -76,12 +76,23 @@ export class GiteaService {
     return (await response.json()) as T;
   }
 
+  /**
+   * Garante que a org existe no Gitea sem usar GET /orgs/{name}: tokens com scope fino
+   * exigem `read:organization` para esse GET e falham com 403. Em vez disso, tentamos
+   * POST /api/v1/orgs (idempotente: 422/409 = já existe).
+   */
   private async ensureOrgExists(org: string): Promise<void> {
     this.ensureConfigured();
-    let check: Response;
+    let res: Response;
     try {
-      check = await fetch(`${this.baseUrl}/api/v1/orgs/${org}`, {
+      res = await fetch(`${this.baseUrl}/api/v1/orgs`, {
+        method: 'POST',
         headers: this.headers,
+        body: JSON.stringify({
+          username: org,
+          full_name: `OpenSync ${org}`,
+          visibility: 'private',
+        }),
       });
     } catch (err) {
       const hint = err instanceof Error ? err.message : String(err);
@@ -92,24 +103,29 @@ export class GiteaService {
         `Nao foi possivel contatar o Gitea: ${hint}`,
       );
     }
-    if (check.ok) return;
-    if (check.status !== 404) {
-      const body = await check.text();
-      throw new BadGatewayException(`Falha ao consultar org ${org}: ${body}`);
+
+    if (res.ok) {
+      this.logger.log(
+        `${colors.cyan}🏗️ Organização criada no Gitea:${colors.reset} ${org}`,
+      );
+      return;
     }
 
-    this.logger.log(
-      `${colors.cyan}🏗️ Criando organização no Gitea:${colors.reset} ${org}`,
-    );
-    await this.fetchJson('/api/v1/orgs', {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        username: org,
-        full_name: `OpenSync ${org}`,
-        visibility: 'private',
-      }),
-    });
+    const body = await res.text();
+    if (res.status === 422 || res.status === 409) {
+      return;
+    }
+    if (res.status === 400 && /already exists|exist|duplicate|taken/i.test(body)) {
+      return;
+    }
+    if (res.status === 403) {
+      this.logger.warn(
+        `${colors.yellow}⚠️ POST /orgs devolveu 403 — assumindo que a org "${org}" já existe no Gitea (criada na UI). Detalhe:${colors.reset} ${body}`,
+      );
+      return;
+    }
+
+    throw new BadGatewayException(`Falha ao garantir org ${org}: ${body}`);
   }
 
   async createRepoForVault(userId: string, vaultName: string): Promise<string> {

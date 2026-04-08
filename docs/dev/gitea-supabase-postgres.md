@@ -139,6 +139,8 @@ fly secrets set GITEA_ADMIN_TOKEN=SEU_TOKEN -a opensync-api
 
 ## 7) Supabase: badge «UNRESTRICTED» nas tabelas do Gitea
 
+Guia completo (papéis, Prisma, Gitea, checklist): [`supabase-rls-implementation.md`](./supabase-rls-implementation.md).
+
 No Table Editor, **UNRESTRICTED** significa **Row Level Security (RLS) desligada** nessa tabela.
 
 - As tabelas do **OpenSync** (Prisma: `profiles`, `workspaces`, `vaults`, `agents`, `file_links`, `commits`, `audit_log`) devem ter **RLS + políticas** conforme a vossa política de segurança.

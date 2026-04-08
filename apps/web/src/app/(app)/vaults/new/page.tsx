@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -333,7 +333,9 @@ export default function NewVaultPage() {
       : step === 2
         ? "Nome"
         : startChoice === "empty_vault"
-          ? "Confirmar criacao"
+          ? isSubmitting
+            ? "Criando seu vault"
+            : "Confirmar criacao"
           : "Como o OpenSync deve acessar seu agente?";
 
   const stepDescription =
@@ -345,10 +347,12 @@ export default function NewVaultPage() {
           ? "Siga primeiro o bloco da skill OpenSync (instalação no OpenClaw e sync via Git/script). A importação SSH abaixo traz um snapshot inicial do ~/.openclaw para o explorador."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
-            : `O vault "${vaultName.trim() || "…"}" sera criado no servidor (banco de dados + repositorio no Gitea) quando voce confirmar. Depois voce entra no explorador; conectar um agente pode ser feito depois.`;
+            : isSubmitting
+              ? "Aguarde enquanto registramos o vault e criamos o repositorio remoto no Gitea."
+              : `O vault "${vaultName.trim() || "…"}" sera criado no servidor (banco de dados + repositorio no Gitea) quando voce confirmar. Depois voce entra no explorador; conectar um agente pode ser feito depois.`;
 
-  const step3EmptySuccess =
-    step === 3 && startChoice === "empty_vault";
+  const isEmptyVaultStep3 = step === 3 && startChoice === "empty_vault";
+  const isEmptyVaultCreating = isEmptyVaultStep3 && isSubmitting;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -366,9 +370,11 @@ export default function NewVaultPage() {
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {step3EmptySuccess
-              ? "Vault vazio — Confirmar"
-              : `Adicionar vault — Etapa ${step} de ${TOTAL_STEPS}`}
+            {isEmptyVaultCreating
+              ? "Vault vazio — Criando"
+              : isEmptyVaultStep3
+                ? "Vault vazio — Confirmar"
+                : `Adicionar vault — Etapa ${step} de ${TOTAL_STEPS}`}
           </p>
           {step === 2 ? (
             <div className="mt-3 rounded-lg border border-border bg-muted/25 px-3 py-2.5">
@@ -509,22 +515,55 @@ export default function NewVaultPage() {
               </div>
             ) : null}
 
-            {step3EmptySuccess ? (
-              <div className="flex flex-col items-center rounded-xl border border-border bg-muted/30 py-10 text-center">
+            {isEmptyVaultStep3 ? (
+              isEmptyVaultCreating ? (
                 <div
-                  className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground shadow-sm"
-                  aria-hidden
+                  className="relative flex flex-col items-center overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/[0.07] via-card to-muted/30 py-14 text-center shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]"
+                  role="status"
+                  aria-live="polite"
+                  aria-busy="true"
                 >
-                  <CheckCircle2 className="size-9" strokeWidth={1.75} />
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-primary/15 via-primary/[0.06] to-transparent"
+                    aria-hidden
+                  />
+                  <div className="relative mb-8 flex flex-col items-center">
+                    <div className="absolute size-24 rounded-full bg-primary/10 blur-xl" aria-hidden />
+                    <div className="relative">
+                      <span
+                        className="absolute inset-0 animate-ping rounded-full bg-primary/25 [animation-duration:2.2s]"
+                        aria-hidden
+                      />
+                      <div className="relative flex size-[4.5rem] items-center justify-center rounded-full border-2 border-primary/30 border-t-primary bg-background/90 shadow-md backdrop-blur-sm">
+                        <Loader2 className="size-9 animate-spin text-primary" strokeWidth={1.75} />
+                      </div>
+                    </div>
+                  </div>
+                  <p className="relative max-w-sm text-base font-semibold tracking-tight text-foreground">
+                    Criando repositorio e registrando o vault
+                  </p>
+                  <p className="relative mt-3 max-w-[22rem] px-2 text-sm leading-relaxed text-muted-foreground">
+                    Conectando ao servidor, preparando o Git no Gitea e abrindo seu explorador em
+                    seguida.
+                  </p>
                 </div>
-                <p className="mt-5 max-w-sm text-sm font-medium text-foreground">
-                  Pronto para criar o vault vazio
-                </p>
-                <p className="mt-2 max-w-xs text-xs text-muted-foreground">
-                  Ao confirmar, criamos o registro e o repositorio remoto. Nenhuma conexao com agente e
-                  necessaria agora; voce abre o explorador em seguida.
-                </p>
-              </div>
+              ) : (
+                <div className="flex flex-col items-center rounded-xl border border-border bg-muted/30 py-10 text-center">
+                  <div
+                    className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground shadow-sm"
+                    aria-hidden
+                  >
+                    <CheckCircle2 className="size-9" strokeWidth={1.75} />
+                  </div>
+                  <p className="mt-5 max-w-sm text-sm font-medium text-foreground">
+                    Pronto para criar o vault vazio
+                  </p>
+                  <p className="mt-2 max-w-xs text-xs text-muted-foreground">
+                    Ao confirmar, criamos o registro e o repositorio remoto. Nenhuma conexao com agente e
+                    necessaria agora; voce abre o explorador em seguida.
+                  </p>
+                </div>
+              )
             ) : null}
           </div>
 

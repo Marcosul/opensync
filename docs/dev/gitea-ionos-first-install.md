@@ -160,5 +160,5 @@ Quando tiveres domínio (ex. `git.opensync.space`) atrás de **Cloudflare** ou o
 ## 6. Referências cruzadas
 
 - SSH Fly → VPS: [`fly-ionos-ssh.md`](./fly-ionos-ssh.md)
-- Gitea + Supabase (Postgres, RLS / badge UNRESTRICTED): [`gitea-supabase-postgres.md`](./gitea-supabase-postgres.md) — secção 7
+- Gitea + Supabase (Postgres, RLS / badge UNRESTRICTED): [`gitea-supabase-postgres.md`](./gitea-supabase-postgres.md) — secção 7; detalhe: [`supabase-rls-implementation.md`](./supabase-rls-implementation.md)
 - Deploy Docker na IONOS: [`deploy/ionos/`](../../deploy/ionos/)
