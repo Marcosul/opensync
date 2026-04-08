@@ -29,9 +29,7 @@ export function HeroSection() {
 
         <p className="mt-6 max-w-[40rem] text-pretty text-base text-muted-foreground sm:text-lg">
           {messages.hero.bodyPrefix}{" "}
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">
-            ./openclaw
-          </code>{" "}
+
           {messages.hero.bodySuffix}
         </p>
 

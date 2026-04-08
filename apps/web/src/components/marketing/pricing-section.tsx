@@ -1,9 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
 import { useHomeI18n } from "@/components/marketing/home-i18n";
+import { NotionLogo } from "@/components/marketing/notion-logo";
+import { ObsidianLogo } from "@/components/marketing/obsidian-logo";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -48,11 +51,6 @@ export function PricingSection() {
   const teamMonthly = billing === "annual" ? 12 : 15;
   const teamSub =
     billing === "annual" ? messages.pricing.billedAnnualTeam : messages.pricing.billedMonthly;
-
-  const opensyncColLabel =
-    billing === "annual"
-      ? "opensync Pro — $5/mo"
-      : "opensync Pro — $6.25/mo";
 
   return (
     <section
@@ -201,91 +199,153 @@ export function PricingSection() {
             </ul>
           </article>
         </div>
-
-        <div className="mt-16 overflow-x-auto rounded-xl border border-border">
-          <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="bg-muted/50">
-                <th className="border-b border-border px-4 py-4 font-semibold sm:px-6">
-                  {messages.pricing.compareHeaderFeature}
-                </th>
-                <th className="border-b border-border px-4 py-4 font-semibold text-primary sm:px-6">
-                  {opensyncColLabel}
-                </th>
-                <th className="border-b border-border px-4 py-4 font-semibold sm:px-6">
-                  {messages.pricing.compareHeaderObsidian}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {messages.pricing.compareRows.map((row, index) => (
-                <ComparisonRow
-                  key={row.feature}
-                  feature={row.feature}
-                  opensync={row.opensync}
-                  opensyncGood
-                  other={row.other}
-                  otherTone={index === 2 ? "neutral" : index > 3 ? "bad" : "good"}
-                />
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-muted/40 font-semibold">
-                <td className="border-t border-border px-4 py-4 sm:px-6">
-                  {messages.pricing.totalMonthly}
-                </td>
-                <td className="border-t border-border px-4 py-4 text-primary sm:px-6">
-                  {billing === "annual" ? "$5/mo" : "$6.25/mo"}
-                </td>
-                <td className="border-t border-border px-4 py-6 sm:px-6">
-                  $12/mo+
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
       </div>
     </section>
   );
 }
 
-function ComparisonRow({
-  feature,
-  opensync,
-  other,
-  opensyncGood,
-  otherTone = "good",
+type CellTone = "good" | "bad" | "neutral";
+
+function ComparisonCell({
+  text,
+  tone,
+  emphasize,
 }: {
-  feature: string;
-  opensync: string;
-  other: string;
-  opensyncGood?: boolean;
-  otherTone?: "good" | "bad" | "neutral";
+  text: string;
+  tone: CellTone;
+  emphasize?: boolean;
 }) {
   return (
-    <tr className="border-b border-border last:border-b-0">
-      <td className="px-4 py-4 align-top text-muted-foreground sm:px-6">{feature}</td>
-      <td className="px-4 py-4 align-top sm:px-6">
-        <span className="inline-flex items-start gap-2">
-          {opensyncGood ? <CheckIcon /> : null}
-          <span className={opensyncGood ? "text-foreground" : ""}>{opensync}</span>
+    <td className={cn("px-4 py-4 align-top sm:px-6", emphasize && "bg-primary/[0.04]")}>
+      <span className="inline-flex items-start gap-2">
+        {tone === "good" ? <CheckIcon /> : null}
+        {tone === "bad" ? <XIcon /> : null}
+        {tone === "neutral" ? <DotIcon /> : null}
+        <span
+          className={cn(
+            tone === "bad" && "text-muted-foreground",
+            tone === "good" && "text-foreground",
+            tone === "neutral" && "text-muted-foreground"
+          )}
+        >
+          {text}
         </span>
-      </td>
-      <td className="px-4 py-4 align-top sm:px-6">
-        <span className="inline-flex items-start gap-2">
-          {otherTone === "good" ? <CheckIcon /> : null}
-          {otherTone === "bad" ? <XIcon /> : null}
-          <span
-            className={cn(
-              otherTone === "bad" && "text-muted-foreground",
-              otherTone === "good" && "text-foreground",
-              otherTone === "neutral" && "text-muted-foreground"
-            )}
+      </span>
+    </td>
+  );
+}
+
+/** Per row: Obsidian tone, Notion tone. OpenSync column is always "good". */
+const COMPARISON_ROW_TONES: Array<{ obsidian: CellTone; notion: CellTone }> = [
+  { obsidian: "good", notion: "neutral" },
+  { obsidian: "bad", notion: "bad" },
+  { obsidian: "bad", notion: "good" },
+  { obsidian: "good", notion: "bad" },
+  { obsidian: "bad", notion: "good" },
+  { obsidian: "neutral", notion: "neutral" },
+];
+
+export function ComparisonSection() {
+  const { messages } = useHomeI18n();
+  const c = messages.comparison;
+
+  const opensyncPrice = "$6.25/mo";
+  const obsidianPrice = "$12/mo+";
+  const notionPrice = "$10–20/mo+";
+
+  return (
+    <section
+      id="compare"
+      className="border-t border-border/60 bg-muted/20 px-4 py-20 sm:px-6 lg:px-8"
+      aria-labelledby="compare-heading"
+    >
+      <div className="mx-auto w-full max-w-[1360px]">
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{c.eyebrow}</p>
+          <h2
+            id="compare-heading"
+            className="mt-3 text-balance text-3xl font-bold tracking-tight text-foreground sm:text-4xl"
           >
-            {other}
-          </span>
-        </span>
-      </td>
-    </tr>
+            {c.title}
+          </h2>
+          <p className="mt-4 text-pretty text-sm text-muted-foreground sm:text-base">{c.lead}</p>
+        </div>
+
+        <div className="mt-14 overflow-x-auto rounded-xl border border-border bg-background shadow-sm">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="bg-muted/50">
+                <th className="border-b border-border px-4 py-4 font-semibold sm:px-6">{c.thFeature}</th>
+                <th className="border-b border-border px-4 py-4 font-semibold text-primary sm:px-6">
+                  <span className="flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-center sm:gap-3">
+                    <Image
+                      src="/logo/opensync-icon-green.svg"
+                      alt=""
+                      width={32}
+                      height={32}
+                      className="size-8 shrink-0 rounded-lg"
+                    />
+                    <span className="leading-tight">
+                      {c.opensyncBrand}
+                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                        {c.opensyncTier} — {opensyncPrice}
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th className="border-b border-border px-4 py-4 font-semibold sm:px-6">
+                  <span className="flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-center sm:gap-3">
+                    <ObsidianLogo className="size-8" />
+                    <span className="leading-tight text-foreground">
+                      {c.thObsidian}
+                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                        {c.obsidianColumnHint}
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th className="border-b border-border px-4 py-4 font-semibold sm:px-6">
+                  <span className="flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-center sm:gap-3">
+                    <NotionLogo className="size-8 rounded-md" />
+                    <span className="leading-tight text-foreground">
+                      {c.thNotion}
+                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                        {c.notionColumnHint}
+                      </span>
+                    </span>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.rows.map((row, index) => {
+                const tones = COMPARISON_ROW_TONES[index] ?? {
+                  obsidian: "neutral" as const,
+                  notion: "neutral" as const,
+                };
+                return (
+                  <tr key={row.feature} className="border-b border-border last:border-b-0">
+                    <td className="px-4 py-4 align-top text-muted-foreground sm:px-6">{row.feature}</td>
+                    <ComparisonCell text={row.opensync} tone="good" emphasize />
+                    <ComparisonCell text={row.obsidian} tone={tones.obsidian} />
+                    <ComparisonCell text={row.notion} tone={tones.notion} />
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-muted/40 font-semibold">
+                <td className="border-t border-border px-4 py-4 sm:px-6">{c.footerTotal}</td>
+                <td className="border-t border-border px-4 py-4 text-primary sm:px-6">{opensyncPrice}</td>
+                <td className="border-t border-border px-4 py-4 sm:px-6">{obsidianPrice}</td>
+                <td className="border-t border-border px-4 py-4 sm:px-6">{notionPrice}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <p className="mx-auto mt-6 max-w-3xl text-center text-xs text-muted-foreground">{c.footnote}</p>
+      </div>
+    </section>
   );
 }

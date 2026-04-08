@@ -37,6 +37,12 @@ type Messages = {
     seeHow: string;
     scrollAria: string;
   };
+  manifest: {
+    eyebrow: string;
+    title: string;
+    lead: string;
+    principles: Array<{ title: string; body: string }>;
+  };
   features: {
     eyebrow: string;
     title: string;
@@ -61,10 +67,26 @@ type Messages = {
     freeFeatures: string[];
     proFeatures: string[];
     teamFeatures: string[];
-    compareHeaderFeature: string;
-    compareHeaderObsidian: string;
-    compareRows: Array<{ feature: string; opensync: string; other: string }>;
-    totalMonthly: string;
+  };
+  comparison: {
+    eyebrow: string;
+    title: string;
+    lead: string;
+    thFeature: string;
+    thObsidian: string;
+    thNotion: string;
+    opensyncBrand: string;
+    opensyncTier: string;
+    obsidianColumnHint: string;
+    notionColumnHint: string;
+    rows: Array<{
+      feature: string;
+      opensync: string;
+      obsidian: string;
+      notion: string;
+    }>;
+    footerTotal: string;
+    footnote: string;
   };
 };
 
@@ -92,6 +114,35 @@ const BASE_EN: Messages = {
     startFree: "start free — no credit card",
     seeHow: "see how it works ↓",
     scrollAria: "Scroll to features",
+  },
+  manifest: {
+    eyebrow: "Manifesto",
+    title: "Why we built opensync",
+    lead:
+      "We believe your agent's knowledge should be portable, versioned, and yours—not locked in a silo.",
+    principles: [
+      {
+        title: "Documentation first",
+        body:
+          "In the AI era, documentation structured for machines is the source of truth: it is the natural format for building agents and for organizing your knowledge base.",
+      },
+      {
+        title: "Git is the contract",
+        body: "Every change is a commit you can diff, branch, and roll back. Your history stays honest and inspectable.",
+      },
+      {
+        title: "Markdown and YAML in the open",
+        body: "No proprietary formats—plain files that work in Obsidian, editors, and CI, today and years from now.",
+      },
+      {
+        title: "First-class for agents",
+        body: "Built with OpenClaw in mind so automation and humans share one vault, with sync and commits that fit real workflows.",
+      },
+      {
+        title: "Sync without ransom",
+        body: "Fair pricing for sync, full history, and a web editor in one place—without stacking extras for basics.",
+      },
+    ],
   },
   features: {
     eyebrow: "Features",
@@ -166,17 +217,60 @@ const BASE_EN: Messages = {
       "SSO / SAML",
       "SLA + dedicated support",
     ],
-    compareHeaderFeature: "feature",
-    compareHeaderObsidian: "Obsidian Sync — $4/mo + extras",
-    compareRows: [
-      { feature: "Cross-device sync", opensync: "included", other: "$4/mo" },
-      { feature: "Version history", opensync: "full Git", other: "limited" },
-      { feature: "Publish / web editor", opensync: "included", other: "+ $8/mo extra" },
-      { feature: "Graph view", opensync: "included", other: "app only" },
-      { feature: "AI agent integration", opensync: "native OpenClaw", other: "not available" },
-      { feature: "One-click rollback", opensync: "included", other: "manual" },
+  },
+  comparison: {
+    eyebrow: "Compare",
+    title: "OpenSync vs Obsidian vs Notion",
+    lead:
+      "Same markdown-friendly workflow—different tradeoffs for sync, versioning, and agent-native tooling.",
+    thFeature: "Feature",
+    thObsidian: "Obsidian",
+    thNotion: "Notion",
+    opensyncBrand: "opensync",
+    opensyncTier: "Pro",
+    obsidianColumnHint: "App free · Sync & extras",
+    notionColumnHint: "Cloud plans · AI optional",
+    rows: [
+      {
+        feature: "Plain Markdown / YAML on disk",
+        opensync: "Yes — open files",
+        obsidian: "Yes — local vault",
+        notion: "Blocks in cloud; export to .md",
+      },
+      {
+        feature: "Git-native history & rollback",
+        opensync: "Full repo, every change",
+        obsidian: "Not built-in (plugins)",
+        notion: "Page history; not Git",
+      },
+      {
+        feature: "Cross-device sync in one plan",
+        opensync: "Included with Pro",
+        obsidian: "Sync add-on + extras stack",
+        notion: "Included (cloud-only)",
+      },
+      {
+        feature: "Offline-first vault",
+        opensync: "Yes",
+        obsidian: "Yes",
+        notion: "Limited without connectivity",
+      },
+      {
+        feature: "Web editor + publish",
+        opensync: "Included",
+        obsidian: "Publish / Catalyst extra",
+        notion: "Built-in in browser",
+      },
+      {
+        feature: "First-class for OpenClaw agents",
+        opensync: "Native plugin & skills",
+        obsidian: "Community workflows",
+        notion: "General workspace / API",
+      },
     ],
-    totalMonthly: "monthly total",
+    footerTotal: "Typical monthly (power user)",
+    footnote:
+      "Pricing is indicative: Obsidian app is free; Sync, Publish, and Catalyst are separate. Notion tiers vary by seats and AI add-ons.",
   },
 };
 
@@ -188,14 +282,39 @@ const PT_BR: Messages = {
     signIn: "Entrar",
   },
   hero: {
-    badge: "feito para agentes OpenClaw",
-    titleTop: "Seu vault de agentes,",
-    titleAccent: "sempre seguro. Sempre sincronizado.",
-    bodyPrefix: "Versionamento, sync e um editor elegante para seu",
-    bodySuffix: "workspace. Git-powered. Inspirado no Obsidian. Seu.",
+    badge: "ideal para agentes OpenClaw",
+    titleTop: "Organize seus projetos",
+    titleAccent: "do jeito que a IA entende",
+    bodyPrefix: " Crie pastas para base de conhecimento de agentes OpenClaw ou so seu negócio multimilinário.",
+    bodySuffix: "Sincronize, versione e edite como um maestro.",
     startFree: "começar grátis — sem cartão",
     seeHow: "ver como funciona ↓",
     scrollAria: "Ir para seção de features",
+  },
+  manifest: {
+    eyebrow: "Manifesto",
+    title: "Por que criamos o opensync",
+    lead:
+      "Acreditamos que o conhecimento do seu agente deve ser portável, versionado e seu—não preso a um silo.",
+    principles: [
+      {
+        title: "Perfeito para agentes OpenClaw",
+        body: "Agentes Openclaw podem se auto-suicidar sem querer quando reescreverem configurações ruins. O opensync garante que o conhecimento do seu agente seja sempre seguro e sincronizado.",
+      },
+      {
+        title: "Ideal para organizar qualquer tipo de base de conhecimento",
+        body:
+          "Na era da IA, a documentação organizada para IA é a \"fonte da verdade\", porque é formato natural de construção de agentes e a organização da sua base de conhecimento.",
+      },
+      {
+        title: "Formatos abertos",
+        body: "Crie documentos em formatos abertos (Markdown, YAML e JSON) natualmente entendíveis por agentes, facilmente editáveis por humanos e executáveis por agentes.",
+      },
+      {
+        title: "Git é o contrato",
+        body: "Cada mudança é um commit que você pode comparar, ramificar e desfazer. O histórico continua claro e auditável.",
+      }
+    ],
   },
   features: {
     eyebrow: "Features",
@@ -235,7 +354,7 @@ const PT_BR: Messages = {
   },
   pricing: {
     eyebrow: "Pricing",
-    title: "Tudo que o Obsidian cobra separado, num plano só",
+    title: "Toda segurança do OpenSync por um preço acessível",
     annual: "anual",
     monthly: "mensal",
     save: "economize 20%",
@@ -270,17 +389,60 @@ const PT_BR: Messages = {
       "SSO / SAML",
       "SLA + suporte dedicado",
     ],
-    compareHeaderFeature: "feature",
-    compareHeaderObsidian: "Obsidian Sync — $4/mo + extras",
-    compareRows: [
-      { feature: "Sync entre dispositivos", opensync: "incluído", other: "$4/mo" },
-      { feature: "Histórico de versões", opensync: "Git completo", other: "limitado" },
-      { feature: "Publish / editor web", opensync: "incluído", other: "+ $8/mo extra" },
-      { feature: "Graph view", opensync: "incluído", other: "só no app" },
-      { feature: "Integração com agentes IA", opensync: "nativo OpenClaw", other: "não existe" },
-      { feature: "Rollback 1 clique", opensync: "incluído", other: "manual" },
+  },
+  comparison: {
+    eyebrow: "Comparar",
+    title: "OpenSync vs Obsidian vs Notion",
+    lead:
+      "Mesmo fluxo amigável a Markdown—com tradeoffs diferentes em sync, versionamento e ferramentas para agentes.",
+    thFeature: "Recurso",
+    thObsidian: "Obsidian",
+    thNotion: "Notion",
+    opensyncBrand: "opensync",
+    opensyncTier: "Pro",
+    obsidianColumnHint: "App grátis · Sync e extras",
+    notionColumnHint: "Planos na nuvem · IA opcional",
+    rows: [
+      {
+        feature: "Markdown / YAML puro no disco",
+        opensync: "Sim — arquivos abertos",
+        obsidian: "Sim — vault local",
+        notion: "Blocos na nuvem; exporta .md",
+      },
+      {
+        feature: "Histórico Git e rollback",
+        opensync: "Repositório completo",
+        obsidian: "Não nativo (plugins)",
+        notion: "Histórico de página; sem Git",
+      },
+      {
+        feature: "Sync multi-dispositivo no plano",
+        opensync: "Incluído no Pro",
+        obsidian: "Sync + extras somam",
+        notion: "Incluído (só nuvem)",
+      },
+      {
+        feature: "Vault offline-first",
+        opensync: "Sim",
+        obsidian: "Sim",
+        notion: "Limitado sem conexão",
+      },
+      {
+        feature: "Editor web + publicar",
+        opensync: "Incluído",
+        obsidian: "Publish / Catalyst à parte",
+        notion: "Nativo no navegador",
+      },
+      {
+        feature: "Foco em agentes OpenClaw",
+        opensync: "Plugin e skills nativos",
+        obsidian: "Fluxos da comunidade",
+        notion: "Workspace / API genéricos",
+      },
     ],
-    totalMonthly: "total mensal",
+    footerTotal: "Mensal típico (usuário avançado)",
+    footnote:
+      "Preços indicativos: app Obsidian é grátis; Sync, Publish e Catalyst são separados. Notion varia por assentos e add-ons de IA.",
   },
 };
 
@@ -315,7 +477,6 @@ const ES: Messages = {
     billedAnnualPro: "facturado $60/año",
     billedMonthly: "facturación mensual",
     billedAnnualTeam: "facturado $144/usuario/año",
-    totalMonthly: "total mensual",
   },
 };
 
