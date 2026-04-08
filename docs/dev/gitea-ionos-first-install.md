@@ -31,29 +31,27 @@ A API em Fly (`opensync-api`) precisa de alcançar `http://216.250.124.232:3000`
 ## Estado atual (executado)
 
 - `docker compose` ativo na VPS `216.250.124.232` com `gitea/gitea:1.22.6`.
-- Arquivo `/opt/opensync/gitea.env` migrado de `sqlite3` para `postgres` (Supabase, SSL `require`).
-- Backup da configuração anterior criado como `/opt/opensync/gitea.env.bak.YYYYMMDD-HHMMSS`.
-- Serviço reiniciado com sucesso (`docker compose up -d`) e UI em [http://216.250.124.232:3000/](http://216.250.124.232:3000/) retornando `HTTP 200`.
-- Instalação ainda pendente na tela `Initial Configuration` (precisa criar usuário admin).
+- Arquivo `/opt/opensync/gitea.env` com **PostgreSQL** (Supabase, SSL `require`); backups em `gitea.env.bak.<timestamp>`.
+- Serviço a responder em [http://216.250.124.232:3000/](http://216.250.124.232:3000/) (`HTTP 200` na raiz; `/user/login` após migrações).
+- Se após apontar para Postgres o Gitea mostrar erros `pq: relation "user" does not exist` ou `/user/login` com **500**, correr **uma vez** no contentor:  
+  `docker exec -u git opensync-gitea gitea migrate -c /data/gitea/conf/app.ini`  
+  (ver também [gitea-supabase-postgres.md](./gitea-supabase-postgres.md).)
 
 ### Atualização aplicada em produção
 
-- `INSTALL_LOCK` alterado para `true` em `/opt/opensync/gitea-data/gitea/conf/app.ini`.
-- `DISABLE_REGISTRATION=true` e `REQUIRE_SIGNIN_VIEW=true` (modo privado inicial).
-- Usuário admin criado via CLI do Gitea:
-  - `username`: `marcosul`
-  - `email`: `marcosul@gmail.com`
-  - `password temporária`: definida no momento da criação (não manter em documentação)
-- Validação: página inicial deixou de mostrar `Initial Configuration` e passou para `Sign In`.
+- `INSTALL_LOCK=true` em `/opt/opensync/gitea-data/gitea/conf/app.ini`.
+- Modo privado inicial: `DISABLE_REGISTRATION=true`, `REQUIRE_SIGNIN_VIEW=true` (ajustável).
+- Utilizador **admin** criado via CLI (`gitea admin user create`):
+  - `username`: `opensync-admin`
+  - `email`: `admin@opensync.space`
+  - senha e token gerados na criação — **guardar só** em [`apps/api/.env`](../../apps/api/.env) e em secrets da Fly; **não** repetir em documentação.
 
 ### Token para API (executado)
 
-- Token de acesso foi gerado para o usuário `marcosul` via CLI (`gitea admin user generate-access-token`).
-- `GITEA_ADMIN_TOKEN` foi atualizado em [`apps/api/.env`](../../apps/api/.env) (arquivo local, não versionado).
-- `GITEA_ADMIN_TOKEN` e `GITEA_URL` foram aplicados em produção com `fly secrets set -a opensync-api`.
-- Validação feita com `fly secrets list` (status `Deployed`).
+- `GITEA_ADMIN_TOKEN` atualizado em [`apps/api/.env`](../../apps/api/.env) (local, não versionado).
+- Produção: `fly secrets set GITEA_URL=... GITEA_ADMIN_TOKEN=... -a opensync-api` (confirmar com `fly secrets list`).
 
-> Segurança: não armazenar token/senha em documentação. Se houver suspeita de exposição, revogar o token no Gitea e gerar outro.
+> Segurança: não armazenar token nem senha em Markdown. Em caso de exposição, revogar o token no Gitea e atualizar `.env` + Fly.
 
 ## 2. Assistente — valores recomendados
 
@@ -162,4 +160,5 @@ Quando tiveres domínio (ex. `git.opensync.space`) atrás de **Cloudflare** ou o
 ## 6. Referências cruzadas
 
 - SSH Fly → VPS: [`fly-ionos-ssh.md`](./fly-ionos-ssh.md)
+- Gitea + Supabase (Postgres, RLS / badge UNRESTRICTED): [`gitea-supabase-postgres.md`](./gitea-supabase-postgres.md) — secção 7
 - Deploy Docker na IONOS: [`deploy/ionos/`](../../deploy/ionos/)

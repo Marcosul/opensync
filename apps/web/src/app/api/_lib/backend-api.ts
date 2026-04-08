@@ -47,13 +47,15 @@ export async function backendRequest<T>(
   }
   const method = options.method ?? "GET";
   const url = `${base}${resolveBackendPath(path)}`;
-  const headers = {
-    "Content-Type": "application/json",
+  const body =
+    options.body === undefined ? undefined : JSON.stringify(options.body);
+  const headers: Record<string, string> = {
     "x-opensync-user-id": user.id,
     "x-opensync-user-email": user.email ?? "",
   };
-  const body =
-    options.body === undefined ? undefined : JSON.stringify(options.body);
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
 
   let lastStatus = 0;
   for (let attempt = 1; attempt <= BACKEND_FETCH_MAX_ATTEMPTS; attempt++) {

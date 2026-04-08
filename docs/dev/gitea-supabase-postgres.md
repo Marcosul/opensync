@@ -12,26 +12,29 @@ Este guia mostra como configurar o Gitea na VPS IONOS usando **PostgreSQL hosped
 
 - Servidor: `216.250.124.232`
 - Stack: `/opt/opensync/docker-compose.yml`
-- `gitea.env` atualizado para:
+- `gitea.env` com Postgres (Supabase), por exemplo:
   - `GITEA__database__DB_TYPE=postgres`
   - `GITEA__database__HOST=aws-1-us-east-2.pooler.supabase.com:5432`
   - `GITEA__database__NAME=postgres`
   - `GITEA__database__USER=postgres.gpnxlfnjuxqhlsmxwfmc`
   - `GITEA__database__SSL_MODE=require`
-- Backup automático: `gitea.env.bak.<timestamp>`
-- Serviço reiniciado com `docker compose up -d` e endpoint web respondendo `HTTP 200`.
-- Instalação concluída sem formulário web:
-  - `INSTALL_LOCK=true`
-  - admin `marcosul` criado por CLI com email `marcosul@gmail.com`
-  - senha temporária: definida na criação e removida da documentação
-  - senha definitiva: `zQyBxBVXRyLrVTIvzc1UPNTn`
-  - modo privado inicial: `DISABLE_REGISTRATION=true`, `REQUIRE_SIGNIN_VIEW=true`
- - Token de integração (`GITEA_ADMIN_TOKEN`) gerado no Gitea e aplicado:
-   - local: [`apps/api/.env`](../../apps/api/.env)
-   - produção: `fly secrets set -a opensync-api`
+- Backups: `gitea.env.bak.<timestamp>`
+- `docker compose up -d`; raiz e `/api/healthz` com `HTTP 200` quando o serviço e a base estão corretos.
+- `INSTALL_LOCK=true`; admin atual **`opensync-admin`** (`admin@opensync.space`) criado por CLI; senhas e tokens **só** em [`apps/api/.env`](../../apps/api/.env) e em `fly secrets` — não versionar.
+- Modo privado inicial típico: `DISABLE_REGISTRATION=true`, `REQUIRE_SIGNIN_VIEW=true`.
+- **`GITEA_ADMIN_TOKEN`**: definido no Gitea (ex.: token gerado com `gitea admin user create --access-token`) e replicado em `apps/api/.env` e `fly secrets set -a opensync-api`.
 
+### Se a base Postgres estiver vazia (sem tabelas)
 
-> Rotacionar senha de admin no primeiro login e revogar/regenerar token se necessário.
+Após mudar o Gitea para Postgres, é obrigatório aplicar o schema. No contentor:
+
+```bash
+docker exec -u git opensync-gitea gitea migrate -c /data/gitea/conf/app.ini
+```
+
+Sem isto, os logs mostram `pq: relation "user" does not exist` e `/user/login` pode devolver **500**.
+
+> Rotacionar senha no primeiro login se o assistente o exigir; revogar/regenerar token se houver exposição.
 
 Referência oficial do Gitea para banco: [Database preparation](https://docs.gitea.io/en-us/database-prep/).
 
@@ -134,14 +137,72 @@ fly secrets set GITEA_URL=http://SEU_IP:3000 -a opensync-api
 fly secrets set GITEA_ADMIN_TOKEN=SEU_TOKEN -a opensync-api
 ```
 
-## 7) Checklist de operação para escala
+## 7) Supabase: badge «UNRESTRICTED» nas tabelas do Gitea
+
+No Table Editor, **UNRESTRICTED** significa **Row Level Security (RLS) desligada** nessa tabela.
+
+- As tabelas do **OpenSync** (Prisma: `profiles`, `workspaces`, `vaults`, `agents`, `file_links`, `commits`, `audit_log`) devem ter **RLS + políticas** conforme a vossa política de segurança.
+- As tabelas criadas pelo **Gitea** (`user`, `session`, `repository`, …) **não** usam o cliente Supabase — o Gitea liga-se ao Postgres diretamente. Mesmo assim, com RLS desligada, o Supabase avisa porque **PostgREST** (API `anon` / `authenticated`) pode expor dados se existirem `GRANT` inadequados.
+
+**Comportamento em PostgreSQL:** com RLS **ligada** e **sem políticas** para o papel `anon` / `authenticated`, esses papéis **não** vêem linhas. O utilizador do Gitea no Postgres é normalmente **dono** das tabelas que o Gitea criou; o **dono ignora RLS** (salvo `FORCE ROW LEVEL SECURITY`), por isso o **contentor Gitea continua a funcionar**.
+
+### SQL sugerido (correr no SQL Editor, projeto PRODUCTION)
+
+1. Revisa a lista de exclusão `app_tables` — deve coincidir com as tabelas **da aplicação OpenSync** no `public` (ajusta se tiveres mais modelos Prisma).
+2. Executa **uma vez**. Depois, no dashboard, as tabelas do Gitea devem deixar de aparecer como «UNRESTRICTED» (RLS ativo).
+
+```sql
+-- Ativa RLS em todas as tabelas de public que NÃO são da app OpenSync nem migrações Prisma.
+-- Gitea: o role que cria as tabelas (dono) continua a aceder; anon/authenticated ficam sem políticas = sem acesso via API Supabase.
+
+DO $$
+DECLARE
+  app_tables text[] := ARRAY[
+    'profiles',
+    'workspaces',
+    'vaults',
+    'agents',
+    'file_links',
+    'commits',
+    'audit_log',
+    '_prisma_migrations'
+  ];
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.relname AS tablename
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND NOT c.relname = ANY (app_tables)
+      -- Extensões PostGIS / sistema comuns em public (se existirem)
+      AND c.relname NOT IN (
+        'spatial_ref_sys',
+        'geography_columns',
+        'geometry_columns',
+        'raster_columns',
+        'raster_overviews'
+      )
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.tablename);
+    RAISE NOTICE 'RLS enabled: %', r.tablename;
+  END LOOP;
+END $$;
+```
+
+**Políticas nas tabelas OpenSync:** este script **não** cria políticas em `profiles`, `vaults`, etc. — isso continua ao vosso critério (já deveis ter RLS + policies para o que expõeis ao cliente Supabase).
+
+**Alternativa de médio prazo:** base ou utilizador **Postgres dedicado só ao Gitea** (ver secção 1 deste guia), para não misturar metadados do Gitea com o projeto Supabase da app.
+
+## 8) Checklist de operação para escala
 
 - Backup diário do banco Supabase usado pelo Gitea.
 - Backup de `/opt/opensync/gitea-data` (repos e anexos).
 - Monitorar `docker logs` e uso de disco na VPS.
 - Planejar migração para domínio + HTTPS (`git.opensync.space`) antes de abrir para tráfego amplo.
 
-## 8) Riscos e cuidados
+## 9) Riscos e cuidados
 
 - **Não usar credenciais da aplicação** para o Gitea; use usuário próprio.
 - Não commitar `gitea.env` com senha real.
