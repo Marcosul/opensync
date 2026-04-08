@@ -4,32 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { apiRequest } from "@/api/rest/generic";
-import { AgentConnectionStep } from "@/components/onboarding/agent-connection-step";
 import { Button } from "@/components/ui/button";
-import {
-  buildAgentConnectionPayload,
-  getAgentConnectionValidationMessage,
-  isAgentConnectionValid,
-  type AgentConnectionForm,
-} from "@/lib/onboarding-agent";
 
 type OnboardingData = {
   goals: string[];
   usageContext: string;
   frequency: string;
-} & AgentConnectionForm;
-
-const TOTAL_STEPS = 5;
-
-const defaultAgentFields: AgentConnectionForm = {
-  agentMode: "ssh_key",
-  sshHost: "",
-  sshPort: "22",
-  sshUser: "",
-  sshPrivateKey: "",
-  sshPassword: "",
-  sshRemotePath: "",
 };
+
+const TOTAL_STEPS = 4;
 
 const goalOptions = [
   "Acessar os arquivos do meu agente openclaw pela web",
@@ -56,7 +39,6 @@ export default function OnboardingPage() {
     goals: [],
     usageContext: "",
     frequency: "",
-    ...defaultAgentFields,
   });
 
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -110,7 +92,6 @@ export default function OnboardingPage() {
     if (step === 2) return formData.goals.length > 0;
     if (step === 3) return Boolean(formData.usageContext);
     if (step === 4) return Boolean(formData.frequency);
-    if (step === 5) return isAgentConnectionValid(formData);
     return false;
   }, [formData, step, workspaceName]);
 
@@ -118,23 +99,12 @@ export default function OnboardingPage() {
     setSubmitError(null);
     setIsSubmitting(true);
     try {
-      const formatMsg = getAgentConnectionValidationMessage(formData);
-      if (formatMsg) {
-        setSubmitError(formatMsg);
-        return;
-      }
-      const agentConnection = buildAgentConnectionPayload(formData);
-      if (!agentConnection) {
-        setSubmitError("Preencha os dados de conexao do agente.");
-        return;
-      }
       await apiRequest<{ ok: boolean }>("/api/onboarding/complete", {
         method: "POST",
         body: {
           goals: formData.goals,
           usageContext: formData.usageContext,
           frequency: formData.frequency,
-          agentConnection,
         },
       });
       router.replace("/dashboard");
@@ -251,7 +221,7 @@ export default function OnboardingPage() {
                 id="workspace-name"
                 type="text"
                 autoComplete="organization"
-                placeholder="Ex.: Meu projeto, Equipa Alpha, OpenClaw casa"
+                placeholder="Ex.: marco's Workspace"
                 value={workspaceName}
                 onChange={(e) => setWorkspaceName(e.target.value)}
                 disabled={isSubmitting}
@@ -299,18 +269,6 @@ export default function OnboardingPage() {
             options={frequencyOptions}
             selected={formData.frequency ? [formData.frequency] : []}
             onSelect={(value) => setFormData((prev) => ({ ...prev, frequency: value }))}
-          />
-        ) : null}
-
-        {step === 5 ? (
-          <AgentConnectionStep
-            form={formData}
-            onChange={(next) =>
-              setFormData((prev) => ({
-                ...prev,
-                ...next,
-              }))
-            }
           />
         ) : null}
       </div>

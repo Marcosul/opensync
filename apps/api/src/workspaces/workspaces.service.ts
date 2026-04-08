@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../common/prisma.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
+import { defaultWorkspaceNameFromEmail } from './workspace-default-name';
 
 const colors = {
   reset: '\x1b[0m',
@@ -27,7 +28,7 @@ export class WorkspacesService {
 
   /**
    * Garante um workspace para o utilizador: reutiliza o primeiro (ex.: trigger no Supabase)
-   * ou cria um "Default" se ainda não existir nenhum.
+   * ou cria um com nome "{emailLocal}'s Workspace" se ainda não existir nenhum.
    */
   async ensureDefaultWorkspace(userId: string): Promise<string> {
     const existing = await this.prisma.workspace.findFirst({
@@ -38,12 +39,17 @@ export class WorkspacesService {
     if (existing) {
       return existing.id;
     }
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const name = defaultWorkspaceNameFromEmail(profile?.email ?? null);
     const created = await this.prisma.workspace.create({
-      data: { userId, name: 'Default' },
+      data: { userId, name },
       select: { id: true },
     });
     this.logger.log(
-      `${colors.yellow}📁 Workspace Default criado (fallback):${colors.reset} user=${userId} id=${created.id}`,
+      `${colors.yellow}📁 Workspace inicial criado (fallback):${colors.reset} user=${userId} id=${created.id} name=${name}`,
     );
     return created.id;
   }

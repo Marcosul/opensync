@@ -48,35 +48,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Selecione pelo menos um objetivo" }, { status: 400 });
   }
 
-  if (!payload.agentConnection) {
-    return NextResponse.json({ error: "Informe a conexao do agente" }, { status: 400 });
-  }
+  let connectionToSave: Exclude<AgentConnectionPayload, { mode: "gateway" }> | null = null;
 
-  if (payload.agentConnection.mode === "gateway") {
-    return NextResponse.json(
-      { error: "Conexao via gateway foi descontinuada. Use SSH com chave ou com senha." },
-      { status: 400 },
-    );
-  }
-
-  const ac = payload.agentConnection;
-  const sshProbe = sshPullAuthFromStored(toStoredAgentConnection(ac, undefined));
-  if (sshProbe) {
-    try {
-      await verifySshRemotePath(sshProbe);
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? mapSshKeyOrConnectionError(err.message)
-          : "Falha na conexao SSH ou no caminho remoto.";
-      return NextResponse.json({ error: message }, { status: 400 });
+  if (payload.agentConnection) {
+    if (payload.agentConnection.mode === "gateway") {
+      return NextResponse.json(
+        { error: "Conexao via gateway foi descontinuada. Use SSH com chave ou com senha." },
+        { status: 400 },
+      );
     }
-  }
 
-  let connectionToSave: Exclude<AgentConnectionPayload, { mode: "gateway" }> = ac;
-  if (ac.mode === "ssh_key" || ac.mode === "ssh_password") {
-    const rp = ac.remotePath?.trim() || DEFAULT_SSH_REMOTE_PATH;
-    connectionToSave = { ...ac, remotePath: normalizeStoredRemotePath(rp) };
+    const ac = payload.agentConnection;
+    const sshProbe = sshPullAuthFromStored(toStoredAgentConnection(ac, undefined));
+    if (sshProbe) {
+      try {
+        await verifySshRemotePath(sshProbe);
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? mapSshKeyOrConnectionError(err.message)
+            : "Falha na conexao SSH ou no caminho remoto.";
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+    }
+
+    let normalized: Exclude<AgentConnectionPayload, { mode: "gateway" }> = ac;
+    if (ac.mode === "ssh_key" || ac.mode === "ssh_password") {
+      const rp = ac.remotePath?.trim() || DEFAULT_SSH_REMOTE_PATH;
+      normalized = { ...ac, remotePath: normalizeStoredRemotePath(rp) };
+    }
+    connectionToSave = normalized;
   }
 
   const completedAt = new Date().toISOString();
@@ -172,7 +173,7 @@ async function saveOnboardingToUserMetadata(
     goals: string[];
     usageContext: string | null;
     frequency: string | null;
-    agentConnection: AgentConnectionPayload;
+    agentConnection: AgentConnectionPayload | null;
   },
 ): Promise<string | null> {
   const { error } = await supabase.auth.updateUser({
