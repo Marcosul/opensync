@@ -3,26 +3,32 @@
 import {
   Bell,
   Command,
+  CreditCard,
   Globe,
   HelpCircle,
   Languages,
   LayoutTemplate,
   Link2,
   Palette,
+  RefreshCw,
   Settings2,
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import { useSyncBaseTheme } from "@/components/theme/base-theme-provider";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { defaultUserSettings, type UserSettings } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
 
 type SettingsSectionId =
   | "about"
+  | "billing"
+  | "sync"
   | "editor"
   | "files-links"
   | "appearance"
@@ -37,6 +43,8 @@ type SettingsSection = {
 
 const settingsSections: SettingsSection[] = [
   { id: "about", title: "Sobre", subtitle: "Versão, idioma e conta", icon: HelpCircle },
+  { id: "billing", title: "Cobrança", subtitle: "Crédito, faturas e pagamentos", icon: CreditCard },
+  { id: "sync", title: "Sincronização", subtitle: "Planos e armazenamento na nuvem", icon: RefreshCw },
   { id: "editor", title: "Editor", subtitle: "Modo de edição e exibição", icon: LayoutTemplate },
   {
     id: "files-links",
@@ -48,8 +56,83 @@ const settingsSections: SettingsSection[] = [
   { id: "hotkeys", title: "Atalhos", subtitle: "Comandos do teclado", icon: Command },
 ];
 
+function getSectionIntro(section: SettingsSectionId): { eyebrow: string; title: string; description: string } {
+  const meta = settingsSections.find((s) => s.id === section);
+  const fallbackEyebrow = meta?.title ?? "Configurações";
+
+  if (section === "about") {
+    return {
+      eyebrow: "Sobre",
+      title: "Preferências do aplicativo",
+      description:
+        "Ajuste o ambiente para o seu fluxo de trabalho. As mudanças são salvas automaticamente.",
+    };
+  }
+
+  if (section === "billing") {
+    return {
+      eyebrow: "Cobrança",
+      title: "Cobrança e pagamentos",
+      description:
+        "Crédito da conta, faturas, impostos e benefícios. Ações abaixo são visuais até a integração com pagamentos.",
+    };
+  }
+
+  if (section === "sync") {
+    return {
+      eyebrow: "Sincronização",
+      title: "Sincronização na nuvem",
+      description:
+        "Sincronize notas entre dispositivos com criptografia de ponta a ponta. Reembolso sem complicações nos primeiros dias, quando o plano estiver ativo.",
+    };
+  }
+
+  return {
+    eyebrow: fallbackEyebrow,
+    title: "Preferências do aplicativo",
+    description:
+      "Ajuste o ambiente para o seu fluxo de trabalho. As mudanças são salvas automaticamente.",
+  };
+}
+
+const syncPlanPricing = {
+  monthly: {
+    standard: { price: "US$ 5", line: "por mês, cobrança mensal" },
+    plus: { price: "US$ 10", line: "por mês, cobrança mensal" },
+  },
+  yearly: {
+    standard: { price: "US$ 48", line: "por ano, cobrança anual" },
+    plus: { price: "US$ 96", line: "por ano, cobrança anual" },
+  },
+} as const;
+
+function parseSettingsSectionParam(raw: string | null): SettingsSectionId | null {
+  if (!raw) return null;
+  return settingsSections.some((s) => s.id === raw) ? (raw as SettingsSectionId) : null;
+}
+
 export default function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("about");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sectionFromUrl = parseSettingsSectionParam(searchParams.get("section"));
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(
+    () => sectionFromUrl ?? "about",
+  );
+
+  const selectSection = useCallback(
+    (id: SettingsSectionId) => {
+      setActiveSection(id);
+      router.replace(`/settings?section=${id}`, { scroll: false });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const parsed = parseSettingsSectionParam(searchParams.get("section"));
+    if (parsed) setActiveSection(parsed);
+    else setActiveSection("about");
+  }, [searchParams]);
+  const [syncBillingCycle, setSyncBillingCycle] = useState<"monthly" | "yearly">("monthly");
   const [settings, setSettings] = useState<UserSettings>(defaultUserSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -60,10 +143,7 @@ export default function SettingsPage() {
   const settingsLoadSucceededRef = useRef(false);
   const syncBaseTheme = useSyncBaseTheme();
 
-  const activeSectionData = useMemo(
-    () => settingsSections.find((section) => section.id === activeSection),
-    [activeSection],
-  );
+  const sectionIntro = useMemo(() => getSectionIntro(activeSection), [activeSection]);
 
   useEffect(() => {
     let mounted = true;
@@ -150,7 +230,25 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+        <div className="shrink-0 border-b border-border bg-muted/20 p-3 lg:hidden">
+          <label htmlFor="settings-nav-mobile" className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Seção
+          </label>
+          <select
+            id="settings-nav-mobile"
+            className={cn(selectClass, "w-full min-w-0 max-w-full")}
+            value={activeSection}
+            onChange={(e) => selectSection(e.target.value as SettingsSectionId)}
+          >
+            {settingsSections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <aside className="hidden w-72 shrink-0 border-r border-border bg-muted/20 p-3 lg:block">
           <nav className="space-y-1">
             {settingsSections.map(({ id, title, subtitle, icon: Icon }) => {
@@ -159,7 +257,7 @@ export default function SettingsPage() {
                 <button
                   key={id}
                   type="button"
-                  onClick={() => setActiveSection(id)}
+                  onClick={() => selectSection(id)}
                   className={cn(
                     "w-full rounded-xl border px-3 py-2.5 text-left transition-colors",
                     isActive
@@ -187,16 +285,34 @@ export default function SettingsPage() {
           </nav>
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
+        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
           <section className="mx-auto w-full max-w-5xl space-y-6">
             <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {activeSectionData?.title}
-              </p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight">Preferências do aplicativo</h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Ajuste o ambiente para o seu fluxo de trabalho. As mudanças são salvas automaticamente.
-              </p>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {sectionIntro.eyebrow}
+                  </p>
+                  <h1 className="mt-1 text-2xl font-semibold tracking-tight">{sectionIntro.title}</h1>
+                  <p className="mt-2 text-sm text-muted-foreground">{sectionIntro.description}</p>
+                  {activeSection === "sync" ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      <a href="/" className="font-medium text-primary underline-offset-4 hover:underline">
+                        Saiba mais
+                      </a>{" "}
+                      sobre como a sincronização funciona no OpenSync.
+                    </p>
+                  ) : null}
+                </div>
+                {activeSection === "sync" ? (
+                  <Link
+                    href="/settings/sync/checkout"
+                    className={cn(buttonVariants({ size: "sm" }), "shrink-0 sm:self-start")}
+                  >
+                    Assinar sincronização
+                  </Link>
+                ) : null}
+              </div>
               {saveError ? <p className="mt-2 text-sm text-destructive">{saveError}</p> : null}
             </div>
 
@@ -239,6 +355,173 @@ export default function SettingsPage() {
                     }
                   />
                 </SettingPanel>
+              </div>
+            ) : null}
+
+            {activeSection === "billing" ? (
+              <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+                <BillingRow
+                  title="Crédito OpenSync"
+                  description={
+                    <>
+                      <span className="block font-medium text-foreground">US$ 0,00 de saldo</span>
+                      <span className="mt-1 block">
+                        O crédito pode ser usado para licenças e serviços. Será aplicado antes de cobrar o cartão.
+                      </span>
+                    </>
+                  }
+                  action={
+                    <Button type="button" size="sm">
+                      Comprar crédito
+                    </Button>
+                  }
+                />
+                <BillingRow
+                  title="Faturas e reembolsos"
+                  description="Baixe notas fiscais e solicite reembolsos de pagamentos anteriores."
+                  action={
+                    <Button type="button" variant="outline" size="sm">
+                      Ver
+                    </Button>
+                  }
+                />
+                <BillingRow
+                  title="Método de pagamento"
+                  description="Visualize ou altere o cartão usado nas cobranças."
+                  action={
+                    <Button type="button" variant="outline" size="sm">
+                      Gerenciar
+                    </Button>
+                  }
+                />
+                <BillingRow
+                  title="Isenção de impostos"
+                  description="Cadastre e gerencie isenções quando aplicável à sua região."
+                  action={
+                    <Button type="button" variant="outline" size="sm">
+                      Gerenciar
+                    </Button>
+                  }
+                />
+                <BillingRow
+                  title="Desconto"
+                  description={
+                    <>
+                      Estudantes, docentes e organizações sem fins lucrativos podem ter desconto em planos elegíveis.{" "}
+                      <a href="/" className="font-medium text-primary underline-offset-4 hover:underline">
+                        Saiba mais
+                      </a>
+                      .
+                    </>
+                  }
+                  action={
+                    <Button type="button" variant="outline" size="sm">
+                      Aplicar
+                    </Button>
+                  }
+                />
+                <BillingRow
+                  title="Histórico de presentes"
+                  description="Você ainda não enviou nem recebeu crédito de presente."
+                  action={
+                    <Button type="button" variant="outline" size="sm">
+                      Resgatar
+                    </Button>
+                  }
+                />
+              </div>
+            ) : null}
+
+            {activeSection === "sync" ? (
+              <div className="space-y-4">
+                <div className="flex justify-center sm:justify-start">
+                  <div
+                    className="inline-flex rounded-full border border-border bg-muted/40 p-1"
+                    role="group"
+                    aria-label="Ciclo de cobrança"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSyncBillingCycle("yearly")}
+                      className={cn(
+                        "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
+                        syncBillingCycle === "yearly"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      Anual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSyncBillingCycle("monthly")}
+                      className={cn(
+                        "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
+                        syncBillingCycle === "monthly"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      Mensal
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div
+                    className={cn(
+                      "flex flex-col rounded-2xl border bg-card p-5",
+                      "border-primary/40 shadow-sm ring-1 ring-primary/15",
+                    )}
+                  >
+                    <h2 className="text-lg font-semibold">Sync Standard</h2>
+                    <p className="mt-3 text-3xl font-semibold tracking-tight">
+                      {syncPlanPricing[syncBillingCycle].standard.price}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {syncPlanPricing[syncBillingCycle].standard.line}
+                    </p>
+                    <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                      <li>1 cofre</li>
+                      <li>1 GB de armazenamento total</li>
+                      <li>Arquivos até 5 MB</li>
+                      <li>1 mês de histórico</li>
+                      <li>Dispositivos ilimitados</li>
+                      <li>Cofres compartilhados</li>
+                    </ul>
+                    <Link
+                      href="/settings/sync/checkout?plan=standard"
+                      className={cn(
+                        buttonVariants({ variant: "outline", size: "sm" }),
+                        "mt-6 inline-flex w-full sm:w-auto",
+                      )}
+                    >
+                      Escolher Standard
+                    </Link>
+                  </div>
+
+                  <div className="flex flex-col rounded-2xl border border-border bg-card p-5">
+                    <h2 className="text-lg font-semibold">Sync Plus</h2>
+                    <p className="mt-3 text-3xl font-semibold tracking-tight">
+                      {syncPlanPricing[syncBillingCycle].plus.price}
+                    </p>
+                    <p className="text-sm text-muted-foreground">{syncPlanPricing[syncBillingCycle].plus.line}</p>
+                    <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                      <li>10 cofres</li>
+                      <li>10 GB de armazenamento total</li>
+                      <li>Arquivos até 200 MB</li>
+                      <li>12 meses de histórico</li>
+                      <li>Dispositivos ilimitados</li>
+                      <li>Cofres compartilhados</li>
+                    </ul>
+                    <Link
+                      href="/settings/sync/checkout?plan=plus"
+                      className={cn(buttonVariants({ size: "sm" }), "mt-6 inline-flex w-full sm:w-auto")}
+                    >
+                      Escolher Plus
+                    </Link>
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -411,6 +694,26 @@ export default function SettingsPage() {
           </section>
         </main>
       </div>
+    </div>
+  );
+}
+
+function BillingRow({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: ReactNode;
+  action: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-border py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <div className="mt-1 text-sm text-muted-foreground">{description}</div>
+      </div>
+      <div className="shrink-0">{action}</div>
     </div>
   );
 }
