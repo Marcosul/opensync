@@ -118,7 +118,7 @@ export function isGitLazyVaultTree(tree: TreeEntry): boolean {
 
 /** Caminhos relativos no repo (docIds) a partir da arvore lazy atual; exclui placeholder. */
 export function collectLazyGitRepoRelativePaths(tree: TreeEntry): string[] {
-  if (!isGitLazyVaultTree(tree)) return [];
+  if (!isGitLazyVaultTree(tree) || tree.type !== "dir") return [];
   const out: string[] = [];
   function walk(entries: TreeEntry[]) {
     for (const e of entries) {
