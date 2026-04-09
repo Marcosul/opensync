@@ -3,9 +3,11 @@
 import {
   Bell,
   Command,
+  Copy,
   CreditCard,
   Globe,
   HelpCircle,
+  KeyRound,
   Languages,
   LayoutTemplate,
   Link2,
@@ -14,6 +16,7 @@ import {
   Settings2,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -32,7 +35,8 @@ type SettingsSectionId =
   | "editor"
   | "files-links"
   | "appearance"
-  | "hotkeys";
+  | "hotkeys"
+  | "access-tokens";
 
 type SettingsSection = {
   id: SettingsSectionId;
@@ -54,6 +58,12 @@ const settingsSections: SettingsSection[] = [
   },
   { id: "appearance", title: "Aparência", subtitle: "Tema, interface e fontes", icon: Palette },
   { id: "hotkeys", title: "Atalhos", subtitle: "Comandos do teclado", icon: Command },
+  {
+    id: "access-tokens",
+    title: "Tokens de acesso",
+    subtitle: "Autenticação para CLI e agentes",
+    icon: KeyRound,
+  },
 ];
 
 function getSectionIntro(section: SettingsSectionId): { eyebrow: string; title: string; description: string } {
@@ -84,6 +94,15 @@ function getSectionIntro(section: SettingsSectionId): { eyebrow: string; title: 
       title: "Sincronização na nuvem",
       description:
         "Sincronize notas entre dispositivos com criptografia de ponta a ponta. Reembolso sem complicações nos primeiros dias, quando o plano estiver ativo.",
+    };
+  }
+
+  if (section === "access-tokens") {
+    return {
+      eyebrow: "Tokens de acesso",
+      title: "Tokens de acesso",
+      description:
+        "Gere tokens para autenticar o opensync-ubuntu e outros clientes CLI no seu workspace. Cada token tem acesso somente leitura à lista de vaults e pode gerar tokens de sync para vaults específicos.",
     };
   }
 
@@ -133,6 +152,11 @@ export default function SettingsPage() {
     else setActiveSection("about");
   }, [searchParams]);
   const [syncBillingCycle, setSyncBillingCycle] = useState<"monthly" | "yearly">("monthly");
+  const [accessTokens, setAccessTokens] = useState<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]>([]);
+  const [accessTokensLoading, setAccessTokensLoading] = useState(false);
+  const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
+  const [newTokenLabel, setNewTokenLabel] = useState("");
+  const [tokenGenerating, setTokenGenerating] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(defaultUserSettings);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -207,9 +231,52 @@ export default function SettingsPage() {
     syncBaseTheme(settings.baseTheme);
   }, [hasFetched, settings.baseTheme, syncBaseTheme]);
 
+  useEffect(() => {
+    if (activeSection !== "access-tokens") return;
+    let mounted = true;
+    setAccessTokensLoading(true);
+    void apiRequest<{ keys: { id: string; label: string; createdAt: string; lastUsedAt: string | null }[] }>(
+      "/api/user-access-keys",
+    )
+      .then((r) => { if (mounted) setAccessTokens(r.keys); })
+      .catch(() => { if (mounted) setAccessTokens([]); })
+      .finally(() => { if (mounted) setAccessTokensLoading(false); });
+    return () => { mounted = false; };
+  }, [activeSection]);
+
   function updateSetting<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
     setSaveState("idle");
+  }
+
+  async function generateAccessToken() {
+    setTokenGenerating(true);
+    try {
+      const result = await apiRequest<{ token: string; id: string; label: string }>(
+        "/api/user-access-keys",
+        { method: "POST", body: { label: newTokenLabel || "Token de acesso" } },
+      );
+      setNewTokenValue(result.token);
+      setNewTokenLabel("");
+      // Recarregar lista
+      const list = await apiRequest<{ keys: { id: string; label: string; createdAt: string; lastUsedAt: string | null }[] }>(
+        "/api/user-access-keys",
+      );
+      setAccessTokens(list.keys);
+    } catch {
+      // erro silencioso — UI não colapsa
+    } finally {
+      setTokenGenerating(false);
+    }
+  }
+
+  async function revokeAccessToken(id: string) {
+    try {
+      await apiRequest(`/api/user-access-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setAccessTokens((prev) => prev.filter((k) => k.id !== id));
+    } catch {
+      // erro silencioso
+    }
   }
 
   return (
@@ -689,6 +756,132 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </SettingPanel>
+              </div>
+            ) : null}
+
+            {activeSection === "access-tokens" ? (
+              <div className="grid gap-4">
+                {/* Gerar novo token */}
+                <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+                  <div className="mb-4 border-b border-border pb-4">
+                    <h2 className="text-base font-semibold">Gerar novo token</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Use tokens <code className="rounded bg-muted px-1 py-0.5 text-xs">usk_...</code> para autenticar o{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>.
+                    </p>
+                  </div>
+
+                  {newTokenValue ? (
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                        Copie o token agora — ele não será exibido novamente.
+                      </p>
+                      <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
+                        <code className="min-w-0 flex-1 break-all text-xs text-foreground">{newTokenValue}</code>
+                        <button
+                          type="button"
+                          title="Copiar"
+                          onClick={() => void navigator.clipboard.writeText(newTokenValue)}
+                          className="shrink-0 rounded p-1 hover:bg-amber-100 dark:hover:bg-amber-900"
+                        >
+                          <Copy className="size-4 text-muted-foreground" />
+                        </button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setNewTokenValue(null)}
+                      >
+                        Fechar
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <div className="flex-1">
+                        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          Descrição (opcional)
+                        </label>
+                        <input
+                          className={inputClass}
+                          placeholder="Ex: Laptop pessoal"
+                          value={newTokenLabel}
+                          onChange={(e) => setNewTokenLabel(e.target.value)}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={tokenGenerating}
+                        onClick={() => void generateAccessToken()}
+                      >
+                        <KeyRound className="size-3.5" />
+                        {tokenGenerating ? "Gerando..." : "Gerar token"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lista de tokens ativos */}
+                <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+                  <div className="mb-4 border-b border-border pb-4">
+                    <h2 className="text-base font-semibold">Tokens ativos</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Revogue tokens que não estão mais em uso.
+                    </p>
+                  </div>
+
+                  {accessTokensLoading ? (
+                    <p className="text-sm text-muted-foreground">Carregando...</p>
+                  ) : accessTokens.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Nenhum token ativo.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {accessTokens.map((key) => (
+                        <div
+                          key={key.id}
+                          className="flex items-center justify-between rounded-xl border border-border bg-background px-3 py-2.5"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">{key.label}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Criado em {new Date(key.createdAt).toLocaleDateString("pt-BR")}
+                              {key.lastUsedAt
+                                ? ` · Usado em ${new Date(key.lastUsedAt).toLocaleDateString("pt-BR")}`
+                                : " · Nunca usado"}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            title="Revogar"
+                            onClick={() => void revokeAccessToken(key.id)}
+                            className="ml-3 shrink-0 rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Instrução CLI */}
+                <div className="rounded-2xl border border-border bg-muted/30 p-4 sm:p-5">
+                  <h3 className="text-sm font-semibold">Como usar</h3>
+                  <ol className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+                    <li>
+                      <span className="font-medium text-foreground">1.</span> Instale o agente:{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">sudo dpkg -i opensync-ubuntu.deb</code>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">2.</span> Execute o wizard:{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">3.</span> Cole o token gerado acima quando solicitado.
+                    </li>
+                  </ol>
+                </div>
               </div>
             ) : null}
           </section>

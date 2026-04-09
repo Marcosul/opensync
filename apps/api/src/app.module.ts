@@ -9,6 +9,8 @@ import { CommitsModule } from './commits/commits.module';
 import { GraphModule } from './graph/graph.module';
 import { PlansModule } from './plans/plans.module';
 import { BillingModule } from './billing/billing.module';
+import { UserAccessKeysModule } from './user-access-keys/user-access-keys.module';
+import { UserModule } from './user/user.module';
 import { HealthController } from './health.controller';
 import { PrismaModule } from './common/prisma.module';
 
@@ -26,6 +28,8 @@ import { PrismaModule } from './common/prisma.module';
     GraphModule,
     PlansModule,
     BillingModule,
+    UserAccessKeysModule,
+    UserModule,
   ],
 })
 export class AppModule {}

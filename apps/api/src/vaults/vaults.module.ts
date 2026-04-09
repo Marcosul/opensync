@@ -10,5 +10,6 @@ import { VaultsService } from './vaults.service';
   imports: [SyncModule, VaultFilesModule, WorkspacesModule, ThrottlerModule],
   controllers: [VaultsController],
   providers: [VaultsService],
+  exports: [VaultsService],
 })
 export class VaultsModule {}

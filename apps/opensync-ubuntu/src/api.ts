@@ -5,6 +5,102 @@ function apiBase(cfg: AgentConfig): string {
   return raw.endsWith("/api") ? raw : `${raw}/api`;
 }
 
+// ─── User API (autenticado via usk_...) ──────────────────────────────────────
+
+export type UserVault = {
+  id: string;
+  name: string;
+  description?: string;
+  workspaceName: string;
+  createdAt: string;
+};
+
+export async function fetchMe(
+  apiUrl: string,
+  uskToken: string,
+): Promise<{ userId: string; email: string }> {
+  const base = apiUrl.replace(/\/+$/, "").endsWith("/api")
+    ? apiUrl.replace(/\/+$/, "")
+    : `${apiUrl.replace(/\/+$/, "")}/api`;
+  const res = await fetch(`${base}/user/me`, {
+    headers: { Authorization: `Bearer ${uskToken}` },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(text || `me ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  return JSON.parse(text) as { userId: string; email: string };
+}
+
+export async function fetchUserVaults(
+  apiUrl: string,
+  uskToken: string,
+): Promise<UserVault[]> {
+  const base = apiUrl.replace(/\/+$/, "").endsWith("/api")
+    ? apiUrl.replace(/\/+$/, "")
+    : `${apiUrl.replace(/\/+$/, "")}/api`;
+  const res = await fetch(`${base}/user/vaults`, {
+    headers: { Authorization: `Bearer ${uskToken}` },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(text || `vaults ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  return (JSON.parse(text) as { vaults: UserVault[] }).vaults;
+}
+
+export async function createUserVault(
+  apiUrl: string,
+  uskToken: string,
+  name: string,
+): Promise<UserVault> {
+  const base = apiUrl.replace(/\/+$/, "").endsWith("/api")
+    ? apiUrl.replace(/\/+$/, "")
+    : `${apiUrl.replace(/\/+$/, "")}/api`;
+  const res = await fetch(`${base}/user/vaults`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${uskToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(text || `create-vault ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  return (JSON.parse(text) as { vault: UserVault }).vault;
+}
+
+export async function createSyncToken(
+  apiUrl: string,
+  uskToken: string,
+  vaultId: string,
+): Promise<{ token: string }> {
+  const base = apiUrl.replace(/\/+$/, "").endsWith("/api")
+    ? apiUrl.replace(/\/+$/, "")
+    : `${apiUrl.replace(/\/+$/, "")}/api`;
+  const res = await fetch(`${base}/user/vaults/${encodeURIComponent(vaultId)}/sync-token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${uskToken}` },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(text || `sync-token ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  return JSON.parse(text) as { token: string };
+}
+
+// ─── Agent API (autenticado via osk_...) ─────────────────────────────────────
+
 export type ChangeRow = {
   change_id: string;
   path: string;

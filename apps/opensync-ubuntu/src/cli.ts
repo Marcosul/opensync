@@ -26,23 +26,144 @@ async function ask(rl: readline.Interface, q: string, def?: string): Promise<str
 async function cmdInit(): Promise<void> {
   const rl = readline.createInterface({ input, output });
   try {
-    console.log("OpenSync Ubuntu — sincroniza qualquer pasta com um vault OpenSync\n");
-    const apiUrl = await ask(rl, "API URL", "https://api.opensync.space/api");
-    const vaultId = await ask(rl, "Vault ID (UUID)");
-    const syncDir = await ask(
-      rl,
-      "Caminho absoluto da pasta a sincronizar (ex: /home/voce/Documentos/Vault)",
-    );
-    const poll = await ask(rl, "Intervalo de poll em segundos", "20");
-    const token = await ask(rl, "API key do vault (osk_...)");
+    const API_URL = "https://api.opensync.space/api";
 
-    if (!vaultId || !syncDir || !token) {
-      console.error("Erro: vaultId, syncDir e token sao obrigatorios.");
+    console.log("OpenSync Ubuntu — sincroniza qualquer pasta com um vault OpenSync");
+    console.log("──────────────────────────────────────────────────────────────────\n");
+
+    // ── Passo 1: Email ────────────────────────────────────────────────────────
+    const email = await ask(rl, "E-mail da conta OpenSync");
+    if (!email || !email.includes("@")) {
+      console.error("Erro: e-mail invalido.");
       process.exit(1);
     }
 
+    // ── Passo 2: Token do workspace (usk_...) ─────────────────────────────────
+    console.log("\n  Nao tem um token? Gere em:");
+    console.log("  https://opensync.space/settings?section=access-tokens\n");
+    const uskToken = await ask(rl, "Token de acesso (usk_...)");
+    if (!uskToken.startsWith("usk_")) {
+      console.error("Erro: token invalido. Deve comecar com usk_");
+      process.exit(1);
+    }
+
+    // ── Passo 3: Autenticar ───────────────────────────────────────────────────
+    console.log("\nAutenticando...");
+    let confirmedEmail: string;
+    try {
+      const me = await api.fetchMe(API_URL, uskToken);
+      confirmedEmail = me.email;
+      if (confirmedEmail.toLowerCase() !== email.toLowerCase()) {
+        console.error(`Erro: token pertence a outra conta (${confirmedEmail}).`);
+        process.exit(1);
+      }
+      console.log(`✓ Autenticado como ${confirmedEmail}`);
+    } catch (e: unknown) {
+      const err = e as { status?: number; message?: string };
+      if (err?.status === 401 || err?.status === 403) {
+        console.error("Erro: token invalido ou revogado.");
+        console.error("  Gere um novo em: https://opensync.space/settings?section=access-tokens");
+        process.exit(1);
+      }
+      console.error("Erro ao conectar com a API:", err?.message ?? String(e));
+      process.exit(1);
+    }
+
+    // ── Passo 4: Listar vaults existentes ─────────────────────────────────────
+    console.log("\nBuscando seus vaults...");
+    let vaults: api.UserVault[] = [];
+    try {
+      vaults = await api.fetchUserVaults(API_URL, uskToken);
+    } catch {
+      console.warn("Aviso: nao foi possivel listar vaults.");
+    }
+
+    let vaultId: string;
+    let vaultName: string;
+
+    if (vaults.length === 0) {
+      console.log("\nVoce nao possui vaults. Crie seu primeiro vault:");
+      vaultName = await ask(rl, "Nome do vault", "Meu Vault");
+      if (!vaultName) {
+        console.error("Erro: nome do vault obrigatorio.");
+        process.exit(1);
+      }
+      console.log("Criando vault...");
+      try {
+        const created = await api.createUserVault(API_URL, uskToken, vaultName);
+        vaultId = created.id;
+        console.log(`✓ Vault "${vaultName}" criado.`);
+      } catch (e: unknown) {
+        const err = e as { message?: string };
+        console.error("Erro ao criar vault:", err?.message ?? String(e));
+        process.exit(1);
+      }
+    } else {
+      console.log(`\nSeus vaults:`);
+      vaults.forEach((v, i) => {
+        console.log(`  ${i + 1}. ${v.name}  [${v.workspaceName}]`);
+      });
+      console.log(`  ${vaults.length + 1}. + Criar novo vault`);
+
+      const choice = await ask(rl, "\nEscolha (numero)", "1");
+      const idx = parseInt(choice, 10) - 1;
+
+      if (idx === vaults.length) {
+        vaultName = await ask(rl, "Nome do novo vault");
+        if (!vaultName) {
+          console.error("Erro: nome do vault obrigatorio.");
+          process.exit(1);
+        }
+        console.log("Criando vault...");
+        try {
+          const created = await api.createUserVault(API_URL, uskToken, vaultName);
+          vaultId = created.id;
+          console.log(`✓ Vault "${vaultName}" criado.`);
+        } catch (e: unknown) {
+          const err = e as { message?: string };
+          console.error("Erro ao criar vault:", err?.message ?? String(e));
+          process.exit(1);
+        }
+      } else if (idx >= 0 && idx < vaults.length) {
+        vaultId = vaults[idx].id;
+        vaultName = vaults[idx].name;
+        console.log(`✓ Vault selecionado: ${vaultName}`);
+      } else {
+        console.error("Escolha invalida.");
+        process.exit(1);
+      }
+    }
+
+    // ── Passo 5: Pasta local ──────────────────────────────────────────────────
+    const homeDir = process.env.HOME ?? "/home";
+    const syncDir = await ask(
+      rl,
+      "\nPasta local a sincronizar",
+      `${homeDir}/Documents/${vaultName.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+    );
+    if (!syncDir) {
+      console.error("Erro: pasta obrigatoria.");
+      process.exit(1);
+    }
+
+    // ── Passo 6: Gerar sync token (osk_...) ──────────────────────────────────
+    console.log("\nGerando token de sync...");
+    let syncToken: string;
+    try {
+      const result = await api.createSyncToken(API_URL, uskToken, vaultId);
+      syncToken = result.token;
+      console.log("✓ Token de sync gerado.");
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      console.error("Erro ao gerar token de sync:", err?.message ?? String(e));
+      process.exit(1);
+    }
+
+    // ── Passo 7: Salvar config ────────────────────────────────────────────────
+    const poll = await ask(rl, "Intervalo de poll em segundos", "20");
+
     const cfg: AgentConfig = {
-      apiUrl: apiUrl.replace(/\/+$/, ""),
+      apiUrl: API_URL,
       vaultId,
       syncDir,
       pollIntervalSeconds: Math.max(5, parseInt(poll, 10) || 20),
@@ -50,33 +171,16 @@ async function cmdInit(): Promise<void> {
       maxFileSizeBytes: 1048576,
     };
 
-    // Validar credenciais antes de salvar
-    console.log("\nValidando credenciais...");
-    try {
-      await api.fetchChanges(cfg, token, "0");
-      console.log("✓ Credenciais validadas.");
-    } catch (e: unknown) {
-      const err = e as { status?: number; message?: string };
-      if (err?.status === 401 || err?.status === 403) {
-        console.error("Erro: token invalido ou sem permissao para este vault. Verifique a API key.");
-        process.exit(1);
-      }
-      if (err?.status === 404) {
-        console.error("Erro: vault nao encontrado. Verifique o Vault ID.");
-        process.exit(1);
-      }
-      console.warn("Aviso: nao foi possivel validar credenciais (problema de rede?). Salvando config assim mesmo.");
-      console.warn("Detalhe:", err?.message ?? String(e));
-    }
-
     await fs.mkdir(syncDir, { recursive: true });
     saveConfig(cfg);
-    saveToken(token);
+    saveToken(syncToken);
 
-    console.log("\nConfig salva em:", defaultConfigPath());
-    console.log("Token salvo em: ", tokenPath());
+    console.log("\n✓ Configuracao salva:");
+    console.log("  vault:   ", vaultName);
+    console.log("  pasta:   ", syncDir);
+    console.log("  config:  ", defaultConfigPath());
 
-    // Oferecer ativar systemd automaticamente
+    // ── Passo 8: Ativar systemd ───────────────────────────────────────────────
     const activate = await ask(rl, "\nAtivar e iniciar servico systemd agora? (s/n)", "s");
     if (activate.toLowerCase() === "s" || activate.toLowerCase() === "sim") {
       spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
@@ -86,7 +190,7 @@ async function cmdInit(): Promise<void> {
       if (start.status === 0) {
         console.log("\n✓ Servico opensync-ubuntu iniciado.");
         console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
-        console.log("  Status: systemctl --user status opensync-ubuntu");
+        console.log("  Status: opensync-ubuntu status");
       } else {
         console.log("\nNao foi possivel iniciar o servico. Comandos manuais:");
         console.log("  systemctl --user daemon-reload");
@@ -97,9 +201,7 @@ async function cmdInit(): Promise<void> {
       console.log("\nPara iniciar manualmente:");
       console.log("  opensync-ubuntu run");
       console.log("Ou como servico em segundo plano:");
-      console.log("  systemctl --user daemon-reload");
-      console.log("  systemctl --user enable opensync-ubuntu");
-      console.log("  systemctl --user start opensync-ubuntu");
+      console.log("  systemctl --user enable --now opensync-ubuntu");
     }
   } finally {
     rl.close();
