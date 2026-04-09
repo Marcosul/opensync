@@ -16,5 +16,5 @@ export function readOpensyncSkillMarkdown(): string {
       /* next candidate */
     }
   }
-  return "---\nname: opensync\ndescription: OpenSync skill (ficheiro fonte indisponível neste deploy).\n---\n\n# OpenSync\n\nConfigure OPENSYNC_API_URL, OPENSYNC_VAULT_ID e a API key no dashboard OpenSync.\n";
+  return "---\nname: opensync\ndescription: OpenSync skill (ficheiro fonte indisponível neste deploy).\n---\n\n# OpenSync\n\nConfigure `OPENSYNC_API_URL=\"https://api.opensync.space/api\"`, `OPENSYNC_VAULT_ID` e a API key no dashboard OpenSync.\n";
 }

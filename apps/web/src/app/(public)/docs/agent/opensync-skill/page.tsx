@@ -105,8 +105,9 @@ export default async function OpenSyncAgentSkillDocPage() {
 
         <h2 className="mt-10 text-base font-semibold text-foreground">Credenciais (substituir no vosso ambiente)</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          O utilizador obtém estes valores no OpenSync (assistente de novo vault ou Dashboard → Git na VPS). A URL da
-          API deve incluir o sufixo <span className="font-mono text-xs">/api</span>.
+          O utilizador obtém estes valores no OpenSync (assistente de novo vault ou Dashboard → Agente e Git). Em
+          produção use <span className="font-mono text-xs">OPENSYNC_API_URL=&quot;https://api.opensync.space/api&quot;</span>
+          ; em self-hosted, a URL da API Nest também deve terminar em <span className="font-mono text-xs">/api</span>.
         </p>
         <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
           {`export OPENSYNC_API_URL="https://api.opensync.space/api"

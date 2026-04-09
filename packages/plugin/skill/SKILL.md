@@ -21,7 +21,16 @@ git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "p
 
 ## Sincronização via API (recomendado)
 
-1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Git na VPS* → secção *API do agente*, ou assistente de novo vault OpenClaw). Guarde `OPENSYNC_VAULT_ID` e use a URL base da API **com sufixo `/api`** em `OPENSYNC_API_URL` (ex.: `https://api.opensync.space/api`).
+1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Agente e Git* → secção *API do agente*, ou assistente de novo vault OpenClaw). Defina no ambiente do agente (produção OpenSync):
+
+```bash
+export OPENSYNC_API_URL="https://api.opensync.space/api"
+export OPENSYNC_VAULT_ID="<uuid-do-vault>"
+export OPENSYNC_AGENT_API_KEY="<api-key>"
+```
+
+Em **self-hosted**, substitua `OPENSYNC_API_URL` pela URL da vossa API Nest **com sufixo `/api`** (ex.: `https://seu-dominio.com/api`).
+
 2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. Exemplo de endpoint: `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` (corpo JSON conforme o plugin).
 3. **Plugin**: com `OPENSYNC_API_URL`, `OPENSYNC_VAULT_ID` e token no contexto, o comando `/sync` faz commit local e chama a API.
 

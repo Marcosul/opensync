@@ -448,7 +448,7 @@ Isso garante que o estado anterior esteja salvo e possa ser restaurado.
 # apps/web (.env.local)
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-NEXT_PUBLIC_API_URL=https://api.opensync.space
+NEXT_PUBLIC_API_URL=https://api.opensync.space/api
 NEXT_PUBLIC_APP_URL=https://opensync.space
 
 # apps/api (.env)
