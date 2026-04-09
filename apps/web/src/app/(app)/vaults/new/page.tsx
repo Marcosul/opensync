@@ -2,8 +2,8 @@
 
 import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import {
@@ -21,6 +21,20 @@ import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import type { VaultListItem } from "@/lib/vault-list-types";
 import { cn } from "@/lib/utils";
 
+import {
+  buildWizardSearchParams,
+  clearStoredAgentToken,
+  minimalVaultListItem,
+  parseWizardSearchParams,
+  isAgentProjectScope,
+  readStoredAgentToken,
+  readWizardDraft,
+  writeStoredAgentToken,
+  writeWizardDraft,
+  type AgentProjectScope,
+  type StartChoice,
+} from "./wizard-url";
+
 const vaultNameInputClass =
   "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40";
 
@@ -30,9 +44,6 @@ const TOTAL_STEPS = 3;
 
 const SKILL_DOC_PATH = "/docs/agent/opensync-skill";
 const SKILL_MD_RAW_PATH = "/docs/agent/opensync-skill/skill-md";
-
-type StartChoice = "agent_project" | "connect_agent" | "empty_vault";
-type AgentProjectScope = "single_agent" | "agent_squad";
 
 type ConnectAgentSetup = {
   vault: VaultListItem;
@@ -78,8 +89,12 @@ async function copyToClipboard(text: string) {
   }
 }
 
-export default function NewVaultPage() {
+function NewVaultWizard() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const spKey = searchParams.toString();
+
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -88,6 +103,71 @@ export default function NewVaultPage() {
   const [agentProjectScope, setAgentProjectScope] = useState<AgentProjectScope>("single_agent");
   const [squadMission, setSquadMission] = useState("");
   const [connectAgentSetup, setConnectAgentSetup] = useState<ConnectAgentSetup | null>(null);
+  const [urlVaultId, setUrlVaultId] = useState<string | null>(null);
+  const [wizardReady, setWizardReady] = useState(false);
+
+  const lastAppliedSearch = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastAppliedSearch.current === spKey) return;
+    lastAppliedSearch.current = spKey;
+
+    const parsed = parseWizardSearchParams(searchParams);
+    const draft = readWizardDraft();
+
+    let stepUse = parsed.step;
+    if (parsed.step === 3 && parsed.mode === "connect_agent" && !parsed.vaultId) {
+      stepUse = 2;
+    }
+
+    setStep(stepUse);
+    setStartChoice(parsed.mode);
+    setVaultName(draft.vaultName);
+
+    if (parsed.mode === "agent_project") {
+      setSquadMission(draft.squadMission);
+      setAgentProjectScope(
+        isAgentProjectScope(draft.agentProjectScope) ? draft.agentProjectScope : parsed.scope,
+      );
+    } else {
+      setSquadMission("");
+      setAgentProjectScope("single_agent");
+    }
+
+    if (parsed.vaultId) {
+      setUrlVaultId(parsed.vaultId);
+    } else {
+      setUrlVaultId(null);
+    }
+
+    let cancelled = false;
+    if (stepUse === 3 && parsed.mode === "connect_agent" && parsed.vaultId) {
+      void (async () => {
+        const vid = parsed.vaultId as string;
+        let vault = readVaultMetas().find((m) => m.id === vid);
+        if (!vault) {
+          try {
+            const { vaults } = await apiRequest<{ vaults: VaultListItem[] }>("/api/vaults/list");
+            vault = vaults.find((v) => v.id === vid);
+          } catch {
+            /* ignore */
+          }
+        }
+        if (cancelled) return;
+        if (!vault) vault = minimalVaultListItem(vid, draft.vaultName);
+        const token = readStoredAgentToken(vid) ?? "";
+        setConnectAgentSetup({ vault, token });
+      })();
+    } else {
+      setConnectAgentSetup(null);
+    }
+
+    setWizardReady(true);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [spKey, searchParams]);
 
   useEffect(() => {
     if (startChoice !== "agent_project") {
@@ -97,10 +177,24 @@ export default function NewVaultPage() {
   }, [startChoice]);
 
   useEffect(() => {
-    if (startChoice !== "connect_agent") {
-      setConnectAgentSetup(null);
-    }
-  }, [startChoice]);
+    writeWizardDraft({
+      vaultName,
+      squadMission,
+      agentProjectScope,
+    });
+  }, [vaultName, squadMission, agentProjectScope]);
+
+  useEffect(() => {
+    if (!wizardReady) return;
+    const next = buildWizardSearchParams({
+      step,
+      mode: startChoice,
+      vaultId: urlVaultId,
+      scope: agentProjectScope,
+    });
+    if (next === searchParams.toString()) return;
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [step, startChoice, urlVaultId, agentProjectScope, pathname, router, searchParams, wizardReady]);
 
   const nameOk = vaultName.trim().length > 0;
 
@@ -132,6 +226,8 @@ export default function NewVaultPage() {
   }, [step, connectAgentSetup]);
 
   const isConnectAgentStep3 = step === 3 && startChoice === "connect_agent";
+  const isConnectAgentStep3Loading =
+    isConnectAgentStep3 && Boolean(urlVaultId) && !connectAgentSetup;
   const isConnectAgentStep2Submitting = step === 2 && startChoice === "connect_agent" && isSubmitting;
 
   function formatSubmitError(raw: string): string {
@@ -172,12 +268,14 @@ export default function NewVaultPage() {
         method: "POST",
         body: { vaultName: vaultName.trim() },
       });
+      setUrlVaultId(vault.id);
       try {
         const tokenRes = await apiRequest<{ token: string; vaultId: string; agentId: string }>(
           `/api/vaults/${encodeURIComponent(vault.id)}/agent-token`,
           { method: "POST" },
         );
         pushVaultToMetasAndLocal(vault);
+        writeStoredAgentToken(vault.id, tokenRes.token);
         setConnectAgentSetup({ vault, token: tokenRes.token });
         setStep(3);
       } catch (tokenErr) {
@@ -233,6 +331,7 @@ export default function NewVaultPage() {
 
   function handlePrimaryAction() {
     if (step === 3 && startChoice === "connect_agent" && connectAgentSetup) {
+      clearStoredAgentToken(connectAgentSetup.vault.id);
       router.push(`/vault?vaultId=${encodeURIComponent(connectAgentSetup.vault.id)}`);
       return;
     }
@@ -272,12 +371,25 @@ export default function NewVaultPage() {
       router.push("/dashboard");
       return;
     }
-    setStep((s) => s - 1);
     setSubmitError(null);
+    if (step === 3) {
+      setStep(2);
+      if (startChoice === "connect_agent") {
+        setConnectAgentSetup(null);
+      }
+      return;
+    }
+    if (step === 2) {
+      setStep(1);
+      setUrlVaultId(null);
+      setConnectAgentSetup(null);
+    }
   }
 
   const primaryLabel =
-    step === 3 && startChoice === "connect_agent" && connectAgentSetup
+    isConnectAgentStep3Loading
+      ? "A carregar…"
+      : step === 3 && startChoice === "connect_agent" && connectAgentSetup
       ? "SKILL instalada"
       : step < TOTAL_STEPS
         ? step === 2 && startChoice === "connect_agent"
@@ -292,7 +404,9 @@ export default function NewVaultPage() {
             : "Criar e abrir o vault";
 
   const primaryDisabled =
-    step === 3 && startChoice === "connect_agent" && connectAgentSetup
+    isConnectAgentStep3Loading
+      ? true
+      : step === 3 && startChoice === "connect_agent" && connectAgentSetup
       ? false
       : step === 1
         ? !canContinueStep1
@@ -355,7 +469,14 @@ export default function NewVaultPage() {
         <span className="text-sm font-medium text-foreground/80">Novo vault</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      {!wizardReady ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12">
+          <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
+          <p className="text-sm text-muted-foreground">A sincronizar com o endereço…</p>
+        </div>
+      ) : null}
+
+      <div className={cn("flex-1 overflow-y-auto px-6 py-6", !wizardReady ? "hidden" : "")}>
         <section className="mx-auto w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{headerEyebrow}</p>
           {step === 2 ? (
@@ -380,7 +501,12 @@ export default function NewVaultPage() {
                   <button
                     key={opt.id}
                     type="button"
-                    onClick={() => setStartChoice(opt.id)}
+                    onClick={() => {
+                      setStartChoice(opt.id);
+                      setUrlVaultId(null);
+                      setConnectAgentSetup(null);
+                      setSubmitError(null);
+                    }}
                     className={cn(
                       "flex w-full flex-col rounded-xl border p-3 text-left text-sm transition-colors",
                       startChoice === opt.id
@@ -483,6 +609,17 @@ export default function NewVaultPage() {
               </div>
             ) : null}
 
+            {isConnectAgentStep3Loading ? (
+              <div
+                className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-4 text-sm text-muted-foreground"
+                role="status"
+                aria-live="polite"
+              >
+                <Loader2 className="size-5 shrink-0 animate-spin text-primary" aria-hidden />
+                A carregar dados do cofre e da API key…
+              </div>
+            ) : null}
+
             {isConnectAgentStep3 && connectAgentSetup ? (
               <ConnectAgentSkillStep3Panel
                 skillGuideUrl={skillGuideAbsoluteUrl}
@@ -574,5 +711,22 @@ export default function NewVaultPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+function NewVaultWizardFallback() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-background px-6 py-12">
+      <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
+      <p className="text-sm text-muted-foreground">A carregar assistente…</p>
+    </div>
+  );
+}
+
+export default function NewVaultPage() {
+  return (
+    <Suspense fallback={<NewVaultWizardFallback />}>
+      <NewVaultWizard />
+    </Suspense>
   );
 }

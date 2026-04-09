@@ -62,11 +62,13 @@ Verificar jobs: `openclaw cron list`.
 
 ## Instalação da skill
 
-Use o guia em **opensync.space** (`/docs/agent/opensync-skill`) ou o ficheiro `SKILL.md` fornecido pelo utilizador. **Onde colocar** no disco (do mais específico ao mais partilhado no vosso ambiente):
+Use o guia em **opensync.space** (`/docs/agent/opensync-skill`) ou o ficheiro `SKILL.md` fornecido pelo utilizador.
 
-- `~/.openclaw/skills/opensync/SKILL.md` — visível a todos os agentes na máquina
+**Caminho de instalação** (crie a pasta `opensync` se não existir):
 
-Guarde o conteúdo deste `SKILL.md` em `.../opensync/SKILL.md` numa das pastas acima (crie a pasta `opensync`).
+- `~/.openclaw/skills/opensync/SKILL.md`
+
+Guarde o conteúdo completo deste documento nesse ficheiro.
 
 ### Allowlist de skills (multi-agent)
 

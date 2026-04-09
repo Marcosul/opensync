@@ -46,26 +46,14 @@ export default async function OpenSyncAgentSkillDocPage() {
 
         <h2 className="mt-10 text-base font-semibold text-foreground">Onde gravar no disco</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Crie a pasta <span className="font-mono text-xs">opensync</span> numa diretoria de skills do seu ambiente e
-          guarde o conteúdo como <span className="font-mono text-xs">SKILL.md</span>. Exemplos de caminhos (o primeiro
-          que existir no vosso setup prevalece sobre os mais gerais):
+          Instale a skill neste caminho no sistema onde corre o OpenClaw Gateway (crie as pastas em falta). O ficheiro
+          deve chamar-se <span className="font-mono text-xs">SKILL.md</span>:
         </p>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-          <li>
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">&lt;workspace&gt;/skills/opensync/SKILL.md</code>
-          </li>
-          <li>
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-              &lt;workspace&gt;/.agents/skills/opensync/SKILL.md
-            </code>
-          </li>
-          <li>
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">~/.agents/skills/opensync/SKILL.md</code>
-          </li>
-          <li>
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">~/.openclaw/skills/opensync/SKILL.md</code>
-          </li>
-        </ul>
+        <p className="mt-2">
+          <code className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 font-mono text-xs text-foreground">
+            ~/.openclaw/skills/opensync/SKILL.md
+          </code>
+        </p>
         <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
           {`mkdir -p ~/.openclaw/skills/opensync
 # Guarde aqui o ficheiro SKILL.md (conteúdo abaixo ou descarregado).`}

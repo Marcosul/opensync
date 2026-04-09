@@ -16,8 +16,6 @@ mkdir -p ~/.openclaw/skills/opensync
 cp packages/plugin/skill/SKILL.md ~/.openclaw/skills/opensync/SKILL.md
 ```
 
-O OpenClaw também pode carregar skills de outras pastas (`~/.openclaw/workspace/skills/`, `~/.agents/skills/`, etc.). Ver [Skills — OpenClaw](https://docs.openclaw.ai/tools/skills).
-
 Depois de copiar, ajuste no `SKILL.md` o caminho `git -C …` se o clone do vault **não** for `~/.openclaw/workspace`.
 
 ## Ligação ao OpenSync
