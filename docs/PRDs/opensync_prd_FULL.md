@@ -566,6 +566,16 @@ Backoff exponencial para erros transitórios; máximo de tentativas
 
 ---
 
+## 19.1 Postgres como verdade operacional e Gitea como espelho
+
+- **Fonte da verdade (MVP actual):** o estado dos ficheiros do vault vive em **Postgres** (`vault_files`, `vault_file_changes`). Leituras do dashboard e do agente usam a API sobre estas tabelas; **não** há push Git síncrono legado para o cliente.
+- **Snapshot confiável:** `POST .../files/snapshot` (dashboard ou token de agente) substitui o vault pelo mapa enviado. Um **objeto vazio `{}`** significa **limpar o vault** (soft-delete de todos os ficheiros activos), útil para “esvaziar” remoto ou alinhar após wipe local.
+- **Backfill Gitea → Postgres:** na primeira abertura, se **não existir nenhuma linha** em `vault_files` para esse vault, o backend pode copiar o conteúdo textual do repo Gitea para Postgres **uma vez**; se já existir qualquer linha (mesmo soft-deleted), o backfill **não** corre, para não apagar histórico por engano.
+- **Espelho assíncrono:** um worker periódico envia o mapa actual de ficheiros activos do Postgres para o Gitea (espelho legível/Git), sem bloquear o sync cliente ↔ API.
+- **Agente Ubuntu:** qualquer pasta local configurável; **opensync-agent** + token é o caminho principal de onboarding; skill/plugin Cursor é **opcional**. O feed `GET .../changes` pode incluir conteúdo por alteração — para vaults muito grandes, tratar **paginação / payload** como dívida técnica a endurecer (limites, cursores, ou conteúdo lazy).
+
+---
+
 ## 20. Glossário rápido
 
 - **Cursor:** marca no feed incremental de mudanças do vault.  

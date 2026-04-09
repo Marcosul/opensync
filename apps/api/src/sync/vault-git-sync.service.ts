@@ -73,6 +73,34 @@ export function validateVaultSyncFiles(
   return out;
 }
 
+/** Igual a validateVaultSyncFiles mas permite mapa vazio (espelho Gitea sem ficheiros). */
+export function validateVaultMirrorFiles(
+  files: Record<string, string>,
+): Map<string, string> {
+  if (files === null || typeof files !== 'object' || Array.isArray(files)) {
+    throw new BadRequestException('files deve ser um objeto path -> conteudo');
+  }
+  const out = new Map<string, string>();
+  let total = 0;
+  for (const [rawKey, content] of Object.entries(files)) {
+    if (typeof content !== 'string') {
+      throw new BadRequestException('Cada ficheiro deve ter conteudo string');
+    }
+    const normalized = normalizeVaultRelativePath(rawKey);
+    if (!normalized) {
+      throw new BadRequestException(`Path invalido: ${rawKey}`);
+    }
+    total += Buffer.byteLength(content, 'utf8');
+    if (total > VAULT_SYNC_MAX_PAYLOAD_BYTES) {
+      throw new BadRequestException(
+        `Payload excede ${VAULT_SYNC_MAX_PAYLOAD_BYTES} bytes`,
+      );
+    }
+    out.set(normalized, content);
+  }
+  return out;
+}
+
 @Injectable()
 export class VaultGitSyncService {
   private readonly logger = new Logger(VaultGitSyncService.name);
@@ -140,6 +168,68 @@ export class VaultGitSyncService {
         `${colors.red}❌ Falha no sync git:${colors.reset} ${hint}`,
       );
       throw new BadGatewayException(`Falha ao sincronizar com Gitea: ${hint}`);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+        /* ignore */
+      });
+    }
+  }
+
+  /** Espelho assíncrono Postgres → Gitea; permite vault sem ficheiros. */
+  async pushMirrorTextFiles(
+    repoFullName: string,
+    files: Record<string, string>,
+  ): Promise<{ commitHash: string }> {
+    const wanted = validateVaultMirrorFiles(files);
+    const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-mirror-'));
+
+    try {
+      const git = simpleGit({ baseDir: tmpRoot });
+      this.logger.log(
+        `${colors.cyan}🪞 Mirror clone:${colors.reset} ${repoFullName} files=${wanted.size}`,
+      );
+      await git.clone(cloneUrl, '.', ['--depth', '1']);
+
+      await git.addConfig('user.email', 'opensync@opensync.local');
+      await git.addConfig('user.name', 'OpenSync');
+
+      const tracked = await this.listTrackedFiles(git);
+      const wantedPaths = new Set(wanted.keys());
+
+      for (const rel of tracked) {
+        if (!wantedPaths.has(rel)) {
+          await git.raw(['rm', '-f', '--ignore-unmatch', rel]);
+        }
+      }
+
+      for (const [rel, body] of wanted) {
+        const abs = path.join(tmpRoot, rel);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, body, 'utf8');
+      }
+
+      await git.add(['-A']);
+      const stagedNames = (await git.raw(['diff', '--cached', '--name-only'])).trim();
+      if (!stagedNames) {
+        const commitHash = (await git.revparse(['HEAD'])).trim();
+        return { commitHash };
+      }
+
+      await git.commit('chore(vault): mirror from postgres');
+      const commitHash = (await git.revparse(['HEAD'])).trim();
+      await git.push('origin', 'HEAD');
+
+      this.logger.log(
+        `${colors.green}✅ Mirror Gitea ok:${colors.reset} ${repoFullName} ${commitHash.slice(0, 7)}`,
+      );
+      return { commitHash };
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}❌ Falha no mirror Gitea:${colors.reset} ${hint}`,
+      );
+      throw new BadGatewayException(`Falha no mirror Gitea: ${hint}`);
     } finally {
       await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
         /* ignore */

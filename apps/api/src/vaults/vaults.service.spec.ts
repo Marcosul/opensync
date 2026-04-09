@@ -2,7 +2,7 @@ import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { VaultsService } from './vaults.service';
 
 const WORKSPACE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const GITEA_ORG_SLUG = 'wsaaaaaaaabbbb4ccc8ddeeeeeeeeeeee';
+const GITEA_ORG_SLUG = 'wsaaaaaaaabbbb4ccc8dddeeeeeeeeeeee';
 const REPO_WS_FRAG = 'aaaaaaaabbbb';
 
 describe('VaultsService', () => {

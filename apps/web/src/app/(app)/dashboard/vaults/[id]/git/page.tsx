@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/api/rest/generic";
 import type { AgentApiTokenResponse } from "@/app/api/vaults/[id]/agent-token/route";
 import type { AgentDeployKeyResponse } from "@/app/api/vaults/[id]/git/deploy-key/route";
-import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-agent-skill-instructions";
+import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-ubuntu-skill-instructions";
 import { Button } from "@/components/ui/button";
 import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import { cn } from "@/lib/utils";
@@ -177,15 +177,17 @@ export default function VaultGitSetupPage() {
         <section className="mx-auto w-full max-w-2xl space-y-8 rounded-2xl border bg-card p-5 shadow-sm sm:p-8">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              OpenClaw + Gitea
+              Ubuntu + API
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight">Ligar o agente</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              O painel abaixo replica o passo de configuração OpenClaw: guia da skill, credenciais e cron a cada 30
-              minutos. Gere primeiro a <strong className="font-medium text-foreground">API key</strong> para preencher{" "}
-              <span className="font-mono text-xs">OPENSYNC_AGENT_API_KEY</span>. Em alternativa, use{" "}
-              <strong className="font-medium text-foreground">deploy key</strong> mais abaixo para{" "}
-              <span className="font-mono text-xs">git push</span> na VPS.
+              Para <strong className="font-medium text-foreground">qualquer pasta</strong> no Ubuntu:{" "}
+              <strong className="font-medium text-foreground">opensync-ubuntu</strong> + API key abaixo —{" "}
+              <strong className="font-medium text-foreground">sem</strong> skill OpenSync e{" "}
+              <strong className="font-medium text-foreground">sem</strong> plugin. O painel seguinte explica o{" "}
+              <span className="font-mono text-xs">init</span>. Secção OpenClaw no mesmo painel é só para quem usa
+              assistente. Para <span className="font-mono text-xs">git push</span> na VPS, use a{" "}
+              <strong className="font-medium text-foreground">deploy key</strong> no fundo da página.
             </p>
           </div>
 

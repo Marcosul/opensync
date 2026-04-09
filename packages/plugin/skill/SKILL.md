@@ -7,9 +7,9 @@ description: Integração OpenSync — API HTTP, skill e sincronização do vaul
 
 ## Contexto
 
-O utilizador usa **OpenSync** (opensync.space) com um **vault** por repositório **Gitea**. O fluxo **preferido** é **só API**: **API key (Bearer)** + `POST ${OPENSYNC_API_URL}/git/<vaultId>/push` com JSON `{ "files": { … } }` — **sem `git init`**, sem Git no agente e sem plugin obrigatório. O token obtém-se no dashboard ou no assistente «Conectar agente OpenClaw».
+O utilizador usa **OpenSync** (opensync.space) com um **vault** na **API** (Postgres como fonte de verdade; Gitea é espelho assíncrono). O fluxo **recomendado em Ubuntu** é o pacote **`opensync-ubuntu`** (`opensync-ubuntu init` + systemd). Para o **OpenClaw**, use **API key (Bearer)** + `POST ${OPENSYNC_API_URL}/agent/vaults/<vaultId>/files/snapshot` com JSON `{ "files": { … } }` — **sem `git init`** no cliente. O token obtém-se no dashboard.
 
-## Sincronização via API (fluxo principal — só push)
+## Sincronização via API (OpenClaw / curl — snapshot)
 
 1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Agente e Git* → secção *API do agente*, ou assistente de novo vault OpenClaw). Defina no ambiente do agente (produção OpenSync):
 
@@ -33,12 +33,12 @@ Os `export` acima **não ficam guardados** após fechar o terminal — só valem
 
 Em **self-hosted**, substitua `OPENSYNC_API_URL` pela URL da vossa API Nest **com sufixo `/api`** (ex.: `https://seu-dominio.com/api`).
 
-2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. O endpoint `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` **exige** um JSON com o mapa **`files`**: caminhos relativos → conteúdo UTF-8. A API faz commit no repositório Gitea desse vault com esse snapshot (ficheiros em `files` substituem o conteúdo rastreado no remoto; omitir um ficheiro que existia no Git remove-o no próximo sync completo).
+2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. O endpoint `POST ${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/snapshot` **exige** um JSON com o mapa **`files`**: caminhos relativos → conteúdo UTF-8. O estado é gravado na API; o espelho para Gitea corre em segundo plano no servidor.
 
 Exemplo mínimo com `curl`:
 
 ```bash
-curl -sS -X POST "${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push" \
+curl -sS -X POST "${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/snapshot" \
   -H "Authorization: Bearer ${OPENSYNC_AGENT_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"files":{"notas/exemplo.md":"# Titulo\n\nTexto."}}'
@@ -46,7 +46,7 @@ curl -sS -X POST "${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push" \
 
 Um corpo `{}` ou sem `files` **não** sincroniza — a API responde erro explicando o formato.
 
-O trabalho Git (clone, commit, push para o Gitea) corre **no servidor OpenSync**. No agente basta **credenciais + HTTP** com o mapa `files`.
+No agente OpenClaw basta **credenciais + HTTP** com o mapa `files`. Para máquinas Linux com pasta local, prefira **opensync-ubuntu** (sync bidirecional).
 
 3. **Opcional — plugin `/sync`:** o pacote `packages/plugin` expõe o comando `/sync`, que faz `git add`/`commit` **local** e depois chama a mesma API com os ficheiros do disco. Só usem se quiserem histórico Git na pasta do workspace; o plugin pode correr `git init` no `onLoad`. **Não é o fluxo recomendado** se preferem evitar Git local.
 
@@ -66,7 +66,7 @@ git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "p
 
 - O cron corre **dentro do Gateway**; jobs persistem em `~/.openclaw/cron/jobs.json`.
 - Use `--session isolated` para uma jogada dedicada; ajuste `--tz` ao fuso do utilizador.
-- A `--message` deve priorizar **`POST .../push`** com JSON `{ "files": { … } }` e `Authorization: Bearer` (`OPENSYNC_*` no ambiente). **Não** depende de `git init` local. O plugin `/sync` é alternativa secundária (Git no disco). Um `curl` só com `-d '{}'` **não** grava no Gitea.
+- A `--message` deve priorizar **`POST .../agent/vaults/<vaultId>/files/snapshot`** com JSON `{ "files": { … } }` e `Authorization: Bearer` (`OPENSYNC_*` no ambiente). **Não** depende de `git init` local. O plugin `/sync` chama o mesmo endpoint de snapshot.
 
 Exemplo (intervalo fixo de 30 minutos, sem anúncio em canal — personalize a mensagem e ferramentas):
 
@@ -75,7 +75,7 @@ openclaw cron add \
   --name "OpenSync vault sync (30m)" \
   --every 30m \
   --session isolated \
-  --message "OpenSync: POST .../git/<vaultId>/push com JSON {files: path->conteudo UTF-8} e Bearer OPENSYNC_AGENT_API_KEY (sem git local). Opcional: plugin /sync. Uma linha ok ou erro." \
+  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} e Bearer OPENSYNC_AGENT_API_KEY. Opcional: plugin /sync." \
   --tools exec \
   --delivery none
 ```
@@ -88,7 +88,7 @@ openclaw cron add \
   --cron "*/30 * * * *" \
   --tz "Europe/Lisbon" \
   --session isolated \
-  --message "OpenSync: POST push com JSON files + Bearer OPENSYNC_* (preferido). Alternativa: /sync. Uma linha ok ou erro." \
+  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} + Bearer OPENSYNC_*." \
   --tools exec \
   --delivery none
 ```
@@ -107,11 +107,12 @@ Use o guia em **opensync.space** (`/docs/agent/opensync-skill`) ou o ficheiro `S
 
 Guarde o conteúdo completo deste documento nesse ficheiro.
 
-### Primeiro push e repositório remoto
+### Primeiro snapshot e repositório remoto
 
-- **Gitea:** o repositório do vault é **criado pelo OpenSync** ao criar o cofre. **Não** criar o projeto à mão no Gitea.
-- **Agente (fluxo preferido):** primeiro e seguintes envios = **`POST .../push`** com `{ "files": { … } }`. **Sem** `git init`, **sem** `git remote`, **sem** Git no cliente.
-- **Só se usarem `/sync`:** aí o plugin pode inicializar Git local no `onLoad`; caso contrário **ignore** Git no disco.
+- **Gitea:** o repositório do vault é **criado pelo OpenSync** ao criar o cofre; o espelho Git é atualizado pelo servidor.
+- **OpenClaw:** envios = **`POST .../agent/vaults/<vaultId>/files/snapshot`** com `{ "files": { … } }`. **Sem** `git init` no cliente.
+- **Ubuntu:** use **`opensync-ubuntu`** para sync bidirecional de uma pasta.
+- **Só se usarem `/sync`:** o plugin pode inicializar Git local no `onLoad`; caso contrário **ignore** Git no disco.
 
 ### Allowlist de skills (multi-agent)
 

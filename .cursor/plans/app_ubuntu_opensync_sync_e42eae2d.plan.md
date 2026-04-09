@@ -4,34 +4,34 @@ overview: MVP bidirecional alinhado ao PRD; fonte da verdade API Nest + Postgres
 todos:
   - id: backend-vault-files-api
     content: "Backend: Prisma vault_files + vault_file_changes; GET changes; POST upsert/delete com base_version e 409; auth Bearer agente (ex. /api/agent/vaults/...)"
-    status: pending
+    status: completed
   - id: remove-git-push-migrate
-    content: "Remover POST /api/git/:vaultId/push (e stubs pull/rollback se inúteis); migrar @opensync/plugin e qualquer cliente para API por ficheiro"
-    status: pending
+    content: Remover POST /api/git/:vaultId/push (e stubs pull/rollback se inúteis); migrar @opensync/plugin e qualquer cliente para API por ficheiro
+    status: completed
   - id: gitea-async-mirror
     content: "Worker/job: Postgres → Gitea (commit ou mirror) assíncrono; falha Gitea não bloqueia upsert/changes; monitorização na VPS"
-    status: pending
+    status: completed
   - id: dashboard-read-from-api
     content: "Frontend/Next: árvore e conteúdo do vault a partir da API/Postgres (ou proxy), não de git/tree/blob como fonte primária"
-    status: pending
+    status: completed
   - id: client-sqlite-engine
     content: "Cliente Ubuntu: SQLite (files_state, sync_meta), deviceId, fila serial, FULL_RECONCILE"
-    status: pending
+    status: completed
   - id: client-watcher-poller
     content: "Cliente: watcher (debounce, ignore) + poller + conflitos e deletes"
-    status: pending
+    status: completed
   - id: opensync-init-deb
-    content: "opensync init + validações; .deb; systemd --user opensync-agent; docs"
-    status: pending
+    content: opensync init + validações; .deb; systemd --user opensync-agent; docs
+    status: completed
   - id: vault-agent-onboarding-ux
     content: "Rever fluxo criar vault + API key do agente: instruções = instalar opensync-agent (.deb) + opensync init; substituir/remover copy da skill OpenClaw como caminho principal"
-    status: pending
+    status: completed
   - id: web-frontend-agent-docs
     content: "Web: página download + docs; copy alinhada ao PRD (vault no dashboard; token MVP em ficheiro 0600)"
-    status: pending
+    status: completed
   - id: ci-release-deb
     content: "CI (Gitea ou externo): build .deb, checksums, release"
-    status: pending
+    status: completed
 isProject: false
 ---
 

@@ -25,17 +25,22 @@ export default async function OpenSyncAgentSkillDocPage() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Skill OpenSync — documentação para o agente
+          Skill OpenSync — só para OpenClaw (opcional)
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Instalar a skill OpenSync</h1>
+        <p className="mt-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm leading-relaxed text-muted-foreground">
+          Para sincronizar <strong className="font-medium text-foreground">qualquer pasta</strong> num PC Ubuntu{" "}
+          <strong className="font-medium text-foreground">sem</strong> OpenClaw, skill ou plugin, use o{" "}
+          <Link href="/docs/agent/ubuntu" className="font-medium text-primary underline-offset-2 hover:underline">
+            opensync-ubuntu
+          </Link>
+          . Esta página é apenas para quem quer o vault ligado a um <strong className="font-medium text-foreground">assistente</strong>{" "}
+          OpenClaw.
+        </p>
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-          Este documento é para o <strong className="font-medium text-foreground">agente</strong> (ou para quem
-          cola no chat do agente). Inclui o ficheiro completo <span className="font-mono text-xs">SKILL.md</span> da
-          OpenSync. O agente pode: <strong className="font-medium text-foreground">abrir esta página por URL</strong>
-          , <strong className="font-medium text-foreground">obter o ficheiro por URL</strong>,{" "}
-          <strong className="font-medium text-foreground">copiar e colar</strong> o bloco abaixo no chat, ou receber{" "}
-          <span className="font-mono text-xs">SKILL.md</span> como <strong className="font-medium text-foreground">anexo</strong>
-          .
+          O texto abaixo destina-se a colar no chat do assistente ou instalar como skill. Inclui o ficheiro completo{" "}
+          <span className="font-mono text-xs">SKILL.md</span>. O agente pode abrir esta página por URL, obter o raw,
+          ou receber o ficheiro em anexo.
         </p>
 
         <SkillDocCopyActions
@@ -81,7 +86,7 @@ export default async function OpenSyncAgentSkillDocPage() {
   --name "OpenSync vault sync (30m)" \\
   --every 30m \\
   --session isolated \\
-  --message "OpenSync: POST .../git/<vaultId>/push com JSON files + Bearer OPENSYNC_* (sem git local). Opcional: /sync. Uma linha: ok ou erro." \\
+  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} + Bearer OPENSYNC_AGENT_API_KEY." \\
   --tools exec \\
   --delivery none
 
@@ -114,17 +119,27 @@ export default async function OpenSyncAgentSkillDocPage() {
 export OPENSYNC_VAULT_ID="<uuid-do-vault>"
 export OPENSYNC_AGENT_API_KEY="<api-key-osk_...>"
 
-# Push real: JSON obrigatorio com "files" (path relativo -> conteudo UTF-8). Ex.:
-curl -sS -X POST "\${OPENSYNC_API_URL}/git/\${OPENSYNC_VAULT_ID}/push" \\
+# Snapshot (substitui estado do vault na API; espelho Gitea é assincrono). Ex.:
+curl -sS -X POST "\${OPENSYNC_API_URL}/agent/vaults/\${OPENSYNC_VAULT_ID}/files/snapshot" \\
   -H "Authorization: Bearer \${OPENSYNC_AGENT_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{"files":{"notas/exemplo.md":"# Ola"}}'`}
         </pre>
 
-        <h2 className="mt-10 text-base font-semibold text-foreground">Alternativa OpenSync: Git na VPS</h2>
+        <h2 className="mt-10 text-base font-semibold text-foreground">Agente Ubuntu</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Para pastas locais em Linux, prefira o pacote <span className="font-mono text-xs">opensync-ubuntu</span>{" "}
+          (sync bidirecional).{" "}
+          <Link href="/docs/agent/ubuntu" className="font-medium text-primary underline-offset-2 hover:underline">
+            Guia de instalação
+          </Link>
+          .
+        </p>
+
+        <h2 className="mt-10 text-base font-semibold text-foreground">Alternativa: Git na VPS</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           No dashboard OpenSync, <strong className="font-medium text-foreground">Git na VPS</strong> permite deploy key
-          e <span className="font-mono text-xs">git push</span> direto ao Gitea, em paralelo com a API HTTP.
+          e <span className="font-mono text-xs">git push</span> direto ao Gitea (fluxo técnico), em paralelo com a API.
         </p>
 
         <p className="mt-12 text-center text-xs text-muted-foreground">

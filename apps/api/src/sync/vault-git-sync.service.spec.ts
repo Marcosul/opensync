@@ -13,7 +13,7 @@ describe('VaultGitSyncService helpers', () => {
 
   it('validateVaultSyncFiles normaliza e agrega mapa', () => {
     const m = validateVaultSyncFiles({
-      ' ./a.md ': 'hi',
+      '  a.md  ': 'hi',
       'b/c.md': '',
     });
     expect([...m.entries()]).toEqual([

@@ -1,0 +1,14 @@
+model VaultFileChange {
+  id         BigInt   @id @default(autoincrement())
+  vaultId    String   @map("vault_id") @db.Uuid
+  path       String
+  version    Int
+  changeType String   @map("change_type")
+  content    String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@index([vaultId, id])
+  @@map("vault_file_changes")
+}

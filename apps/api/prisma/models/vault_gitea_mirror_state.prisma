@@ -1,0 +1,8 @@
+model VaultGiteaMirrorState {
+  vaultId              String @id @map("vault_id") @db.Uuid
+  lastMirroredChangeId BigInt @default(0) @map("last_mirrored_change_id")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@map("vault_gitea_mirror_state")
+}

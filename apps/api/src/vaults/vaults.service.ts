@@ -256,7 +256,7 @@ export class VaultsService {
   }
 
   /**
-   * Cria credencial de agente (OpenClaw/plugin): token mostrado uma vez; guarda-se apenas SHA-256.
+   * Cria credencial de agente (app Ubuntu / integrações): token mostrado uma vez; guarda-se apenas SHA-256.
    */
   async createAgentApiTokenForUser(userId: string, vaultId: string) {
     const vault = await this.prisma.vault.findFirst({
@@ -278,7 +278,7 @@ export class VaultsService {
     const agent = await this.prisma.agent.create({
       data: {
         vaultId: vault.id,
-        name: 'OpenClaw',
+        name: 'OpenSync agent',
         tokenHash,
       },
       select: { id: true },

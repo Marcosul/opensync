@@ -18,14 +18,17 @@ export async function sync(workspaceDir: string, token: string, vaultId?: string
       "Nenhum ficheiro de texto no workspace para enviar. Adicione notas ou ficheiros .md e tente de novo.",
     );
   }
-  const res = await fetch(`${base}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+  const res = await fetch(
+    `${base}/agent/vaults/${encodeURIComponent(resolvedVaultId)}/files/snapshot`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ files }),
     },
-    body: JSON.stringify({ files }),
-  });
+  );
   const text = await res.text();
   if (!res.ok) {
     throw new Error(text || `Push falhou (${res.status})`);

@@ -13,8 +13,11 @@ model Vault {
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   agents    Agent[]
   commits   Commit[]
-  fileLinks FileLink[]
-  auditLogs AuditLog[]
+  fileLinks        FileLink[]
+  auditLogs        AuditLog[]
+  vaultFiles       VaultFile[]
+  vaultFileChanges VaultFileChange[]
+  giteaMirrorState VaultGiteaMirrorState?
 
   @@unique([workspaceId, name])
   @@map("vaults")

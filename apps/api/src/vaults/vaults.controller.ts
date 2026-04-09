@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
+import { VaultFilesService } from '../vault-files/vault-files.service';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { SyncVaultDto } from './dto/sync-vault.dto';
 import { VaultsService } from './vaults.service';
@@ -25,6 +26,7 @@ export class VaultsController {
   constructor(
     private readonly vaultsService: VaultsService,
     private readonly vaultGitSync: VaultGitSyncService,
+    private readonly vaultFiles: VaultFilesService,
   ) {}
 
   private requireUserId(userId: string | undefined): string {
@@ -105,8 +107,8 @@ export class VaultsController {
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
-    const { commitHash, entries } = await this.vaultGitSync.readRepoTree(vault.giteaRepo);
-    return { commitHash, entries };
+    await this.vaultFiles.backfillFromGiteaIfEmpty(vault.id, vault.giteaRepo);
+    return this.vaultFiles.listTree(vault.id);
   }
 
   @Get(':id/git/blob')
@@ -125,7 +127,8 @@ export class VaultsController {
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
-    return this.vaultGitSync.readRepoBlob(vault.giteaRepo, filePath);
+    const { content, version } = await this.vaultFiles.getContent(vault.id, filePath);
+    return { content, commitHash: version };
   }
 
   @Post(':id/sync')
@@ -139,10 +142,6 @@ export class VaultsController {
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
-    const { commitHash } = await this.vaultGitSync.pushTextFiles(
-      vault.giteaRepo,
-      body.files,
-    );
-    return { ok: true, commitHash };
+    return this.vaultFiles.applyTrustedSnapshot(vault.id, body.files);
   }
 }

@@ -1,0 +1,18 @@
+model VaultFile {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId     String    @map("vault_id") @db.Uuid
+  path        String
+  content     String?   @db.Text
+  /// Incrementa a cada mutação; usado em base_version / 409.
+  version     Int       @default(0)
+  contentHash String?   @map("content_hash")
+  sizeBytes   Int?      @map("size_bytes")
+  updatedAt   DateTime  @default(now()) @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@unique([vaultId, path])
+  @@index([vaultId])
+  @@map("vault_files")
+}

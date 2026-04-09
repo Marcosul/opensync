@@ -16,7 +16,7 @@ import {
   writePendingAgentProject,
   writeVaultMetas,
 } from "@/components/app/vault-persistence";
-import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-agent-skill-instructions";
+import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-ubuntu-skill-instructions";
 import { Button } from "@/components/ui/button";
 import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import type { VaultListItem } from "@/lib/vault-list-types";
@@ -72,8 +72,8 @@ const startOptions: { id: StartChoice; label: string; hint: string }[] = [
   },
   {
     id: "connect_agent",
-    label: "Conectar com meu agente OpenClaw",
-    hint: "Instale a skill OpenSync no agente, use a API key e o endpoint da API para sincronizar com o repo Gitea do vault.",
+    label: "Sincronizar uma pasta no Ubuntu",
+    hint: "Instale o opensync-ubuntu, escolha qualquer diretório no disco e a API key — sem skill nem plugin. OpenClaw é opcional noutro ecrã.",
   },
   {
     id: "empty_vault",
