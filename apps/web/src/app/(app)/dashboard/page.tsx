@@ -90,12 +90,13 @@ type VaultItem = {
 // ─── Components ─────────────────────────────────────────────────────────────
 
 function VaultCard({ vault }: { vault: VaultItem }) {
+  const primaryHref = vault.gitSetupLink
+    ? `/dashboard/vaults/${encodeURIComponent(vault.id)}/git`
+    : `/vault?vaultId=${encodeURIComponent(vault.id)}`;
+
   return (
     <div className="group relative z-0 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
-    <Link
-      href={`/vault?vaultId=${encodeURIComponent(vault.id)}`}
-      className="flex min-w-0 flex-1 flex-col gap-3 outline-none"
-    >
+    <Link href={primaryHref} className="flex min-w-0 flex-1 flex-col gap-3 outline-none">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2.5">
@@ -142,10 +143,10 @@ function VaultCard({ vault }: { vault: VaultItem }) {
     </Link>
       {vault.gitSetupLink ? (
         <Link
-          href={`/dashboard/vaults/${encodeURIComponent(vault.id)}/git`}
-          className="text-center text-xs font-medium text-primary underline-offset-4 hover:underline"
+          href={`/vault?vaultId=${encodeURIComponent(vault.id)}`}
+          className="text-center text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          Ligar Git na VPS (deploy key)
+          Abrir explorador do cofre
         </Link>
       ) : null}
     </div>

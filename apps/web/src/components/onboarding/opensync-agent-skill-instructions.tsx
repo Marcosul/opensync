@@ -15,8 +15,11 @@ export type ConnectAgentSkillStep3PanelProps = {
   skillMdUrl: string;
   apiBaseUrl: string;
   vaultId: string;
-  agentApiKey: string;
+  /** Se vazio, o bloco de credenciais pede para gerar a chave (ex.: botão na mesma página). */
+  agentApiKey?: string;
   onCopyBlock: (text: string) => void;
+  /** Texto da caixa âmbar no rodapé (predefinição: assistente / dashboard). */
+  footerHint?: string;
 };
 
 /**
@@ -27,9 +30,11 @@ export function ConnectAgentSkillStep3Panel({
   skillMdUrl,
   apiBaseUrl,
   vaultId,
-  agentApiKey,
+  agentApiKey = "",
   onCopyBlock,
+  footerHint,
 }: ConnectAgentSkillStep3PanelProps) {
+  const hasApiKey = agentApiKey.trim().length > 0;
   const envBlock = [
     `export OPENSYNC_API_URL="${apiBaseUrl}"`,
     `export OPENSYNC_VAULT_ID="${vaultId}"`,
@@ -134,20 +139,24 @@ export function ConnectAgentSkillStep3Panel({
           <span className="font-mono text-foreground">OPENSYNC_AGENT_API_KEY</span> (mesmo valor do{" "}
           <span className="font-mono text-foreground">Bearer</span> na API).
         </p>
-        <pre className={cn(codeBoxClass, "mt-2 whitespace-pre-wrap break-all")}>{envBlock}</pre>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          Copie e cole no <strong className="font-medium text-foreground">chat do agente</strong> (para aplicar no
-          ambiente) ou num <strong className="font-medium text-foreground">terminal na máquina do agente</strong>.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-2"
-          onClick={() => onCopyBlock(envBlock)}
-        >
-          Copie as credenciais
-        </Button>
+        {hasApiKey ? (
+          <>
+            <pre className={cn(codeBoxClass, "mt-2 whitespace-pre-wrap break-all")}>{envBlock}</pre>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              Copie e cole no <strong className="font-medium text-foreground">chat do agente</strong> (para aplicar no
+              ambiente) ou num <strong className="font-medium text-foreground">terminal na máquina do agente</strong>.
+            </p>
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => onCopyBlock(envBlock)}>
+              Copie as credenciais
+            </Button>
+          </>
+        ) : (
+          <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+            Gere uma <strong className="font-medium text-foreground">API key</strong> com o botão{" "}
+            <strong className="font-medium text-foreground">Gerar API key</strong> na secção acima desta página. A chave
+            só é mostrada <strong className="font-medium text-foreground">uma vez</strong>; guarde-a antes de sair.
+          </div>
+        )}
       </div>
 
       <div>
@@ -173,9 +182,8 @@ export function ConnectAgentSkillStep3Panel({
       </div>
 
       <div className="rounded-lg border border-amber-500/35 bg-amber-500/[0.07] px-3 py-2.5 text-xs text-amber-950 dark:text-amber-100">
-        Guarde a API key: não a voltamos a mostrar neste assistente. Pode gerar outra em{" "}
-        <span className="font-medium">Dashboard → Git na VPS</span> se precisar. Alternativa avançada: deploy key no
-        mesmo ecrã para <span className="font-mono">git push</span> direto ao Gitea.
+        {footerHint ??
+          "Guarde a API key: não a voltamos a mostrar neste assistente. Pode gerar outra em Dashboard → Agente e Git (este cofre) se precisar. Alternativa avançada: deploy key no mesmo ecrã para git push direto ao Gitea."}
       </div>
     </div>
   );

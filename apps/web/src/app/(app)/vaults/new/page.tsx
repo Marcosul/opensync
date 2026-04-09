@@ -185,7 +185,7 @@ export default function NewVaultPage() {
         const msg =
           tokenErr instanceof Error ? tokenErr.message : "Falha ao gerar API key.";
         setSubmitError(
-          `${formatSubmitError(msg)} O vault foi criado. Gere a API key em Dashboard → Git na VPS (este cofre), secção API do agente.`,
+          `${formatSubmitError(msg)} O vault foi criado. Gere a API key em Dashboard → Agente e Git (este cofre).`,
         );
       }
     } catch (error) {

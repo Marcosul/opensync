@@ -3,13 +3,18 @@
 import { ArrowLeft, Copy, KeyRound, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import type { AgentApiTokenResponse } from "@/app/api/vaults/[id]/agent-token/route";
 import type { AgentDeployKeyResponse } from "@/app/api/vaults/[id]/git/deploy-key/route";
+import { ConnectAgentSkillStep3Panel } from "@/components/onboarding/opensync-agent-skill-instructions";
 import { Button } from "@/components/ui/button";
+import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import { cn } from "@/lib/utils";
+
+const SKILL_DOC_PATH = "/docs/agent/opensync-skill";
+const SKILL_MD_RAW_PATH = "/docs/agent/opensync-skill/skill-md";
 
 const monoBlockClass =
   "mt-2 w-full rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground outline-none sm:text-xs";
@@ -25,6 +30,24 @@ export default function VaultGitSetupPage() {
   const [agentApiBusy, setAgentApiBusy] = useState(false);
   const [agentApiError, setAgentApiError] = useState<string | null>(null);
   const [lastAgentApiToken, setLastAgentApiToken] = useState<AgentApiTokenResponse | null>(null);
+  const [appOrigin, setAppOrigin] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setAppOrigin(window.location.origin);
+    }
+  }, []);
+
+  const skillGuideUrl = useMemo(
+    () => (appOrigin ? `${appOrigin}${SKILL_DOC_PATH}` : SKILL_DOC_PATH),
+    [appOrigin],
+  );
+  const skillMdUrl = useMemo(
+    () => (appOrigin ? `${appOrigin}${SKILL_MD_RAW_PATH}` : SKILL_MD_RAW_PATH),
+    [appOrigin],
+  );
+
+  const apiBaseUrl = useMemo(() => getPublicApiBaseUrlForClient(), []);
 
   const storedFingerprint = useMemo(() => {
     if (typeof window === "undefined" || !vaultId) return null;
@@ -147,7 +170,7 @@ export default function VaultGitSetupPage() {
           <ArrowLeft className="size-3.5" />
           Dashboard
         </Link>
-        <span className="text-sm font-medium text-foreground/80">Git na VPS</span>
+        <span className="text-sm font-medium text-foreground/80">Agente e Git</span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
@@ -158,8 +181,11 @@ export default function VaultGitSetupPage() {
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight">Ligar o agente</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Pode sincronizar pelo <strong className="font-medium text-foreground">HTTP + API key</strong>{" "}
-              (plugin OpenSync / OpenClaw) ou, em alternativa, ligar Git na VPS com deploy key abaixo.
+              O painel abaixo replica o passo de configuração OpenClaw: guia da skill, credenciais e cron a cada 30
+              minutos. Gere primeiro a <strong className="font-medium text-foreground">API key</strong> para preencher{" "}
+              <span className="font-mono text-xs">OPENSYNC_AGENT_API_KEY</span>. Em alternativa, use{" "}
+              <strong className="font-medium text-foreground">deploy key</strong> mais abaixo para{" "}
+              <span className="font-mono text-xs">git push</span> na VPS.
             </p>
           </div>
 
@@ -167,14 +193,9 @@ export default function VaultGitSetupPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               API do agente (HTTP)
             </p>
-            <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
-              Chave Bearer para o OpenClaw
-            </h2>
+            <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">Gerar API key</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Use com <span className="font-mono text-xs">OPENSYNC_VAULT_ID</span> e{" "}
-              <span className="font-mono text-xs">OPENSYNC_API_URL</span> (base com{" "}
-              <span className="font-mono text-xs">/api</span>).               Cada geração cria uma credencial nova; as anteriores continuam válidas em paralelo (revogação
-              dedicada pode vir a seguir).
+              Cada geração cria uma credencial nova; as anteriores podem continuar válidas em paralelo.
             </p>
             <div className="mt-3">
               <p className="text-xs font-medium text-muted-foreground">Vault ID</p>
@@ -202,36 +223,21 @@ export default function VaultGitSetupPage() {
             </div>
             {agentApiError ? <p className="mt-3 text-sm text-destructive">{agentApiError}</p> : null}
             {lastAgentApiToken ? (
-              <div className="mt-4 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm">
-                <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
-                  Copie a API key agora. Não voltamos a mostrá-la.
-                </p>
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <pre className={cn(monoBlockClass, "mt-0 max-h-32 flex-1 overflow-y-auto")}>
-                    {lastAgentApiToken.token}
-                  </pre>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 shrink-0 text-xs"
-                    onClick={() => void copy(lastAgentApiToken.token)}
-                  >
-                    <Copy className="mr-1 size-3.5" />
-                    Copiar
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Chame{" "}
-                  <code className="rounded bg-muted px-1 font-mono text-[10px] text-foreground">
-                    POST …/api/git/&lt;vaultId&gt;/push
-                  </code>{" "}
-                  com <code className="rounded bg-muted px-1 font-mono text-[10px]">Authorization: Bearer</code>{" "}
-                  igual a esta chave.
-                </p>
-              </div>
+              <p className="mt-4 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                Chave gerada — copie as variáveis no passo 2 do painel seguinte (inclui a API key completa).
+              </p>
             ) : null}
           </div>
+
+          <ConnectAgentSkillStep3Panel
+            skillGuideUrl={skillGuideUrl}
+            skillMdUrl={skillMdUrl}
+            apiBaseUrl={apiBaseUrl}
+            vaultId={vaultId}
+            agentApiKey={lastAgentApiToken?.token}
+            onCopyBlock={(text) => void copy(text)}
+            footerHint="Guarde a API key: não a voltamos a mostrar. Pode gerar outra com o botão «Gerar API key» acima. Para git push direto ao Gitea, use a deploy key na secção abaixo."
+          />
 
           <div className="border-t border-border pt-8">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
