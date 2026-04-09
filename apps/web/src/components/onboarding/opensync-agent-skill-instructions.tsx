@@ -46,7 +46,7 @@ export function ConnectAgentSkillStep3Panel({
     '  --name "OpenSync vault sync (30m)" \\',
     "  --every 30m \\",
     "  --session isolated \\",
-    `  --message "Sincronizar vault OpenSync: commit local se houver alterações; POST ${apiBaseUrl}/git/${vaultId}/push com Authorization: Bearer e OPENSYNC_AGENT_API_KEY no ambiente. Uma linha: ok ou erro." \\`,
+    `  --message "OpenSync: POST ${apiBaseUrl}/git/${vaultId}/push com JSON files + Bearer OPENSYNC_* (sem git local). Opcional: /sync. Uma linha: ok ou erro." \\`,
     "  --tools exec \\",
     "  --delivery none",
     "",

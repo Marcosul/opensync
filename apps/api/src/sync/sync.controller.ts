@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { hashAgentBearerToken, parseBearerToken } from '../common/agent-token.util';
+import { VaultGitSyncService } from './vault-git-sync.service';
 
 const colors = {
   reset: '\x1b[0m',
@@ -23,7 +25,10 @@ type AgentVaultRow = {
 
 @Controller('git')
 export class SyncController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vaultGitSync: VaultGitSyncService,
+  ) {}
 
   private async resolveVaultWithAgentToken(
     vaultId: string,
@@ -60,12 +65,35 @@ export class SyncController {
   async push(
     @Param('vaultId') vaultId: string,
     @Headers('authorization') authorization: string | undefined,
+    @Body() body: { files?: Record<string, string> },
   ) {
     const { vault } = await this.resolveVaultWithAgentToken(vaultId, authorization);
+    const files = body?.files;
+    if (
+      files === undefined ||
+      files === null ||
+      typeof files !== 'object' ||
+      Array.isArray(files) ||
+      Object.keys(files).length === 0
+    ) {
+      throw new BadRequestException(
+        'Corpo JSON obrigatorio: { "files": { "caminho/relativo.md": "conteudo utf-8", ... } }. ' +
+          'Um push sem ficheiros nao atualiza o Gitea.',
+      );
+    }
     console.log(
-      `${colors.cyan}🔁 Sync push recebido${colors.reset} vault=${vault.id} repo=${vault.giteaRepo}`,
+      `${colors.cyan}🔁 Sync push recebido${colors.reset} vault=${vault.id} repo=${vault.giteaRepo} files=${Object.keys(files).length}`,
     );
-    return { ok: true as const, vaultId: vault.id, repo: vault.giteaRepo };
+    const { commitHash } = await this.vaultGitSync.pushTextFiles(
+      vault.giteaRepo,
+      files,
+    );
+    return {
+      ok: true as const,
+      vaultId: vault.id,
+      repo: vault.giteaRepo,
+      commitHash,
+    };
   }
 
   @Get(':vaultId/pull')

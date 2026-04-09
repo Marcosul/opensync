@@ -7,19 +7,9 @@ description: Integração OpenSync — API HTTP, skill e sincronização do vaul
 
 ## Contexto
 
-O utilizador usa **OpenSync** (opensync.space) com um **vault** por repositório **Gitea**. O caminho recomendado é **API key (Bearer)** + endpoints HTTP da API OpenSync; o plugin em `packages/plugin` chama `POST /api/git/<vaultId>/push` com o token emitido no dashboard ou no assistente «Conectar agente OpenClaw».
+O utilizador usa **OpenSync** (opensync.space) com um **vault** por repositório **Gitea**. O fluxo **preferido** é **só API**: **API key (Bearer)** + `POST ${OPENSYNC_API_URL}/git/<vaultId>/push` com JSON `{ "files": { … } }` — **sem `git init`**, sem Git no agente e sem plugin obrigatório. O token obtém-se no dashboard ou no assistente «Conectar agente OpenClaw».
 
-## Antes de editar ficheiros importantes
-
-Garantir histórico local recuperável no workspace do agente:
-
-```bash
-git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "pre: snapshot before agent edit" || true
-```
-
-(Ajuste o caminho se o workspace não for `~/.openclaw/workspace`.)
-
-## Sincronização via API (recomendado)
+## Sincronização via API (fluxo principal — só push)
 
 1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Agente e Git* → secção *API do agente*, ou assistente de novo vault OpenClaw). Defina no ambiente do agente (produção OpenSync):
 
@@ -29,10 +19,46 @@ export OPENSYNC_VAULT_ID="<uuid-do-vault>"
 export OPENSYNC_AGENT_API_KEY="<api-key>"
 ```
 
+**Verificar se as variáveis estão ativas** na sessão de shell onde corre o agente ou onde vai testar o `curl` (não mostram nada se não estiverem definidas):
+
+```bash
+env | grep '^OPENSYNC_'
+# ou, uma a uma:
+echo "$OPENSYNC_API_URL"
+echo "$OPENSYNC_VAULT_ID"
+test -n "$OPENSYNC_AGENT_API_KEY" && echo "OPENSYNC_AGENT_API_KEY=definida" || echo "OPENSYNC_AGENT_API_KEY=vazia"
+```
+
+Os `export` acima **não ficam guardados** após fechar o terminal — só valem para essa sessão. Para persistir: ficheiro `~/.bashrc` / `~/.profile` (ou equivalente), ou `skills.entries.opensync.env` em `~/.openclaw/openclaw.json` conforme a [documentação de skills do OpenClaw](https://docs.openclaw.ai/tools/skills).
+
 Em **self-hosted**, substitua `OPENSYNC_API_URL` pela URL da vossa API Nest **com sufixo `/api`** (ex.: `https://seu-dominio.com/api`).
 
-2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. Exemplo de endpoint: `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` (corpo JSON conforme o plugin).
-3. **Plugin**: com `OPENSYNC_API_URL`, `OPENSYNC_VAULT_ID` e token no contexto, o comando `/sync` faz commit local e chama a API.
+2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. O endpoint `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` **exige** um JSON com o mapa **`files`**: caminhos relativos → conteúdo UTF-8. A API faz commit no repositório Gitea desse vault com esse snapshot (ficheiros em `files` substituem o conteúdo rastreado no remoto; omitir um ficheiro que existia no Git remove-o no próximo sync completo).
+
+Exemplo mínimo com `curl`:
+
+```bash
+curl -sS -X POST "${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push" \
+  -H "Authorization: Bearer ${OPENSYNC_AGENT_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"files":{"notas/exemplo.md":"# Titulo\n\nTexto."}}'
+```
+
+Um corpo `{}` ou sem `files` **não** sincroniza — a API responde erro explicando o formato.
+
+O trabalho Git (clone, commit, push para o Gitea) corre **no servidor OpenSync**. No agente basta **credenciais + HTTP** com o mapa `files`.
+
+3. **Opcional — plugin `/sync`:** o pacote `packages/plugin` expõe o comando `/sync`, que faz `git add`/`commit` **local** e depois chama a mesma API com os ficheiros do disco. Só usem se quiserem histórico Git na pasta do workspace; o plugin pode correr `git init` no `onLoad`. **Não é o fluxo recomendado** se preferem evitar Git local.
+
+## Opcional — snapshot local com Git
+
+Se mantiverem um clone ou workspace com Git por outras razões, podem gravar um snapshot antes de edições grandes:
+
+```bash
+git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "pre: snapshot before agent edit" || true
+```
+
+(Ajuste o caminho. Isto **não** substitui o `push` para o OpenSync/Gitea.)
 
 ## Tarefa agendada: sync a cada 30 minutos (OpenClaw)
 
@@ -40,7 +66,7 @@ Em **self-hosted**, substitua `OPENSYNC_API_URL` pela URL da vossa API Nest **co
 
 - O cron corre **dentro do Gateway**; jobs persistem em `~/.openclaw/cron/jobs.json`.
 - Use `--session isolated` para uma jogada dedicada; ajuste `--tz` ao fuso do utilizador.
-- A `--message` deve instruir o agente a fazer commit (se aplicável) e chamar `POST ${OPENSYNC_API_URL}/git/${OPENSYNC_VAULT_ID}/push` com `Authorization: Bearer` igual a `OPENSYNC_AGENT_API_KEY` (ou usar o plugin `/sync` se estiver disponível).
+- A `--message` deve priorizar **`POST .../push`** com JSON `{ "files": { … } }` e `Authorization: Bearer` (`OPENSYNC_*` no ambiente). **Não** depende de `git init` local. O plugin `/sync` é alternativa secundária (Git no disco). Um `curl` só com `-d '{}'` **não** grava no Gitea.
 
 Exemplo (intervalo fixo de 30 minutos, sem anúncio em canal — personalize a mensagem e ferramentas):
 
@@ -49,7 +75,7 @@ openclaw cron add \
   --name "OpenSync vault sync (30m)" \
   --every 30m \
   --session isolated \
-  --message "Sincronizar vault OpenSync: commit local se houver alterações; depois POST à API OpenSync /git/<vaultId>/push com env OPENSYNC_API_URL, OPENSYNC_VAULT_ID e Bearer OPENSYNC_AGENT_API_KEY. Responder numa linha: ok ou erro." \
+  --message "OpenSync: POST .../git/<vaultId>/push com JSON {files: path->conteudo UTF-8} e Bearer OPENSYNC_AGENT_API_KEY (sem git local). Opcional: plugin /sync. Uma linha ok ou erro." \
   --tools exec \
   --delivery none
 ```
@@ -62,12 +88,14 @@ openclaw cron add \
   --cron "*/30 * * * *" \
   --tz "Europe/Lisbon" \
   --session isolated \
-  --message "Sincronizar vault OpenSync (API HTTP + Bearer). Uma linha: ok ou erro." \
+  --message "OpenSync: POST push com JSON files + Bearer OPENSYNC_* (preferido). Alternativa: /sync. Uma linha ok ou erro." \
   --tools exec \
   --delivery none
 ```
 
 Verificar jobs: `openclaw cron list`.
+
+Se o CLI devolver **`pairing required`** ao falar com o Gateway (`ws://127.0.0.1:18789`), complete o **pairing** do cliente com o Gateway (UI OpenClaw / `openclaw` conforme a vossa instalação) e volte a executar `openclaw cron add`. O cron só é registado quando o Gateway aceita o pedido.
 
 ## Instalação da skill
 
@@ -78,6 +106,12 @@ Use o guia em **opensync.space** (`/docs/agent/opensync-skill`) ou o ficheiro `S
 - `~/.openclaw/skills/opensync/SKILL.md`
 
 Guarde o conteúdo completo deste documento nesse ficheiro.
+
+### Primeiro push e repositório remoto
+
+- **Gitea:** o repositório do vault é **criado pelo OpenSync** ao criar o cofre. **Não** criar o projeto à mão no Gitea.
+- **Agente (fluxo preferido):** primeiro e seguintes envios = **`POST .../push`** com `{ "files": { … } }`. **Sem** `git init`, **sem** `git remote`, **sem** Git no cliente.
+- **Só se usarem `/sync`:** aí o plugin pode inicializar Git local no `onLoad`; caso contrário **ignore** Git no disco.
 
 ### Allowlist de skills (multi-agent)
 

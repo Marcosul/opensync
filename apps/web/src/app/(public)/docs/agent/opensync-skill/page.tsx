@@ -81,7 +81,7 @@ export default async function OpenSyncAgentSkillDocPage() {
   --name "OpenSync vault sync (30m)" \\
   --every 30m \\
   --session isolated \\
-  --message "Sincronizar vault OpenSync: commit local se houver alterações; POST à API /git/<vaultId>/push com OPENSYNC_* e Bearer. Uma linha: ok ou erro." \\
+  --message "OpenSync: POST .../git/<vaultId>/push com JSON files + Bearer OPENSYNC_* (sem git local). Opcional: /sync. Uma linha: ok ou erro." \\
   --tools exec \\
   --delivery none
 
@@ -112,7 +112,13 @@ export default async function OpenSyncAgentSkillDocPage() {
         <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
           {`export OPENSYNC_API_URL="https://api.opensync.space/api"
 export OPENSYNC_VAULT_ID="<uuid-do-vault>"
-export OPENSYNC_AGENT_API_KEY="<api-key-osk_...>"`}
+export OPENSYNC_AGENT_API_KEY="<api-key-osk_...>"
+
+# Push real: JSON obrigatorio com "files" (path relativo -> conteudo UTF-8). Ex.:
+curl -sS -X POST "\${OPENSYNC_API_URL}/git/\${OPENSYNC_VAULT_ID}/push" \\
+  -H "Authorization: Bearer \${OPENSYNC_AGENT_API_KEY}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"files":{"notas/exemplo.md":"# Ola"}}'`}
         </pre>
 
         <h2 className="mt-10 text-base font-semibold text-foreground">Alternativa OpenSync: Git na VPS</h2>
