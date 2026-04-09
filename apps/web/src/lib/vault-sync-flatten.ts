@@ -2,8 +2,13 @@ import {
   docIdForFileInParent,
   docIdPrefixFromDirPath,
 } from "@/components/app/vault-tree-ops";
-import type { VaultMeta } from "@/components/app/vault-persistence";
+import type { VaultMeta, VaultSnapshotV1 } from "@/components/app/vault-persistence";
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
+import {
+  GIT_LAZY_PLACEHOLDER_DOC_ID,
+  collectLazyGitRepoRelativePaths,
+  isGitLazyVaultTree,
+} from "@/lib/vault-git-tree-import";
 
 /**
  * Pastas vazias não existem em Git sem um ficheiro; `.gitkeep` mantém-as visíveis no Gitea.
@@ -66,4 +71,27 @@ export function usesLazyGitRemote(vaultId: string, meta: VaultMeta | undefined):
   if (!isBackendSyncVaultId(vaultId)) return false;
   if (meta?.remoteSync === "ssh") return false;
   return true;
+}
+
+/**
+ * No primeiro render, não usar texto guardado em localStorage para ficheiros do repo
+ * Git (vem do Gitea via blob). Evita flash de conteúdo antigo antes do fetch.
+ * Se a árvore ainda não é lazy Git, limpa tudo até `scheduleGitTreeRefresh` hidratar.
+ */
+export function initialNoteContentsForLazyGitVault(
+  snap: VaultSnapshotV1,
+  vaultId: string,
+  meta: VaultMeta | undefined,
+): Record<string, string> {
+  if (!usesLazyGitRemote(vaultId, meta)) return { ...snap.noteContents };
+  if (isGitLazyVaultTree(snap.tree)) {
+    const paths = new Set(collectLazyGitRepoRelativePaths(snap.tree));
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(snap.noteContents)) {
+      if (paths.has(k) && k !== GIT_LAZY_PLACEHOLDER_DOC_ID) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+  return {};
 }

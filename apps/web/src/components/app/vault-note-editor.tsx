@@ -670,6 +670,7 @@ export function VaultNoteEditor({
                     );
                   }
                   const prosePlain = isPlainProseBlock(draft);
+                  const draftEmpty = draft.trim() === "";
                   return (
                     <div
                       key={`edit-${seg.start}-${seg.end}`}
@@ -686,7 +687,10 @@ export function VaultNoteEditor({
                         className={cn(
                           "m-0 block w-full border-0 bg-transparent p-0 outline-none selection:bg-primary/20 focus-visible:ring-0",
                           prosePlain
-                            ? "min-h-[1.5em] resize-none font-sans text-base leading-7 text-foreground/90 caret-foreground"
+                            ? cn(
+                                "resize-none font-sans text-base leading-7 text-foreground/90 caret-foreground",
+                                draftEmpty ? "min-h-[min(40vh,16rem)]" : "min-h-[1.5em]",
+                              )
                             : "min-h-[1.5em] resize-y font-mono text-sm leading-7 text-foreground/90 caret-foreground"
                         )}
                         aria-label="Editar Markdown do bloco"
@@ -694,6 +698,8 @@ export function VaultNoteEditor({
                     </div>
                   );
                 }
+
+                const blockLooksEmpty = seg.source.trim() === "";
 
                 return (
                   <div
@@ -712,15 +718,23 @@ export function VaultNoteEditor({
                     className={cn(
                       BLOCK_SHELL,
                       "[&_p]:mb-0",
+                      blockLooksEmpty &&
+                        "flex min-h-[min(40vh,16rem)] flex-col justify-center py-8",
                       "cursor-text outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-primary/35"
                     )}
                   >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={components}
-                    >
-                      {preprocessWikiLinksForMarkdown(seg.source)}
-                    </ReactMarkdown>
+                    {blockLooksEmpty ? (
+                      <p className="pointer-events-none select-none text-base leading-7 text-muted-foreground/70">
+                        Clique para escrever nesta nota.
+                      </p>
+                    ) : (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={components}
+                      >
+                        {preprocessWikiLinksForMarkdown(seg.source)}
+                      </ReactMarkdown>
+                    )}
                   </div>
                 );
               })}

@@ -42,10 +42,12 @@ import {
   useReducer,
   useRef,
   useState,
+  type Dispatch,
   type DragEvent,
   type KeyboardEvent,
   type MutableRefObject,
   type PointerEvent,
+  type SetStateAction,
 } from "react";
 import Link from "next/link";
 import { useQueryStates, type inferParserType } from "nuqs";
@@ -128,9 +130,11 @@ import {
   gitTreePathsToVaultSnapshot,
   isGitKeepMarkerPath,
   isGitLazyVaultTree,
+  mergeLazyGitNoteContentsAfterRemoteTree,
 } from "@/lib/vault-git-tree-import";
 import {
   flattenVaultTreeToSyncFiles,
+  initialNoteContentsForLazyGitVault,
   isBackendSyncVaultId,
   usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
@@ -162,6 +166,66 @@ function noteMarkdown(docId: string, noteContents: Record<string, string>): stri
     noteContents[docId] ??
     (DOC_BY_ID[docId] ? mockDocToMarkdown(DOC_BY_ID[docId]) : "")
   );
+}
+
+const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 8;
+
+/**
+ * Carrega todos os blobs do repo em segundo plano (grafo, backlinks e separadores
+ * ficam coerentes sem precisar abrir cada ficheiro).
+ */
+async function prefetchLazyGitVaultBlobs(
+  vaultId: string,
+  remotePaths: readonly string[],
+  signal: AbortSignal,
+  opts: {
+    noteContentsRef: MutableRefObject<Record<string, string>>;
+    lazyGitDirtyDocIdsRef: MutableRefObject<Set<string>>;
+    setNoteContents: Dispatch<SetStateAction<Record<string, string>>>;
+    uiLatestRef: MutableRefObject<VaultUiState>;
+    lastBlobFetchRef: MutableRefObject<{ tab: string; commit: string | null } | null>;
+    commitShort: string;
+  },
+): Promise<void> {
+  const paths = remotePaths
+    .map((p) => p.replace(/\\/g, "/").trim())
+    .filter((p) => p.length > 0 && !isGitKeepMarkerPath(p));
+  const { noteContentsRef, lazyGitDirtyDocIdsRef, setNoteContents, uiLatestRef, lastBlobFetchRef } =
+    opts;
+  for (let i = 0; i < paths.length; i += LAZY_GIT_BLOB_PREFETCH_CONCURRENCY) {
+    if (signal.aborted) return;
+    const slice = paths.slice(i, i + LAZY_GIT_BLOB_PREFETCH_CONCURRENCY);
+    const updates: Record<string, string> = {};
+    await Promise.all(
+      slice.map(async (p) => {
+        if (signal.aborted) return;
+        if (lazyGitDirtyDocIdsRef.current.has(p)) return;
+        if (noteContentsRef.current[p] !== undefined) return;
+        try {
+          const { content } = await fetchVaultGitBlob(vaultId, p, { signal });
+          updates[p] = content;
+        } catch {
+          /* ignora um path; os restantes continuam */
+        }
+      }),
+    );
+    if (signal.aborted) return;
+    if (Object.keys(updates).length === 0) continue;
+    setNoteContents((prev) => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(updates)) {
+        if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+        next[k] = v;
+      }
+      noteContentsRef.current = next;
+      return next;
+    });
+  }
+  if (signal.aborted) return;
+  const tab = uiLatestRef.current.activeTabId;
+  if (tab && noteContentsRef.current[tab] !== undefined) {
+    lastBlobFetchRef.current = { tab, commit: opts.commitShort };
+  }
 }
 
 type GNode = {
@@ -1707,10 +1771,13 @@ function VaultOpenWorkspace({
   const bootSnap = bootSnapRef.current;
 
   const [ui, dispatchUi] = useReducer(vaultUiReducer, bootSnap.ui);
+  const uiLatestRef = useRef<VaultUiState>(ui);
+  uiLatestRef.current = ui;
+
   const [treeRoot, setTreeRoot] = useState<TreeEntry>(() => bootSnap.tree);
-  const [noteContents, setNoteContents] = useState<Record<string, string>>(() => ({
-    ...bootSnap.noteContents,
-  }));
+  const [noteContents, setNoteContents] = useState<Record<string, string>>(() =>
+    initialNoteContentsForLazyGitVault(bootSnap, vaultId, activeVaultMeta),
+  );
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(bootSnap.expandedPaths),
   );
@@ -1740,6 +1807,7 @@ function VaultOpenWorkspace({
   const gitTreeAbortRef = useRef<AbortController | null>(null);
   /** Apenas para vault Git lazy: notas gravadas em localStorage (reduz quota). */
   const lazyGitDirtyDocIdsRef = useRef<Set<string>>(new Set());
+  const lastBlobFetchRef = useRef<{ tab: string; commit: string | null } | null>(null);
 
   const activeVaultMetaRef = useRef(activeVaultMeta);
   activeVaultMetaRef.current = activeVaultMeta;
@@ -1753,10 +1821,15 @@ function VaultOpenWorkspace({
   }, []);
 
   const refreshGitTreeAfterSync = useCallback((vaultId: string) => {
+    gitTreeAbortRef.current?.abort();
+    const ac = new AbortController();
+    gitTreeAbortRef.current = ac;
     void (async () => {
       try {
-        const data = await fetchVaultGitTree(vaultId);
+        const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+        if (ac.signal.aborted) return;
         const remotePaths = data.entries.map((e) => e.path);
+        const short = data.commitHash.trim().slice(0, 12);
         const prevRoot = treeRootRef.current;
         const localPaths = isGitLazyVaultTree(prevRoot)
           ? collectLazyGitRepoRelativePaths(prevRoot)
@@ -1771,16 +1844,29 @@ function VaultOpenWorkspace({
         if (allowed.size === 0) {
           allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
         }
-        setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
+        setLastGiteaCommitHash(short);
         setTreeRoot(next.tree);
         setNoteContents((prev) => {
-          const merged: Record<string, string> = { ...next.noteContents };
-          for (const [k, v] of Object.entries(prev)) {
-            if (allowed.has(k)) merged[k] = v;
-          }
+          const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+            prev,
+            next.noteContents,
+            remotePaths,
+            allowed,
+            lazyGitDirtyDocIdsRef.current,
+          );
+          noteContentsRef.current = merged;
           return merged;
         });
+        lastBlobFetchRef.current = null;
         lazyGitDirtyDocIdsRef.current.clear();
+        await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+          noteContentsRef,
+          lazyGitDirtyDocIdsRef,
+          setNoteContents,
+          uiLatestRef,
+          lastBlobFetchRef,
+          commitShort: short,
+        });
       } catch {
         /* arvore local mantem-se; commit ja veio do push */
       }
@@ -1860,7 +1946,8 @@ function VaultOpenWorkspace({
         try {
           const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
           if (ac.signal.aborted) return;
-          setLastGiteaCommitHash(data.commitHash.trim().slice(0, 12));
+          const short = data.commitHash.trim().slice(0, 12);
+          setLastGiteaCommitHash(short);
           const remotePaths = data.entries.map((e) => e.path);
           const prevRoot = treeRootRef.current;
           const localPaths = isGitLazyVaultTree(prevRoot)
@@ -1878,15 +1965,28 @@ function VaultOpenWorkspace({
           }
           setTreeRoot(next.tree);
           setNoteContents((prev) => {
-            const merged: Record<string, string> = { ...next.noteContents };
-            for (const [k, v] of Object.entries(prev)) {
-              if (allowed.has(k)) merged[k] = v;
-            }
+            const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+              prev,
+              next.noteContents,
+              remotePaths,
+              allowed,
+              lazyGitDirtyDocIdsRef.current,
+            );
+            noteContentsRef.current = merged;
             return merged;
           });
+          lastBlobFetchRef.current = null;
           setExpandedPaths(new Set(next.expandedPaths));
           setBookmarks([]);
           dispatchUi({ type: "reset", state: next.ui });
+          await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+            noteContentsRef,
+            lazyGitDirtyDocIdsRef,
+            setNoteContents,
+            uiLatestRef,
+            lastBlobFetchRef,
+            commitShort: short,
+          });
         } catch {
           /* mantem snapshot local */
         }
@@ -1954,6 +2054,7 @@ function VaultOpenWorkspace({
 
   useEffect(() => {
     lazyGitDirtyDocIdsRef.current.clear();
+    lastBlobFetchRef.current = null;
     setLastGiteaCommitHash(null);
     setGiteaSyncError(null);
   }, [vaultId]);
@@ -2182,7 +2283,18 @@ function VaultOpenWorkspace({
     ) {
       return;
     }
-    if (noteContentsRef.current[activeTabId] !== undefined) return;
+    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
+
+    const commit = lastGiteaCommitHash;
+    const last = lastBlobFetchRef.current;
+    if (
+      last &&
+      last.tab === activeTabId &&
+      last.commit === commit &&
+      noteContentsRef.current[activeTabId] !== undefined
+    ) {
+      return;
+    }
 
     setBlobLoadError(null);
     setBlobLoadingDocId(activeTabId);
@@ -2191,6 +2303,7 @@ function VaultOpenWorkspace({
       try {
         const { content } = await fetchVaultGitBlob(vaultId, activeTabId);
         if (cancelled) return;
+        lastBlobFetchRef.current = { tab: activeTabId, commit };
         setNoteContents((prev) => ({ ...prev, [activeTabId]: content }));
       } catch {
         if (!cancelled) {
@@ -2205,7 +2318,7 @@ function VaultOpenWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeTabId, vaultId, activeVaultMeta]);
+  }, [activeTabId, vaultId, activeVaultMeta, lastGiteaCommitHash]);
 
   const migrateDocPrefixes = useCallback(
     (from: string, to: string) => {

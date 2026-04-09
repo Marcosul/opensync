@@ -132,6 +132,28 @@ export function isGitLazyVaultTree(tree: TreeEntry): boolean {
 }
 
 /** Caminhos relativos no repo (docIds) a partir da arvore lazy atual; exclui placeholder. */
+/**
+ * Depois de atualizar a árvore a partir do Gitea: não reutilizar texto em cache para
+ * ficheiros que existem no remoto (localStorage ficaria desatualizado). Preserva só
+ * rascunhos locais (`dirty`) e ficheiros que ainda não estão no remoto.
+ */
+export function mergeLazyGitNoteContentsAfterRemoteTree(
+  prev: Record<string, string>,
+  nextBaseNoteContents: Record<string, string>,
+  remotePaths: readonly string[],
+  allowed: ReadonlySet<string>,
+  dirty: ReadonlySet<string>,
+): Record<string, string> {
+  const remote = new Set(remotePaths);
+  const merged: Record<string, string> = { ...nextBaseNoteContents };
+  for (const [k, v] of Object.entries(prev)) {
+    if (!allowed.has(k)) continue;
+    if (remote.has(k) && !dirty.has(k)) continue;
+    merged[k] = v;
+  }
+  return merged;
+}
+
 export function collectLazyGitRepoRelativePaths(tree: TreeEntry): string[] {
   if (!isGitLazyVaultTree(tree) || tree.type !== "dir") return [];
   const out: string[] = [];
