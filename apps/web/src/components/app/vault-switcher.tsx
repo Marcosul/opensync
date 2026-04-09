@@ -195,15 +195,6 @@ function VaultRemoveConfirmDialog({
           O registro do vault, o repositório correspondente no Gitea e o cache local neste navegador
           serão removidos. Esta ação não pode ser desfeita.
         </p>
-        {isLastVault ? (
-          <p
-            id="vault-remove-last-vault-hint"
-            className="mt-2 text-sm text-amber-800 dark:text-amber-200/90"
-          >
-            É o único cofre na lista. Depois de remover, o app volta ao cofre local padrão até você
-            adicionar outro.
-          </p>
-        ) : null}
         {isProfileLinkedVault ? (
           <p
             id="vault-remove-profile-hint"

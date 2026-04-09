@@ -29,6 +29,7 @@ const SQUAD_MISSION_MAX = 8000;
 const TOTAL_STEPS = 3;
 
 const SKILL_DOC_PATH = "/docs/agent/opensync-skill";
+const SKILL_MD_RAW_PATH = "/docs/agent/opensync-skill/skill-md";
 
 type StartChoice = "agent_project" | "connect_agent" | "empty_vault";
 type AgentProjectScope = "single_agent" | "agent_squad";
@@ -121,6 +122,13 @@ export default function NewVaultPage() {
       return SKILL_DOC_PATH;
     }
     return `${window.location.origin}${SKILL_DOC_PATH}`;
+  }, [step, connectAgentSetup]);
+
+  const skillMdAbsoluteUrl = useMemo(() => {
+    if (typeof window === "undefined") {
+      return SKILL_MD_RAW_PATH;
+    }
+    return `${window.location.origin}${SKILL_MD_RAW_PATH}`;
   }, [step, connectAgentSetup]);
 
   const isConnectAgentStep3 = step === 3 && startChoice === "connect_agent";
@@ -478,6 +486,7 @@ export default function NewVaultPage() {
             {isConnectAgentStep3 && connectAgentSetup ? (
               <ConnectAgentSkillStep3Panel
                 skillGuideUrl={skillGuideAbsoluteUrl}
+                skillMdUrl={skillMdAbsoluteUrl}
                 apiBaseUrl={getPublicApiBaseUrlForClient()}
                 vaultId={connectAgentSetup.vault.id}
                 agentApiKey={connectAgentSetup.token}

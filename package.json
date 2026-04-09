@@ -20,7 +20,8 @@
     "lint": "pnpm exec turbo lint",
     "test": "pnpm exec turbo test",
     "dev:web": "pnpm exec turbo dev --filter=@opensync/web",
-    "dev:api": "pnpm exec turbo dev --filter=@opensync/api"
+    "dev:api": "pnpm exec turbo dev --filter=@opensync/api",
+    "deploy:api": "pnpm --filter @opensync/api run fly:deploy"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

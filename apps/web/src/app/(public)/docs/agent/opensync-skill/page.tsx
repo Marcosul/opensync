@@ -1,110 +1,136 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
 
+import { readOpensyncSkillMarkdown } from "@/lib/server/opensync-skill-markdown";
+
+import { SkillDocCopyActions } from "./skill-doc-copy";
+
 export const metadata: Metadata = {
-  title: "Instalar a skill OpenSync | OpenSync",
+  title: "Skill OpenSync | OpenSync",
   description:
-    "Guia para o agente OpenClaw: instalar a skill OpenSync, variáveis de ambiente e sincronização com Gitea.",
+    "SKILL.md oficial OpenSync: instalação, credenciais e sync com Gitea. Para o agente obter por URL, download ou cópia.",
 };
 
-export default function OpenSyncAgentSkillDocPage() {
+export default async function OpenSyncAgentSkillDocPage() {
+  const skillMd = readOpensyncSkillMarkdown();
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const origin = host ? `${proto}://${host}` : "";
+  const guidePageUrl = origin ? `${origin}/docs/agent/opensync-skill` : "/docs/agent/opensync-skill";
+  const skillMdUrl = origin ? `${origin}/docs/agent/opensync-skill/skill-md` : "/docs/agent/opensync-skill/skill-md";
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Documentação do agente
+          Skill OpenSync — documentação para o agente
         </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Skill OpenSync no OpenClaw</h1>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Instalar a skill OpenSync</h1>
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-          Este guia destina-se ao <strong className="font-medium text-foreground">agente</strong> (ou ao
-          utilizador a copiar para o agente). A sincronização com o repositório Gitea do vault faz-se pela{" "}
-          <strong className="font-medium text-foreground">API OpenSync</strong> com uma API key{" "}
-          <span className="font-mono text-xs">Bearer</span> e o ID do vault.
+          Este documento é para o <strong className="font-medium text-foreground">agente</strong> (ou para quem
+          cola no chat do agente). Inclui o ficheiro completo <span className="font-mono text-xs">SKILL.md</span> da
+          OpenSync. O agente pode: <strong className="font-medium text-foreground">abrir esta página por URL</strong>
+          , <strong className="font-medium text-foreground">obter o ficheiro por URL</strong>,{" "}
+          <strong className="font-medium text-foreground">copiar e colar</strong> o bloco abaixo no chat, ou receber{" "}
+          <span className="font-mono text-xs">SKILL.md</span> como <strong className="font-medium text-foreground">anexo</strong>
+          .
         </p>
 
-        <ol className="mt-10 list-decimal space-y-10 pl-5 text-sm leading-relaxed">
-          <li className="pl-2">
-            <h2 className="text-base font-semibold text-foreground">Instalar os ficheiros da skill</h2>
-            <p className="mt-2 text-muted-foreground">
-              O OpenClaw usa pastas de skills compatíveis com AgentSkills. A precedência oficial (resumo) é:{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">&lt;workspace&gt;/skills</code>{" "}
-              (mais alta), depois{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">&lt;workspace&gt;/.agents/skills</code>
-              , <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">~/.agents/skills</code>,{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">~/.openclaw/skills</code>, skills
-              incluídas na instalação e <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">skills.load.extraDirs</code>{" "}
-              (mais baixa). Consulte{" "}
-              <a
-                href="https://docs.openclaw.ai/tools/skills"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-primary underline-offset-2 hover:underline"
-              >
-                Skills no OpenClaw
-              </a>{" "}
-              para o detalhe completo.
-            </p>
-            <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
-              {`# Exemplo: skill partilhada na máquina (ajuste o caminho à sua escolha)
-mkdir -p ~/.openclaw/skills/opensync
-# Copie do repositório OpenSync:
-#   packages/plugin/skill/SKILL.md
-# para:
-#   ~/.openclaw/skills/opensync/SKILL.md`}
-            </pre>
-            <p className="mt-3 text-xs text-muted-foreground">
-              O <span className="font-mono">SKILL.md</span> do repositório inclui frontmatter{" "}
-              <span className="font-mono">name</span> / <span className="font-mono">description</span> conforme o
-              formato esperado pelo OpenClaw.
-            </p>
-            <h3 className="mt-6 text-sm font-semibold text-foreground">Precisa de reiniciar o Gateway?</h3>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Em geral <strong className="font-medium text-foreground">não</strong>: com o watcher de skills ativo por
-              defeito, alterações a <span className="font-mono">SKILL.md</span> podem refletir-se na{" "}
-              <strong className="font-medium text-foreground">próxima jogada</strong> do agente. O snapshot de skills é
-              criado <strong className="font-medium text-foreground">no início da sessão</strong> — por isso, se a skill
-              não aparecer, abra uma <strong className="font-medium text-foreground">nova sessão</strong> de chat. Só
-              precisa de reiniciar o processo do Gateway se mudou configuração do próprio Gateway (ex.{" "}
-              <span className="font-mono">openclaw.json</span>) ou se o ambiente não aplicar mudanças.
-            </p>
-          </li>
+        <SkillDocCopyActions
+          skillMarkdown={skillMd}
+          guidePageUrl={guidePageUrl}
+          skillMdUrl={skillMdUrl}
+        />
 
-          <li className="pl-2">
-            <h2 className="text-base font-semibold text-foreground">Variáveis de ambiente</h2>
-            <p className="mt-2 text-muted-foreground">
-              Defina a URL base da API (com sufixo <span className="font-mono text-xs">/api</span>), o UUID do
-              vault e a API key mostrada uma vez no OpenSync (mesmo valor do cabeçalho{" "}
-              <span className="font-mono text-xs">Authorization: Bearer</span>).
-            </p>
-            <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
-              {`export OPENSYNC_API_URL="https://api.opensync.space/api"
-export OPENSYNC_VAULT_ID="<uuid-do-vault-no-dashboard>"
+        <h2 className="mt-10 text-base font-semibold text-foreground">Onde gravar no disco</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Crie a pasta <span className="font-mono text-xs">opensync</span> numa diretoria de skills do seu ambiente e
+          guarde o conteúdo como <span className="font-mono text-xs">SKILL.md</span>. Exemplos de caminhos (o primeiro
+          que existir no vosso setup prevalece sobre os mais gerais):
+        </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+          <li>
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">&lt;workspace&gt;/skills/opensync/SKILL.md</code>
+          </li>
+          <li>
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+              &lt;workspace&gt;/.agents/skills/opensync/SKILL.md
+            </code>
+          </li>
+          <li>
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">~/.agents/skills/opensync/SKILL.md</code>
+          </li>
+          <li>
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">~/.openclaw/skills/opensync/SKILL.md</code>
+          </li>
+        </ul>
+        <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
+          {`mkdir -p ~/.openclaw/skills/opensync
+# Guarde aqui o ficheiro SKILL.md (conteúdo abaixo ou descarregado).`}
+        </pre>
+
+        <h2 className="mt-10 text-base font-semibold text-foreground">
+          Tarefa agendada: sincronizar a cada 30 minutos
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Depois de instalar a skill e definir as credenciais, crie uma{" "}
+          <strong className="font-medium text-foreground">Scheduled Task</strong> no Gateway OpenClaw para correr o
+          sync <strong className="font-medium text-foreground">de 30 em 30 minutos</strong>. Guia oficial:{" "}
+          <a
+            href="https://docs.openclaw.ai/automation/cron-jobs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            docs.openclaw.ai/automation/cron-jobs
+          </a>
+          .
+        </p>
+        <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+          {`openclaw cron add \\
+  --name "OpenSync vault sync (30m)" \\
+  --every 30m \\
+  --session isolated \\
+  --message "Sincronizar vault OpenSync: commit local se houver alterações; POST à API /git/<vaultId>/push com OPENSYNC_* e Bearer. Uma linha: ok ou erro." \\
+  --tools exec \\
+  --delivery none
+
+# Ver jobs: openclaw cron list`}
+        </pre>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Ajuste <span className="font-mono text-[11px]">--tz</span> se usar{" "}
+          <span className="font-mono text-[11px]">--cron &quot;*/30 * * * *&quot;</span> em vez de{" "}
+          <span className="font-mono text-[11px]">--every 30m</span>. O detalhe completo repete-se no{" "}
+          <span className="font-mono text-[11px]">SKILL.md</span> abaixo.
+        </p>
+
+        <h2 className="mt-10 text-base font-semibold text-foreground">Conteúdo completo do SKILL.md (OpenSync)</h2>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Depois de gravar, se a skill não aparecer de imediato, inicie uma <strong className="font-medium text-foreground">nova sessão</strong>{" "}
+          de conversa com o agente.
+        </p>
+        <pre className="mt-3 max-h-[min(70vh,520px)] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border bg-muted/50 p-4 font-mono text-[11px] leading-relaxed sm:text-xs">
+          {skillMd}
+        </pre>
+
+        <h2 className="mt-10 text-base font-semibold text-foreground">Credenciais (substituir no vosso ambiente)</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          O utilizador obtém estes valores no OpenSync (assistente de novo vault ou Dashboard → Git na VPS). A URL da
+          API deve incluir o sufixo <span className="font-mono text-xs">/api</span>.
+        </p>
+        <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
+          {`export OPENSYNC_API_URL="https://api.opensync.space/api"
+export OPENSYNC_VAULT_ID="<uuid-do-vault>"
 export OPENSYNC_AGENT_API_KEY="<api-key-osk_...>"`}
-            </pre>
-          </li>
+        </pre>
 
-          <li className="pl-2">
-            <h2 className="text-base font-semibold text-foreground">Pedido de sincronização</h2>
-            <p className="mt-2 text-muted-foreground">
-              O plugin OpenSync usa <span className="font-mono text-xs">POST</span> para o endpoint de push (corpo
-              JSON conforme a versão do plugin).
-            </p>
-            <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
-              {`POST \${OPENSYNC_API_URL}/git/\${OPENSYNC_VAULT_ID}/push
-Authorization: Bearer \${OPENSYNC_AGENT_API_KEY}
-Content-Type: application/json`}
-            </pre>
-          </li>
-
-          <li className="pl-2">
-            <h2 className="text-base font-semibold text-foreground">Alternativa: Git na VPS</h2>
-            <p className="mt-2 text-muted-foreground">
-              No dashboard OpenSync, <strong className="font-medium text-foreground">Git na VPS</strong> permite
-              gerar deploy key e usar <span className="font-mono text-xs">git push</span> direto ao Gitea, em
-              paralelo com a API.
-            </p>
-          </li>
-        </ol>
+        <h2 className="mt-10 text-base font-semibold text-foreground">Alternativa OpenSync: Git na VPS</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          No dashboard OpenSync, <strong className="font-medium text-foreground">Git na VPS</strong> permite deploy key
+          e <span className="font-mono text-xs">git push</span> direto ao Gitea, em paralelo com a API HTTP.
+        </p>
 
         <p className="mt-12 text-center text-xs text-muted-foreground">
           <Link href="/" className="font-medium text-primary underline-offset-2 hover:underline">

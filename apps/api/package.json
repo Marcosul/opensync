@@ -22,7 +22,8 @@
     "prisma:status": "node ../../scripts/prisma-menu.mjs migrate status",
     "prisma:push": "node ../../scripts/prisma-menu.mjs db push",
     "prisma:pull": "node ../../scripts/prisma-menu.mjs db pull",
-    "prisma:studio": "node ../../scripts/prisma-menu.mjs studio"
+    "prisma:studio": "node ../../scripts/prisma-menu.mjs studio",
+    "fly:deploy": "fly deploy"
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",
