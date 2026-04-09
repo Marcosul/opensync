@@ -72,7 +72,10 @@ export function readWizardDraft(): WizardDraft {
     return {
       vaultName: typeof p.vaultName === "string" ? p.vaultName : "",
       squadMission: typeof p.squadMission === "string" ? p.squadMission : "",
-      agentProjectScope: isAgentProjectScope(p.agentProjectScope) ? p.agentProjectScope : "single_agent",
+      agentProjectScope:
+        typeof p.agentProjectScope === "string" && isAgentProjectScope(p.agentProjectScope)
+          ? p.agentProjectScope
+          : "single_agent",
     };
   } catch {
     return { ...DEFAULT_DRAFT };

@@ -9,6 +9,7 @@ import { apiRequest } from "@/api/rest/generic";
 import {
   blankVaultSnapshot,
   readVaultMetas,
+  vaultMetaToListItem,
   saveSnapshot,
   writeActiveVaultId,
   writePendingActiveVaultId,
@@ -144,7 +145,9 @@ function NewVaultWizard() {
     if (stepUse === 3 && parsed.mode === "connect_agent" && parsed.vaultId) {
       void (async () => {
         const vid = parsed.vaultId as string;
-        let vault = readVaultMetas().find((m) => m.id === vid);
+        let vault: VaultListItem | undefined;
+        const meta = readVaultMetas().find((m) => m.id === vid);
+        if (meta) vault = vaultMetaToListItem(meta);
         if (!vault) {
           try {
             const { vaults } = await apiRequest<{ vaults: VaultListItem[] }>("/api/vaults/list");

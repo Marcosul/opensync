@@ -6,6 +6,7 @@ import {
 } from "@/components/marketing/openclaw-workspace-mock";
 
 import { cloneTreeEntry, ensureMissionMdFile } from "@/components/app/vault-tree-ops";
+import type { VaultListItem } from "@/lib/vault-list-types";
 
 export const VAULT_METAS_KEY = "opensync-vault-metas";
 export const VAULT_ACTIVE_KEY = "opensync-vault-active-id";
@@ -113,6 +114,19 @@ export type VaultMeta = {
   /** Arvore preenchida a partir de SSH (VPS) ou Git API (lazy). */
   remoteSync?: "ssh" | "git";
 };
+
+/** Metas locais podem omitir booleanos; a API Nest devolve sempre `VaultListItem` completo. */
+export function vaultMetaToListItem(meta: VaultMeta): VaultListItem {
+  return {
+    id: meta.id,
+    name: meta.name,
+    pathLabel: meta.pathLabel,
+    kind: meta.kind,
+    managedByProfile: meta.managedByProfile ?? false,
+    deletable: meta.deletable !== false,
+    remoteSync: meta.remoteSync ?? "git",
+  };
+}
 
 export type VaultSnapshotV1 = {
   v: 1;
