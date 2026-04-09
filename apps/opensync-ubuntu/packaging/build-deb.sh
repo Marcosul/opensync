@@ -25,10 +25,15 @@ EOF
 
 cd "$REPO_ROOT"
 pnpm install --frozen-lockfile
-pnpm --filter @opensync/opensync-ubuntu exec tsc -p "$ROOT/tsconfig.json"
+cd "$ROOT" && pnpm exec tsc && cd "$REPO_ROOT"
 DEPLOY="$STAGE/usr/lib/opensync-ubuntu"
 rm -rf "$DEPLOY"
 pnpm --filter @opensync/opensync-ubuntu deploy --legacy "$DEPLOY"
+
+# Compilar binários nativos (better-sqlite3) no diretório de deploy
+cd "$DEPLOY"
+npm rebuild better-sqlite3 --ignore-scripts=false 2>/dev/null || true
+cd "$REPO_ROOT"
 
 cat >"$STAGE/usr/bin/opensync-ubuntu" <<'WRAP'
 #!/bin/sh

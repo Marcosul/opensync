@@ -22,7 +22,7 @@ export function configPath(): string {
 }
 
 export function tokenPath(): string {
-  return path.join(configDir(), "agent.token");
+  return path.join(configDir(), "vault.token");
 }
 
 export function defaultConfigPath(): string {

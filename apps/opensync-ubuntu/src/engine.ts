@@ -1,4 +1,5 @@
 import chokidar from "chokidar";
+import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentConfig } from "./config";
@@ -43,7 +44,7 @@ async function fullReconcile(
   let skipped = 0;
 
   async function walk(dir: string): Promise<void> {
-    let entries: fs.Dirent[];
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
@@ -153,7 +154,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     schedule(rel);
   });
 
-  setInterval(() => {
+  const pollTimer = setInterval(() => {
     void pollRemote();
   }, cfg.pollIntervalSeconds * 1000);
 
@@ -163,6 +164,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
+  clearInterval(pollTimer);
   await watcher.close();
   database.close();
 }

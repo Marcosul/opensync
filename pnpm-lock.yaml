@@ -109,7 +109,7 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
-  apps/opensync-agent:
+  apps/opensync-ubuntu:
     dependencies:
       better-sqlite3:
         specifier: ^11.8.1

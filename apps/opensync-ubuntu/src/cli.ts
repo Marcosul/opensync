@@ -34,7 +34,7 @@ async function cmdInit(): Promise<void> {
       "Caminho absoluto da pasta a sincronizar (ex: /home/voce/Documentos/Vault)",
     );
     const poll = await ask(rl, "Intervalo de poll em segundos", "20");
-    const token = await ask(rl, "API key do agente (osk_...)");
+    const token = await ask(rl, "API key do vault (osk_...)");
 
     if (!vaultId || !syncDir || !token) {
       console.error("Erro: vaultId, syncDir e token sao obrigatorios.");
