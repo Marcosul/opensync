@@ -32,6 +32,7 @@ async function cmdInit(): Promise<void> {
     console.log("──────────────────────────────────────────────────────────────────\n");
 
     // ── Passo 1: Email ────────────────────────────────────────────────────────
+    console.log("  Nao tem conta? Crie uma em: https://opensync.space/login\n");
     const email = await ask(rl, "E-mail da conta OpenSync");
     if (!email || !email.includes("@")) {
       console.error("Erro: e-mail invalido.");
@@ -183,16 +184,18 @@ async function cmdInit(): Promise<void> {
     // ── Passo 8: Ativar systemd ───────────────────────────────────────────────
     const activate = await ask(rl, "\nAtivar e iniciar servico systemd agora? (s/n)", "s");
     if (activate.toLowerCase() === "s" || activate.toLowerCase() === "sim") {
+      spawnSync("loginctl", ["enable-linger", process.env.USER ?? ""], { stdio: "inherit" });
       spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
       spawnSync("systemctl", ["--user", "enable", "opensync-ubuntu"], { stdio: "inherit" });
       const start = spawnSync("systemctl", ["--user", "start", "opensync-ubuntu"], { stdio: "inherit" });
 
       if (start.status === 0) {
-        console.log("\n✓ Servico opensync-ubuntu iniciado.");
+        console.log("\n✓ Servico opensync-ubuntu iniciado e habilitado no boot.");
         console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
         console.log("  Status: opensync-ubuntu status");
       } else {
         console.log("\nNao foi possivel iniciar o servico. Comandos manuais:");
+        console.log("  loginctl enable-linger $USER");
         console.log("  systemctl --user daemon-reload");
         console.log("  systemctl --user enable opensync-ubuntu");
         console.log("  systemctl --user start opensync-ubuntu");

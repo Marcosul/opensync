@@ -77,6 +77,9 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
   db.ensureDeviceId(database);
   const syncRoot = cfg.syncDir;
 
+  // Arquivos que estamos escrevendo via download remoto — o watcher ignora esses.
+  const remoteWriting = new Set<string>();
+
   const queue = new Set<string>();
   let processing = false;
 
@@ -100,6 +103,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
 
   function schedule(rel: string): void {
     if (shouldIgnore(cfg, rel)) return;
+    if (remoteWriting.has(rel)) return; // escrita remota em andamento — ignorar
     const prev = debouncers.get(rel);
     if (prev) clearTimeout(prev);
     debouncers.set(
@@ -118,7 +122,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
       for (;;) {
         const { changes, next_cursor } = await api.fetchChanges(cfg, token, cursor);
         for (const ch of changes) {
-          await applyRemoteChange(database, cfg, token, ch);
+          await applyRemoteChange(database, cfg, token, ch, remoteWriting);
         }
         if (changes.length === 0) break;
         cursor = next_cursor;
@@ -174,11 +178,14 @@ async function applyRemoteChange(
   cfg: AgentConfig,
   token: string,
   ch: api.ChangeRow,
+  remoteWriting: Set<string>,
 ): Promise<void> {
   const abs = path.join(cfg.syncDir, ch.path);
   const st = db.fileState(database, ch.path);
 
   if (ch.deleted) {
+    // Se já está marcado como deletado com a mesma versão, nada a fazer.
+    if (st?.is_deleted && st.remote_version === ch.version) return;
     try {
       await fs.unlink(abs);
     } catch {
@@ -188,15 +195,21 @@ async function applyRemoteChange(
     return;
   }
 
+  // Já temos esta versão aplicada — ignorar (evita reprocessar nossos próprios uploads).
+  if (st && st.remote_version === ch.version && !st.is_deleted) return;
+
   const content = ch.content ?? "";
   const h = db.hashContent(content);
 
+  // Só gera conflito se a mudança local for genuína: o arquivo existe, foi
+  // sincronizado antes (last_synced_hash != null) e o usuário o modificou
+  // (hash atual ≠ hash da última sincronização).
   try {
     const local = await readLocalFile(abs, cfg.maxFileSizeBytes);
     if (local !== null) {
       const localH = db.hashContent(local);
       const last = st?.last_synced_hash ?? null;
-      if (last !== null && localH !== last) {
+      if (last !== null && localH !== last && localH !== h) {
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         const conflictName = `${ch.path} (conflict remote ${stamp})`;
         const conflictAbs = path.join(cfg.syncDir, conflictName);
@@ -209,9 +222,16 @@ async function applyRemoteChange(
     /* ignore */
   }
 
+  // Marcar como "sendo escrito remotamente" antes de tocar o disco para que o
+  // watcher não dispare um upload de volta.
+  remoteWriting.add(ch.path);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, content, "utf8");
   db.upsertFileState(database, ch.path, ch.version, h);
+  // Manter na lista por DEBOUNCE_MS + margem para garantir que o watcher ignore.
+  setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
+
+  console.log(LOG, "remoto aplicado:", ch.path, `v${ch.version}`);
 }
 
 async function syncLocalPath(
@@ -240,6 +260,7 @@ async function syncLocalPath(
     const baseVer = row?.remote_version ?? null;
     const res = await api.upsertFile(cfg, token, rel, text, baseVer && baseVer !== "" ? baseVer : null);
     db.upsertFileState(database, rel, res.version, h);
+    console.log(LOG, "local enviado:", rel, `v${res.version}`);
   } catch (e: unknown) {
     const err = e as { status?: number };
     if (err?.status === 401 || err?.status === 403) {
