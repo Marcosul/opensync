@@ -51,6 +51,11 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useQueryStates, type inferParserType } from "nuqs";
 
 import { apiRequest } from "@/api/rest/generic";
@@ -122,10 +127,15 @@ import {
   type MockDoc,
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
+import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
 import {
-  fetchVaultGitBlob,
-  fetchVaultGitTree,
-} from "@/lib/vault-git-client";
+  createVaultGitBlobQueryFn,
+  fetchVaultGitBlobQueryFn,
+  LAZY_GIT_BLOB_GC_MS,
+  LAZY_GIT_BLOB_STALE_MS,
+  vaultGitBlobQueryKey,
+  vaultGitBlobQueryKeyRoot,
+} from "@/lib/vault-git-blob-query";
 import {
   GIT_LAZY_PLACEHOLDER_DOC_ID,
   collectLazyGitRepoRelativePaths,
@@ -171,6 +181,9 @@ function noteMarkdown(docId: string, noteContents: Record<string, string>): stri
 }
 
 const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 8;
+/** Prefetch em segundo plano dos separadores abertos (baixa prioridade, pouca concorrência). */
+const LAZY_OPEN_TAB_PREFETCH_CONCURRENCY = 2;
+const LAZY_OPEN_TAB_PREFETCH_MAX = 16;
 
 /**
  * Carrega todos os blobs do repo em segundo plano (grafo, backlinks e separadores
@@ -181,19 +194,29 @@ async function prefetchLazyGitVaultBlobs(
   remotePaths: readonly string[],
   signal: AbortSignal,
   opts: {
+    queryClient: QueryClient;
     noteContentsRef: MutableRefObject<Record<string, string>>;
     lazyGitDirtyDocIdsRef: MutableRefObject<Set<string>>;
     setNoteContents: Dispatch<SetStateAction<Record<string, string>>>;
     uiLatestRef: MutableRefObject<VaultUiState>;
     lastBlobFetchRef: MutableRefObject<{ tab: string; commit: string | null } | null>;
+    blobsSnapshotCommitRef: MutableRefObject<string | null>;
     commitShort: string;
   },
 ): Promise<void> {
   const paths = remotePaths
     .map((p) => p.replace(/\\/g, "/").trim())
     .filter((p) => p.length > 0 && !isGitKeepMarkerPath(p));
-  const { noteContentsRef, lazyGitDirtyDocIdsRef, setNoteContents, uiLatestRef, lastBlobFetchRef } =
-    opts;
+  const {
+    queryClient,
+    noteContentsRef,
+    lazyGitDirtyDocIdsRef,
+    setNoteContents,
+    uiLatestRef,
+    lastBlobFetchRef,
+    blobsSnapshotCommitRef,
+  } = opts;
+  blobsSnapshotCommitRef.current = opts.commitShort;
   for (let i = 0; i < paths.length; i += LAZY_GIT_BLOB_PREFETCH_CONCURRENCY) {
     if (signal.aborted) return;
     const slice = paths.slice(i, i + LAZY_GIT_BLOB_PREFETCH_CONCURRENCY);
@@ -204,7 +227,11 @@ async function prefetchLazyGitVaultBlobs(
         if (lazyGitDirtyDocIdsRef.current.has(p)) return;
         if (noteContentsRef.current[p] !== undefined) return;
         try {
-          const { content } = await fetchVaultGitBlob(vaultId, p, { signal });
+          const content = await queryClient.fetchQuery({
+            queryKey: vaultGitBlobQueryKey(vaultId, p, opts.commitShort),
+            queryFn: createVaultGitBlobQueryFn(vaultId, p, signal),
+            staleTime: LAZY_GIT_BLOB_STALE_MS,
+          });
           updates[p] = content;
         } catch {
           /* ignora um path; os restantes continuam */
@@ -213,6 +240,7 @@ async function prefetchLazyGitVaultBlobs(
     );
     if (signal.aborted) return;
     if (Object.keys(updates).length === 0) continue;
+    blobsSnapshotCommitRef.current = opts.commitShort;
     setNoteContents((prev) => {
       const next = { ...prev };
       for (const [k, v] of Object.entries(updates)) {
@@ -1849,8 +1877,9 @@ function VaultOpenWorkspace({
   const [giteaSyncStatus, setGiteaSyncStatus] = useState<
     "idle" | "syncing" | "synced" | "error"
   >("idle");
-  const [blobLoadingDocId, setBlobLoadingDocId] = useState<string | null>(null);
   const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
+  const [lazyGitQueryEpoch, setLazyGitQueryEpoch] = useState(0);
+  const queryClient = useQueryClient();
   const [lastGiteaCommitHash, setLastGiteaCommitHash] = useState<string | null>(null);
   const [giteaSyncError, setGiteaSyncError] = useState<string | null>(null);
 
@@ -1866,15 +1895,19 @@ function VaultOpenWorkspace({
   /** Apenas para vault Git lazy: notas gravadas em localStorage (reduz quota). */
   const lazyGitDirtyDocIdsRef = useRef<Set<string>>(new Set());
   const lastBlobFetchRef = useRef<{ tab: string; commit: string | null } | null>(null);
+  /** Commit (12 chars) dos blobs lazy já alinhados com `noteContents` — evita refetch ao trocar de separador. */
+  const lazyGitBlobsSnapshotCommitRef = useRef<string | null>(null);
 
   const activeVaultMetaRef = useRef(activeVaultMeta);
   activeVaultMetaRef.current = activeVaultMeta;
   const vaultIdRef = useRef(vaultId);
   vaultIdRef.current = vaultId;
+  const prevVaultIdForBlobQueriesRef = useRef(vaultId);
 
   const markLazyGitDirtyDoc = useCallback((docId: string) => {
     if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) {
       lazyGitDirtyDocIdsRef.current.add(docId);
+      setLazyGitQueryEpoch((n) => n + 1);
     }
   }, []);
 
@@ -1917,20 +1950,23 @@ function VaultOpenWorkspace({
           return merged;
         });
         lastBlobFetchRef.current = null;
+        lazyGitBlobsSnapshotCommitRef.current = null;
         lazyGitDirtyDocIdsRef.current.clear();
         await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+          queryClient,
           noteContentsRef,
           lazyGitDirtyDocIdsRef,
           setNoteContents,
           uiLatestRef,
           lastBlobFetchRef,
+          blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
           commitShort: short,
         });
       } catch {
         /* arvore local mantem-se; commit ja veio do push */
       }
     })();
-  }, []);
+  }, [queryClient]);
 
   const runVaultGiteaSync = useCallback(
     async (vaultId: string) => {
@@ -2035,6 +2071,7 @@ function VaultOpenWorkspace({
             return merged;
           });
           lastBlobFetchRef.current = null;
+          lazyGitBlobsSnapshotCommitRef.current = null;
           setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
           setBookmarks([]);
           const mergedUi = mergeVaultUiAfterGitTreeRefresh(
@@ -2044,11 +2081,13 @@ function VaultOpenWorkspace({
           );
           dispatchUi({ type: "reset", state: mergedUi });
           await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+            queryClient,
             noteContentsRef,
             lazyGitDirtyDocIdsRef,
             setNoteContents,
             uiLatestRef,
             lastBlobFetchRef,
+            blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
             commitShort: short,
           });
         } catch {
@@ -2056,7 +2095,7 @@ function VaultOpenWorkspace({
         }
       })();
     },
-    []
+    [queryClient],
   );
   useEffect(() => {
     const pending = readAndConsumePendingAgentProject();
@@ -2117,11 +2156,19 @@ function VaultOpenWorkspace({
   ]);
 
   useEffect(() => {
+    const prevVault = prevVaultIdForBlobQueriesRef.current;
+    if (prevVault !== vaultId) {
+      queryClient.removeQueries({
+        queryKey: [...vaultGitBlobQueryKeyRoot, prevVault],
+      });
+      prevVaultIdForBlobQueriesRef.current = vaultId;
+    }
     lazyGitDirtyDocIdsRef.current.clear();
     lastBlobFetchRef.current = null;
+    lazyGitBlobsSnapshotCommitRef.current = null;
     setLastGiteaCommitHash(null);
     setGiteaSyncError(null);
-  }, [vaultId]);
+  }, [vaultId, queryClient]);
 
   useEffect(() => {
     if (!isBackendSyncVaultId(vaultId)) {
@@ -2200,6 +2247,77 @@ function VaultOpenWorkspace({
 
   const { viewMode, openTabs, activeTabId } = ui;
   const activeDoc = activeTabId ? DOC_BY_ID[activeTabId] : undefined;
+  const openTabsPrefetchSignature = useMemo(
+    () => `${activeTabId ?? ""}\n${[...openTabs].sort().join("\n")}`,
+    [activeTabId, openTabs]
+  );
+
+  const blobCommitKey =
+    lastGiteaCommitHash && lastGiteaCommitHash.trim()
+      ? lastGiteaCommitHash.trim().slice(0, 12)
+      : "pending";
+
+  const lazyActiveBlobQueryEnabled =
+    Boolean(activeTabId) &&
+    usesLazyGitRemote(vaultId, activeVaultMeta) &&
+    activeTabId != null &&
+    !DOC_BY_ID[activeTabId] &&
+    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+    !lazyGitDirtyDocIdsRef.current.has(activeTabId);
+
+  const lazyBlobQuery = useQuery({
+    queryKey: vaultGitBlobQueryKey(vaultId, activeTabId ?? "", blobCommitKey),
+    queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, activeTabId!, signal),
+    enabled: lazyActiveBlobQueryEnabled,
+    staleTime: LAZY_GIT_BLOB_STALE_MS,
+    gcTime: LAZY_GIT_BLOB_GC_MS,
+  });
+
+  useEffect(() => {
+    if (!activeTabId || lazyBlobQuery.data === undefined) return;
+    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
+    setNoteContents((prev) => {
+      if (prev[activeTabId] !== undefined) return prev;
+      return { ...prev, [activeTabId]: lazyBlobQuery.data };
+    });
+  }, [activeTabId, lazyBlobQuery.data]);
+
+  useEffect(() => {
+    if (
+      !activeTabId ||
+      !usesLazyGitRemote(vaultId, activeVaultMeta) ||
+      DOC_BY_ID[activeTabId] ||
+      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
+    ) {
+      setBlobLoadError(null);
+      return;
+    }
+    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) {
+      setBlobLoadError(null);
+      return;
+    }
+    if (lazyBlobQuery.isError) {
+      setBlobLoadError("Nao foi possivel carregar o ficheiro.");
+    } else {
+      setBlobLoadError(null);
+    }
+  }, [
+    activeTabId,
+    vaultId,
+    activeVaultMeta,
+    lazyBlobQuery.isError,
+    lazyGitQueryEpoch,
+  ]);
+
+  const lazyBlobUiLoading =
+    usesLazyGitRemote(vaultId, activeVaultMeta) &&
+    Boolean(activeTabId) &&
+    activeTabId != null &&
+    !DOC_BY_ID[activeTabId] &&
+    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+    !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
+    noteContents[activeTabId] === undefined &&
+    lazyBlobQuery.isPending;
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
@@ -2418,50 +2536,65 @@ function VaultOpenWorkspace({
   }, [urlSyncReady, contentVisible]);
 
   useEffect(() => {
-    if (!activeTabId) return;
-    if (
-      !usesLazyGitRemote(vaultId, activeVaultMeta) ||
-      DOC_BY_ID[activeTabId] ||
-      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
-    ) {
-      return;
-    }
-    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
-
+    if (!usesLazyGitRemote(vaultId, activeVaultMeta)) return;
     const commit = lastGiteaCommitHash;
-    const last = lastBlobFetchRef.current;
-    if (
-      last &&
-      last.tab === activeTabId &&
-      last.commit === commit &&
-      noteContentsRef.current[activeTabId] !== undefined
-    ) {
-      return;
-    }
+    if (commit == null || commit === "") return;
 
-    const docId = activeTabId;
-    const ac = new AbortController();
+    let cancelled = false;
+    const short = commit.trim().slice(0, 12);
+    const priority = [...new Set([activeTabId, ...openTabs].filter(Boolean))] as string[];
+    const candidates = priority.filter(
+      (id) =>
+        !DOC_BY_ID[id] &&
+        id !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+        !lazyGitDirtyDocIdsRef.current.has(id) &&
+        noteContentsRef.current[id] === undefined,
+    );
+    const batch = candidates.slice(0, LAZY_OPEN_TAB_PREFETCH_MAX);
+    if (batch.length === 0) return;
 
-    setBlobLoadError(null);
-    setBlobLoadingDocId(docId);
     void (async () => {
-      try {
-        const { content } = await fetchVaultGitBlob(vaultId, docId, { signal: ac.signal });
-        if (ac.signal.aborted) return;
-        lastBlobFetchRef.current = { tab: docId, commit };
-        setNoteContents((prev) => ({ ...prev, [docId]: content }));
-      } catch {
-        if (!ac.signal.aborted) {
-          setBlobLoadError("Nao foi possivel carregar o ficheiro.");
-        }
-      } finally {
-        if (!ac.signal.aborted) {
-          setBlobLoadingDocId((cur) => (cur === docId ? null : cur));
-        }
+      for (let i = 0; i < batch.length; i += LAZY_OPEN_TAB_PREFETCH_CONCURRENCY) {
+        if (cancelled) return;
+        const chunk = batch.slice(i, i + LAZY_OPEN_TAB_PREFETCH_CONCURRENCY);
+        const updates: Record<string, string> = {};
+        await Promise.all(
+          chunk.map(async (docId) => {
+            if (cancelled) return;
+            if (noteContentsRef.current[docId] !== undefined) return;
+            if (lazyGitDirtyDocIdsRef.current.has(docId)) return;
+            try {
+              const content = await queryClient.fetchQuery({
+                queryKey: vaultGitBlobQueryKey(vaultId, docId, short),
+                queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, docId, signal),
+                staleTime: LAZY_GIT_BLOB_STALE_MS,
+              });
+              updates[docId] = content;
+            } catch {
+              /* ignora um path */
+            }
+          }),
+        );
+        if (cancelled) return;
+        if (Object.keys(updates).length === 0) continue;
+        lazyGitBlobsSnapshotCommitRef.current = short;
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(updates)) {
+            if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+            if (next[k] !== undefined) continue;
+            next[k] = v;
+          }
+          noteContentsRef.current = next;
+          return next;
+        });
       }
     })();
-    return () => ac.abort();
-  }, [activeTabId, vaultId, activeVaultMeta, lastGiteaCommitHash]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultId, activeVaultMeta, lastGiteaCommitHash, openTabsPrefetchSignature, queryClient]);
 
   const migrateDocPrefixes = useCallback(
     (from: string, to: string) => {
@@ -3233,8 +3366,7 @@ function VaultOpenWorkspace({
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
-        ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
-          blobLoadingDocId === activeTabId ? (
+        ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
           <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
             A carregar o ficheiro…
           </div>
