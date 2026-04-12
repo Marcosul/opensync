@@ -18,6 +18,7 @@ model Vault {
   vaultFiles       VaultFile[]
   vaultFileChanges VaultFileChange[]
   giteaMirrorState VaultGiteaMirrorState?
+  vaultGraph       VaultGraph?
 
   @@unique([workspaceId, name])
   @@map("vaults")

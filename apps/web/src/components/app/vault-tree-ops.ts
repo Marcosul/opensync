@@ -26,6 +26,25 @@ export function collectDocIdsUnderDir(dir: TreeEntry & { type: "dir" }): string[
   return collectDocIdsFromTree(dir.children);
 }
 
+/** Mantém só caminhos de pastas que ainda existem na árvore (após sync / refresh remoto). */
+export function pruneExpandedPathsToTree(
+  root: TreeEntry,
+  expanded: ReadonlySet<string>,
+): Set<string> {
+  const dirPaths = new Set<string>();
+  function walk(node: TreeEntry) {
+    if (node.type !== "dir") return;
+    dirPaths.add(node.path);
+    for (const c of node.children) walk(c);
+  }
+  walk(root);
+  const out = new Set<string>();
+  for (const p of expanded) {
+    if (dirPaths.has(p)) out.add(p);
+  }
+  return out;
+}
+
 /** Prefixo do docId para arquivos dentro desta pasta (ex.: `memory/`). */
 export function docIdPrefixFromDirPath(dirPath: string): string {
   if (

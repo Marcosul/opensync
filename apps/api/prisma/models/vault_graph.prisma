@@ -1,0 +1,12 @@
+model VaultGraph {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId     String   @unique @map("vault_id") @db.Uuid
+  /// JSON com { nodes, edges, fileCount } gerado pelo GraphService
+  graphJson   Json     @default("{}") @map("graph_json") @db.Json
+  generatedAt DateTime @default(now()) @map("generated_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@map("vault_graphs")
+}

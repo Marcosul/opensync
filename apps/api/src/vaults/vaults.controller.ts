@@ -19,6 +19,7 @@ import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import { VaultFilesService } from '../vault-files/vault-files.service';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { SyncVaultDto } from './dto/sync-vault.dto';
+import { GraphService } from './graph.service';
 import { VaultsService } from './vaults.service';
 
 @Controller('vaults')
@@ -27,6 +28,7 @@ export class VaultsController {
     private readonly vaultsService: VaultsService,
     private readonly vaultGitSync: VaultGitSyncService,
     private readonly vaultFiles: VaultFilesService,
+    private readonly graphService: GraphService,
   ) {}
 
   private requireUserId(userId: string | undefined): string {
@@ -129,6 +131,25 @@ export class VaultsController {
     }
     const { content, version } = await this.vaultFiles.getContent(vault.id, filePath);
     return { content, commitHash: version };
+  }
+
+  @Get(':id/graph')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async getVaultGraph(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('rebuild') rebuild?: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    if (rebuild === 'true') {
+      return this.graphService.buildAndCache(vault.id);
+    }
+    return this.graphService.getOrBuildGraph(vault.id);
   }
 
   @Post(':id/sync')

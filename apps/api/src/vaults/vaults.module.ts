@@ -5,11 +5,12 @@ import { VaultFilesModule } from '../vault-files/vault-files.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { VaultsController } from './vaults.controller';
 import { VaultsService } from './vaults.service';
+import { GraphService } from './graph.service';
 
 @Module({
   imports: [SyncModule, VaultFilesModule, WorkspacesModule, ThrottlerModule],
   controllers: [VaultsController],
-  providers: [VaultsService],
+  providers: [VaultsService, GraphService],
   exports: [VaultsService],
 })
 export class VaultsModule {}

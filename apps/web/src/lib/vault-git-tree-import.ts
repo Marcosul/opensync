@@ -38,14 +38,6 @@ function sortTree(node: TreeEntry): void {
   for (const c of node.children) sortTree(c);
 }
 
-function collectExpandedPaths(node: TreeEntry, depth: number, out: Set<string>): void {
-  if (node.type !== "dir") return;
-  if (depth <= 2) out.add(node.path);
-  for (const c of node.children) {
-    if (c.type === "dir") collectExpandedPaths(c, depth + 1, out);
-  }
-}
-
 export const GIT_LAZY_PLACEHOLDER_DOC_ID = ".opensync-git-placeholder.md";
 
 /**
@@ -89,7 +81,7 @@ export function gitTreePathsToVaultSnapshot(paths: string[]): VaultSnapshotV1 {
       v: 1,
       tree: root,
       noteContents: { [GIT_LAZY_PLACEHOLDER_DOC_ID]: hint },
-      expandedPaths: [ROOT_PATH],
+      expandedPaths: [],
       bookmarks: [],
       ui: {
         ...initialVaultUi,
@@ -107,9 +99,6 @@ export function gitTreePathsToVaultSnapshot(paths: string[]): VaultSnapshotV1 {
 
   sortTree(root);
 
-  const expandedPaths = new Set<string>([ROOT_PATH]);
-  collectExpandedPaths(root, 0, expandedPaths);
-
   const mdFirst = normalized.find((p) => /\.(md|mdx)$/i.test(p));
   const openTab = mdFirst ?? normalized[0] ?? "";
 
@@ -117,7 +106,7 @@ export function gitTreePathsToVaultSnapshot(paths: string[]): VaultSnapshotV1 {
     v: 1,
     tree: root,
     noteContents: {},
-    expandedPaths: [...expandedPaths],
+    expandedPaths: [],
     bookmarks: [],
     ui: {
       ...initialVaultUi,

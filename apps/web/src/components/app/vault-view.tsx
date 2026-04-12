@@ -107,6 +107,7 @@ import {
   moveDirectory,
   moveExplorerItemsToParent,
   moveFile,
+  pruneExpandedPathsToTree,
   renameDirectory,
   renameFile,
   VAULT_EXPLORER_DRAG_MIME,
@@ -1846,6 +1847,7 @@ function VaultOpenWorkspace({
         }
         setLastGiteaCommitHash(short);
         setTreeRoot(next.tree);
+        setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
         setNoteContents((prev) => {
           const merged = mergeLazyGitNoteContentsAfterRemoteTree(
             prev,
@@ -1976,7 +1978,7 @@ function VaultOpenWorkspace({
             return merged;
           });
           lastBlobFetchRef.current = null;
-          setExpandedPaths(new Set(next.expandedPaths));
+          setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
           setBookmarks([]);
           dispatchUi({ type: "reset", state: next.ui });
           await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
