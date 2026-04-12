@@ -23,6 +23,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
+import {
+  getUbuntuInstallOnelinerForClient,
+  getUbuntuInstallOnelinerForServer,
+} from "@/lib/opensync-public-urls";
 import { useSyncBaseTheme } from "@/components/theme/base-theme-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { defaultUserSettings, type UserSettings } from "@/lib/user-settings";
@@ -168,6 +172,10 @@ export default function SettingsPage() {
   const syncBaseTheme = useSyncBaseTheme();
 
   const sectionIntro = useMemo(() => getSectionIntro(activeSection), [activeSection]);
+  const ubuntuInstallOneliner = useMemo(
+    () => getUbuntuInstallOnelinerForClient() || getUbuntuInstallOnelinerForServer(),
+    [],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -766,8 +774,9 @@ export default function SettingsPage() {
                   <div className="mb-4 border-b border-border pb-4">
                     <h2 className="text-base font-semibold">Gerar novo token</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Use tokens <code className="rounded bg-muted px-1 py-0.5 text-xs">usk_...</code> para autenticar o{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>.
+                      Use tokens <code className="rounded bg-muted px-1 py-0.5 text-xs">usk_...</code> no assistente{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code> (lançado pelo
+                      script de instalação ou manualmente).
                     </p>
                   </div>
 
@@ -868,17 +877,19 @@ export default function SettingsPage() {
                 {/* Instrução CLI */}
                 <div className="rounded-2xl border border-border bg-muted/30 p-4 sm:p-5">
                   <h3 className="text-sm font-semibold">Como usar</h3>
-                  <ol className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+                  <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
                     <li>
-                      <span className="font-medium text-foreground">1.</span> Instale o agente:{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-xs">sudo dpkg -i opensync-ubuntu.deb</code>
+                      <span className="font-medium text-foreground">1.</span> No Ubuntu (amd64), num terminal — o script
+                      instala o pacote e corre <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>
+                      :
+                      <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-border bg-background px-2 py-2 font-mono text-[11px] leading-relaxed text-foreground">
+                        {ubuntuInstallOneliner}
+                      </pre>
                     </li>
                     <li>
-                      <span className="font-medium text-foreground">2.</span> Execute o wizard:{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">3.</span> Cole o token gerado acima quando solicitado.
+                      <span className="font-medium text-foreground">2.</span> Tenha o token{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">usk_...</code> à mão quando o assistente
+                      pedir.
                     </li>
                   </ol>
                 </div>

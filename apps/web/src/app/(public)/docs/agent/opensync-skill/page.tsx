@@ -110,9 +110,13 @@ export default async function OpenSyncAgentSkillDocPage() {
 
         <h2 className="mt-10 text-base font-semibold text-foreground">Credenciais (substituir no vosso ambiente)</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          O utilizador obtém estes valores no OpenSync (assistente de novo vault ou Dashboard → Agente e Git). Em
-          produção use <span className="font-mono text-xs">OPENSYNC_API_URL=&quot;https://api.opensync.space/api&quot;</span>
-          ; em self-hosted, a URL da API Nest também deve terminar em <span className="font-mono text-xs">/api</span>.
+          O <strong className="font-medium text-foreground">assistente não gera tokens</strong> no OpenSync. O token de
+          workspace (<span className="font-mono text-xs">usk_...</span>) vem de{" "}
+          <strong className="font-medium text-foreground">Configurações → Tokens de acesso</strong>. A API key de agente (
+          <span className="font-mono text-xs">osk_...</span>) para snapshot HTTP é criada pelo utilizador no dashboard,
+          no fluxo do vault. Em produção use{" "}
+          <span className="font-mono text-xs">OPENSYNC_API_URL=&quot;https://api.opensync.space/api&quot;</span>; em
+          self-hosted, a URL da API Nest termina em <span className="font-mono text-xs">/api</span>.
         </p>
         <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-muted/50 p-4 font-mono text-xs leading-relaxed">
           {`export OPENSYNC_API_URL="https://api.opensync.space/api"
@@ -128,8 +132,10 @@ curl -sS -X POST "\${OPENSYNC_API_URL}/agent/vaults/\${OPENSYNC_VAULT_ID}/files/
 
         <h2 className="mt-10 text-base font-semibold text-foreground">Agente Ubuntu</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Para pastas locais em Linux, prefira o pacote <span className="font-mono text-xs">opensync-ubuntu</span>{" "}
-          (sync bidirecional).{" "}
+          Instalação recomendada: linha <span className="font-mono text-xs">curl … | bash</span> a partir de{" "}
+          <span className="font-mono text-xs">/install/ubuntu</span> no site (script instala o{" "}
+          <span className="font-mono text-xs">.deb</span> e corre <span className="font-mono text-xs">opensync-ubuntu init</span>
+          ; o utilizador cola o <span className="font-mono text-xs">usk_...</span> quando o wizard pedir).{" "}
           <Link href="/docs/agent/ubuntu" className="font-medium text-primary underline-offset-2 hover:underline">
             Guia de instalação
           </Link>

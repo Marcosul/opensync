@@ -1,41 +1,60 @@
 ---
 name: opensync
-description: Integração OpenSync — API HTTP, skill e sincronização do vault com Gitea.
+description: OpenSync — opensync-ubuntu (.deb), tokens pedidos ao utilizador, e snapshot HTTP opcional.
 ---
 
 # OpenSync — workspace e sincronização
 
-## Contexto
+## Para o assistente (regras)
 
-O utilizador usa **OpenSync** (opensync.space) com um **vault** na **API** (Postgres como fonte de verdade; Gitea é espelho assíncrono). O fluxo **recomendado em Ubuntu** é o pacote **`opensync-ubuntu`** (`opensync-ubuntu init` + systemd). Para o **OpenClaw**, use **API key (Bearer)** + `POST ${OPENSYNC_API_URL}/agent/vaults/<vaultId>/files/snapshot` com JSON `{ "files": { … } }` — **sem `git init`** no cliente. O token obtém-se no dashboard.
+- **Não cries nem obtenhas tokens no OpenSync.** O dashboard exige sessão humana. O **utilizador** deve:
+  - Gerar **token de workspace** (`usk_...`) em **Configurações → Tokens de acesso** (opensync.space).
+  - Se precisares de **snapshot HTTP** (`POST .../files/snapshot`) sem o app Ubuntu, o utilizador gera uma **API key de agente** (`osk_...`) no fluxo de credenciais do vault no dashboard OpenSync (conforme a UI atual do produto).
+- **Quando o `opensync-ubuntu init` pedir o token**, ou antes de guiar a instalação, **pede explicitamente** ao utilizador o `usk_...` que ele copiou do dashboard. Não assumes que já existe no ambiente até ele colar ou confirmar.
+- Para pasta local em **Linux/Ubuntu**, o fluxo recomendado é **`opensync-ubuntu`** (pacote `.deb` + wizard), não `git init` no cliente para substituir a API.
+
+## Ubuntu — instalação com o pacote `.deb` (recomendado)
+
+1. O site OpenSync serve um instalador em **`GET /install/ubuntu`** (URL típica: `https://opensync.space/install/ubuntu`). O utilizador corre **uma linha** no terminal, por exemplo:
+   - `curl -fsSL "https://opensync.space/install/ubuntu" | bash`
+   - Em self-hosted, substitui o host pelo domínio da app (mesmo caminho `/install/ubuntu`).
+2. O script descarrega o `.deb`, instala com `dpkg`/`apt` e corre **`opensync-ubuntu init`**. O wizard é **interativo** (e-mail, **`usk_...`**, pasta local, vault). O **utilizador** cola o `usk_...` quando o terminal pedir — **tu não o podes gerar**.
+3. Depois do init, o serviço **systemd --user** (`opensync-ubuntu`) mantém o sync. Comandos úteis: `opensync-ubuntu status`, `journalctl --user -u opensync-ubuntu -f`.
+
+Documentação humana: página **Agente Ubuntu** em opensync.space (`/docs/agent/ubuntu`).
+
+## Contexto do produto
+
+O utilizador usa **OpenSync** com um **vault** na **API** (Postgres como fonte de verdade; Gitea é espelho assíncrono). O fluxo **recomendado em Ubuntu** é **`opensync-ubuntu`**. Para **OpenClaw** sem pasta local, pode usar-se **API key (Bearer)** + `POST ${OPENSYNC_API_URL}/agent/vaults/<vaultId>/files/snapshot` com JSON `{ "files": { … } }` — **sem `git init`** no cliente para “substituir” o vault.
 
 ## Sincronização via API (OpenClaw / curl — snapshot)
 
-1. **Credenciais**: no OpenSync, gere uma **API key** (Vault → *Agente e Git* → secção *API do agente*, ou assistente de novo vault OpenClaw). Defina no ambiente do agente (produção OpenSync):
+1. **Credenciais** (definidas pelo **utilizador** no ambiente onde corre o agente ou o `curl`):
 
 ```bash
 export OPENSYNC_API_URL="https://api.opensync.space/api"
 export OPENSYNC_VAULT_ID="<uuid-do-vault>"
-export OPENSYNC_AGENT_API_KEY="<api-key>"
+export OPENSYNC_AGENT_API_KEY="<api-key-osk_...>"
 ```
 
-**Verificar se as variáveis estão ativas** na sessão de shell onde corre o agente ou onde vai testar o `curl` (não mostram nada se não estiverem definidas):
+A **API key** (`osk_...`) **não** é criada pelo assistente: o utilizador gera-a no dashboard. Se o chat trouxer `OPENSYNC_AGENT_API_KEY` já preenchida, usa-a; senão, **pede** ao utilizador que gere e cole.
+
+**Verificar variáveis** na sessão de shell:
 
 ```bash
 env | grep '^OPENSYNC_'
-# ou, uma a uma:
 echo "$OPENSYNC_API_URL"
 echo "$OPENSYNC_VAULT_ID"
 test -n "$OPENSYNC_AGENT_API_KEY" && echo "OPENSYNC_AGENT_API_KEY=definida" || echo "OPENSYNC_AGENT_API_KEY=vazia"
 ```
 
-Os `export` acima **não ficam guardados** após fechar o terminal — só valem para essa sessão. Para persistir: ficheiro `~/.bashrc` / `~/.profile` (ou equivalente), ou `skills.entries.opensync.env` em `~/.openclaw/openclaw.json` conforme a [documentação de skills do OpenClaw](https://docs.openclaw.ai/tools/skills).
+Os `export` **não persistem** após fechar o terminal. Para persistir: `~/.bashrc` / `~/.profile`, ou `skills.entries.opensync.env` em `~/.openclaw/openclaw.json` conforme a [documentação de skills do OpenClaw](https://docs.openclaw.ai/tools/skills).
 
-Em **self-hosted**, substitua `OPENSYNC_API_URL` pela URL da vossa API Nest **com sufixo `/api`** (ex.: `https://seu-dominio.com/api`).
+Em **self-hosted**, `OPENSYNC_API_URL` = URL da API Nest **com sufixo `/api`**.
 
-2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. O endpoint `POST ${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/snapshot` **exige** um JSON com o mapa **`files`**: caminhos relativos → conteúdo UTF-8. O estado é gravado na API; o espelho para Gitea corre em segundo plano no servidor.
+2. **Pedido HTTP**: `Authorization: Bearer <api-key>`. `POST ${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/snapshot` **exige** JSON com o mapa **`files`**: caminhos relativos → conteúdo UTF-8.
 
-Exemplo mínimo com `curl`:
+Exemplo mínimo:
 
 ```bash
 curl -sS -X POST "${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/snapshot" \
@@ -44,97 +63,68 @@ curl -sS -X POST "${OPENSYNC_API_URL}/agent/vaults/${OPENSYNC_VAULT_ID}/files/sn
   -d '{"files":{"notas/exemplo.md":"# Titulo\n\nTexto."}}'
 ```
 
-Um corpo `{}` ou sem `files` **não** sincroniza — a API responde erro explicando o formato.
+Corpo `{}` ou sem `files` → erro da API.
 
-No agente OpenClaw basta **credenciais + HTTP** com o mapa `files`. Para máquinas Linux com pasta local, prefira **opensync-ubuntu** (sync bidirecional).
-
-3. **Opcional — plugin `/sync`:** o pacote `packages/plugin` expõe o comando `/sync`, que faz `git add`/`commit` **local** e depois chama a mesma API com os ficheiros do disco. Só usem se quiserem histórico Git na pasta do workspace; o plugin pode correr `git init` no `onLoad`. **Não é o fluxo recomendado** se preferem evitar Git local.
+3. **Opcional — plugin `/sync`:** o pacote `packages/plugin` pode expor `/sync` com `git` local + chamada à mesma API. **Não é o fluxo recomendado** se o objetivo é evitar Git local; prefere **opensync-ubuntu** em Ubuntu.
 
 ## Opcional — snapshot local com Git
 
-Se mantiverem um clone ou workspace com Git por outras razões, podem gravar um snapshot antes de edições grandes:
+Se mantiverem Git local por outras razões:
 
 ```bash
 git -C ~/.openclaw/workspace add -A && git -C ~/.openclaw/workspace commit -m "pre: snapshot before agent edit" || true
 ```
 
-(Ajuste o caminho. Isto **não** substitui o `push` para o OpenSync/Gitea.)
+(Ajuste o caminho. **Não** substitui o push/snapshot para OpenSync.)
 
 ## Tarefa agendada: sync a cada 30 minutos (OpenClaw)
 
-**Etapa obrigatória** após credenciais e skill instalada: criar no Gateway OpenClaw uma **Scheduled Task** (cron integrado) para sincronizar o vault **de 30 em 30 minutos**. Documentação: [Scheduled Tasks (Cron)](https://docs.openclaw.ai/automation/cron-jobs).
+Após credenciais e skill: criar **Scheduled Task** no Gateway (cron integrado). [Scheduled Tasks (Cron)](https://docs.openclaw.ai/automation/cron-jobs).
 
-- O cron corre **dentro do Gateway**; jobs persistem em `~/.openclaw/cron/jobs.json`.
-- Use `--session isolated` para uma jogada dedicada; ajuste `--tz` ao fuso do utilizador.
-- A `--message` deve priorizar **`POST .../agent/vaults/<vaultId>/files/snapshot`** com JSON `{ "files": { … } }` e `Authorization: Bearer` (`OPENSYNC_*` no ambiente). **Não** depende de `git init` local. O plugin `/sync` chama o mesmo endpoint de snapshot.
+- Jobs em `~/.openclaw/cron/jobs.json`.
+- `--session isolated`; ajustar `--tz`.
+- A `--message` deve priorizar **`POST .../files/snapshot`** com `{ "files": … }` e Bearer. **Não** depende de `git init` local.
 
-Exemplo (intervalo fixo de 30 minutos, sem anúncio em canal — personalize a mensagem e ferramentas):
+Exemplo:
 
 ```bash
 openclaw cron add \
   --name "OpenSync vault sync (30m)" \
   --every 30m \
   --session isolated \
-  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} e Bearer OPENSYNC_AGENT_API_KEY. Opcional: plugin /sync." \
+  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} e Bearer OPENSYNC_AGENT_API_KEY." \
   --tools exec \
   --delivery none
 ```
 
-Equivalente com expressão cron (5 campos) e fuso explícito:
-
-```bash
-openclaw cron add \
-  --name "OpenSync vault sync (30m)" \
-  --cron "*/30 * * * *" \
-  --tz "Europe/Lisbon" \
-  --session isolated \
-  --message "OpenSync: POST .../agent/vaults/<vaultId>/files/snapshot com JSON {files} + Bearer OPENSYNC_*." \
-  --tools exec \
-  --delivery none
-```
-
-Verificar jobs: `openclaw cron list`.
-
-Se o CLI devolver **`pairing required`** ao falar com o Gateway (`ws://127.0.0.1:18789`), complete o **pairing** do cliente com o Gateway (UI OpenClaw / `openclaw` conforme a vossa instalação) e volte a executar `openclaw cron add`. O cron só é registado quando o Gateway aceita o pedido.
+Se aparecer **`pairing required`**, completar pairing com o Gateway antes de `openclaw cron add`.
 
 ## Instalação da skill
 
-Use o guia em **opensync.space** (`/docs/agent/opensync-skill`) ou o ficheiro `SKILL.md` fornecido pelo utilizador.
+Guia: **opensync.space** → `/docs/agent/opensync-skill`, ou o `SKILL.md` fornecido pelo utilizador.
 
-**Caminho de instalação** (crie a pasta `opensync` se não existir):
+**Caminho:**
 
 - `~/.openclaw/skills/opensync/SKILL.md`
 
-Guarde o conteúdo completo deste documento nesse ficheiro.
-
 ### Primeiro snapshot e repositório remoto
 
-- **Gitea:** o repositório do vault é **criado pelo OpenSync** ao criar o cofre; o espelho Git é atualizado pelo servidor.
-- **OpenClaw:** envios = **`POST .../agent/vaults/<vaultId>/files/snapshot`** com `{ "files": { … } }`. **Sem** `git init` no cliente.
-- **Ubuntu:** use **`opensync-ubuntu`** para sync bidirecional de uma pasta.
-- **Só se usarem `/sync`:** o plugin pode inicializar Git local no `onLoad`; caso contrário **ignore** Git no disco.
+- **Gitea:** repositório do vault é criado pelo OpenSync; espelho atualizado no servidor.
+- **OpenClaw (HTTP):** `POST .../files/snapshot` com `{ "files": … }`.
+- **Ubuntu:** **`opensync-ubuntu`** (`.deb` + init + systemd).
 
 ### Allowlist de skills (multi-agent)
 
-Se no `openclaw.json` usarem **listas explícitas** de skills por agente (`agents.defaults.skills` ou `agents.list[].skills`), o OpenClaw **só** inclui no prompt as skills cujo **nome** está nessa lista. O nome desta skill é **`opensync`** (igual ao campo `name` no frontmatter).
-
-- Sem `agents.defaults.skills` e sem `agents.list[].skills` por agente, as skills elegíveis costumam ser **todas** (salvo outras restrições).
-- Um `agents.list[].skills` **não vazio** é o conjunto **final** desse agente (não faz merge com os defaults).
-- Incluam **`opensync`** na allowlist do agente que deve sincronizar o vault, senão a skill pode não aparecer ou não ser invocável.
-
-Documentação: [Agent skill allowlists](https://docs.openclaw.ai/tools/skills#agent-skill-allowlists).
+Nome da skill: **`opensync`** (frontmatter). Incluir em `agents.defaults.skills` ou `agents.list[].skills` conforme [Agent skill allowlists](https://docs.openclaw.ai/tools/skills#agent-skill-allowlists).
 
 ### Depois de instalar ou alterar `SKILL.md`
 
-- Muitos ambientes **observam** pastas de skills; alterações podem refletir-se na **próxima jogada** do agente.
-- O conjunto de skills costuma fixar-se **no início da sessão** — se a skill não aparecer, abra uma **nova sessão** de chat.
-- Só reinicie o serviço do agente/Gateway se o vosso ambiente exigir após mudanças de configuração global.
+- Nova sessão de chat se a skill não aparecer.
+- Reiniciar Gateway só se o ambiente exigir.
 
-## Alternativa — Git na VPS (deploy key)
+## Avançado — Git na VPS (deploy key)
 
-1. No dashboard: *Ligar Git na VPS* → gerar **deploy key**, configurar `GIT_SSH_COMMAND` com `ssh -i … -o IdentitiesOnly=yes`.
-2. Script: `docs/dev/scripts/opensync-vps-git-sync.sh` com `OPENSYNC_REPO_DIR` = pasta do clone.
-3. **Tarefas agendadas** do vosso agente (cron ou equivalente) para correr o script em horários fixos (ex.: 06:00 e 18:00).
+Fluxo opcional para `git push` por SSH: deploy key + script (ver documentação de desenvolvimento do repositório OpenSync, ex.: `docs/dev/`). **Não confundir** com o fluxo principal `.deb` + API.
 
 ## Conflitos
 
@@ -142,5 +132,5 @@ Se `git pull --rebase` falhar, **não** forçar push; reportar ao utilizador.
 
 ## Documentação no repositório
 
-- `docs/dev/openclaw-agent-sync.md` — fluxo Git na VPS
-- `docs/dev/vault-git-api.md` — deploy keys na API
+- `docs/dev/openclaw-agent-sync.md`
+- `docs/dev/vault-git-api.md`

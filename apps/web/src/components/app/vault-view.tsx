@@ -442,9 +442,48 @@ type VaultUiAction =
   | { type: "reset"; state: VaultUiState }
   | { type: "showGraph" };
 
+/** Mantém separadores válidos após refresh da árvore Git (evita saltar para o primeiro `.md`). */
+function mergeVaultUiAfterGitTreeRefresh(
+  prev: VaultUiState,
+  fallback: VaultUiState,
+  tree: TreeEntry,
+): VaultUiState {
+  const children = tree.type === "dir" ? tree.children : [];
+  const allowed = new Set(collectDocIdsFromTree(children));
+
+  let openTabs = prev.openTabs.filter((id) => allowed.has(id));
+  let activeTabId = prev.activeTabId;
+
+  if (!allowed.has(activeTabId)) {
+    activeTabId = openTabs[0] ?? fallback.activeTabId;
+  }
+  if (!allowed.has(activeTabId)) {
+    return fallback;
+  }
+  if (!openTabs.includes(activeTabId)) {
+    openTabs = [...openTabs, activeTabId];
+  }
+
+  const viewMode: ViewMode =
+    openTabs.length === 0 ? "graph" : prev.viewMode === "graph" ? "graph" : "editor";
+
+  if (viewMode === "editor" && !activeTabId) {
+    return fallback;
+  }
+
+  return { viewMode, openTabs, activeTabId };
+}
+
 function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiState {
   switch (action.type) {
     case "open": {
+      if (
+        state.activeTabId === action.id &&
+        state.viewMode === "editor" &&
+        state.openTabs.includes(action.id)
+      ) {
+        return state;
+      }
       const openTabs = state.openTabs.includes(action.id)
         ? state.openTabs
         : [...state.openTabs, action.id];
@@ -500,8 +539,18 @@ function vaultUiReducer(state: VaultUiState, action: VaultUiAction): VaultUiStat
       const safeActive = openTabs.includes(activeTabId) ? activeTabId : (openTabs[0] ?? "");
       return { ...state, openTabs, activeTabId: safeActive };
     }
-    case "reset":
-      return action.state;
+    case "reset": {
+      const s = action.state;
+      if (
+        state.viewMode === s.viewMode &&
+        state.activeTabId === s.activeTabId &&
+        state.openTabs.length === s.openTabs.length &&
+        state.openTabs.every((t, i) => t === s.openTabs[i])
+      ) {
+        return state;
+      }
+      return s;
+    }
     case "showGraph":
       return { ...state, viewMode: "graph" };
     default:
@@ -1759,6 +1808,12 @@ function VaultOpenWorkspace({
   removeVault,
 }: VaultOpenWorkspaceProps) {
   const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
+  const [contentVisible, setContentVisible] = useState(
+    () =>
+      !vaultPageQuery.file &&
+      !vaultPageQuery.folder &&
+      vaultPageQuery.view !== "graph",
+  );
   const [urlSyncReady, setUrlSyncReady] = useState(
     () =>
       !vaultPageQuery.file &&
@@ -1807,6 +1862,7 @@ function VaultOpenWorkspace({
 
   const syncAbortRef = useRef<AbortController | null>(null);
   const gitTreeAbortRef = useRef<AbortController | null>(null);
+  const giteaSyncDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   /** Apenas para vault Git lazy: notas gravadas em localStorage (reduz quota). */
   const lazyGitDirtyDocIdsRef = useRef<Set<string>>(new Set());
   const lastBlobFetchRef = useRef<{ tab: string; commit: string | null } | null>(null);
@@ -1981,7 +2037,12 @@ function VaultOpenWorkspace({
           lastBlobFetchRef.current = null;
           setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
           setBookmarks([]);
-          dispatchUi({ type: "reset", state: next.ui });
+          const mergedUi = mergeVaultUiAfterGitTreeRefresh(
+            uiLatestRef.current,
+            next.ui,
+            next.tree,
+          );
+          dispatchUi({ type: "reset", state: mergedUi });
           await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
             noteContentsRef,
             lazyGitDirtyDocIdsRef,
@@ -2064,15 +2125,28 @@ function VaultOpenWorkspace({
 
   useEffect(() => {
     if (!isBackendSyncVaultId(vaultId)) {
+      if (giteaSyncDebounceRef.current) {
+        window.clearTimeout(giteaSyncDebounceRef.current);
+        giteaSyncDebounceRef.current = null;
+      }
       syncAbortRef.current?.abort();
       setGiteaSyncStatus("idle");
       return;
     }
     const delayMs = usesLazyGitRemote(vaultId, activeVaultMeta) ? 4500 : 3000;
-    const t = window.setTimeout(() => {
+    if (giteaSyncDebounceRef.current) {
+      window.clearTimeout(giteaSyncDebounceRef.current);
+    }
+    giteaSyncDebounceRef.current = window.setTimeout(() => {
+      giteaSyncDebounceRef.current = null;
       void runVaultGiteaSync(vaultId);
     }, delayMs);
-    return () => window.clearTimeout(t);
+    return () => {
+      if (giteaSyncDebounceRef.current) {
+        window.clearTimeout(giteaSyncDebounceRef.current);
+        giteaSyncDebounceRef.current = null;
+      }
+    };
   }, [treeRoot, noteContents, vaultId, activeVaultMeta, runVaultGiteaSync]);
 
   useEffect(() => {
@@ -2128,14 +2202,18 @@ function VaultOpenWorkspace({
   const [histPast, setHistPast] = useState<string[]>([]);
   const [histFuture, setHistFuture] = useState<string[]>([]);
   const [editorSourceMode, setEditorSourceMode] = useState(false);
+  const prevEditorTabRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setHistPast([]);
     setHistFuture([]);
+    prevEditorTabRef.current = undefined;
   }, [vaultId]);
 
   useEffect(() => {
-    setEditorSourceMode(false);
+    if (prevEditorTabRef.current === activeTabId) return;
+    prevEditorTabRef.current = activeTabId;
+    setEditorSourceMode((prev) => (prev ? false : prev));
   }, [activeTabId]);
 
   useEffect(() => {
@@ -2152,13 +2230,16 @@ function VaultOpenWorkspace({
 
   const browseSelectFile = useCallback(
     (id: string) => {
+      if (id === activeTabId && viewMode === "editor" && openTabs.includes(id)) {
+        return;
+      }
       if (id !== activeTabId && activeTabId) {
         setHistPast((p) => [...p, activeTabId]);
         setHistFuture([]);
       }
       dispatchUi({ type: "open", id });
     },
-    [activeTabId]
+    [activeTabId, viewMode, openTabs]
   );
 
   const urlTargetKey = `${vaultId}|${vaultPageQuery.file ?? ""}|${vaultPageQuery.folder ?? ""}|${vaultPageQuery.view ?? ""}`;
@@ -2254,11 +2335,11 @@ function VaultOpenWorkspace({
     const nextFile = viewMode === "graph" ? null : activeTabId || null;
     const nextView = viewMode === "graph" ? "graph" : null;
 
-    if (
-      vaultPageQuery.file === nextFile &&
-      vaultPageQuery.view === nextView &&
-      !vaultPageQuery.folder
-    ) {
+    const qFile = vaultPageQuery.file ?? null;
+    const qView = vaultPageQuery.view ?? null;
+    const qFolder = vaultPageQuery.folder ?? null;
+
+    if (qFile === nextFile && qView === nextView && !qFolder) {
       return;
     }
 
@@ -2276,6 +2357,13 @@ function VaultOpenWorkspace({
     vaultPageQuery.folder,
     setVaultPageQuery,
   ]);
+
+  useEffect(() => {
+    if (!urlSyncReady) return;
+    if (contentVisible) return;
+    const raf = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [urlSyncReady, contentVisible]);
 
   useEffect(() => {
     if (!activeTabId) return;
@@ -2299,28 +2387,28 @@ function VaultOpenWorkspace({
       return;
     }
 
+    const docId = activeTabId;
+    const ac = new AbortController();
+
     setBlobLoadError(null);
-    setBlobLoadingDocId(activeTabId);
-    let cancelled = false;
+    setBlobLoadingDocId(docId);
     void (async () => {
       try {
-        const { content } = await fetchVaultGitBlob(vaultId, activeTabId);
-        if (cancelled) return;
-        lastBlobFetchRef.current = { tab: activeTabId, commit };
-        setNoteContents((prev) => ({ ...prev, [activeTabId]: content }));
+        const { content } = await fetchVaultGitBlob(vaultId, docId, { signal: ac.signal });
+        if (ac.signal.aborted) return;
+        lastBlobFetchRef.current = { tab: docId, commit };
+        setNoteContents((prev) => ({ ...prev, [docId]: content }));
       } catch {
-        if (!cancelled) {
+        if (!ac.signal.aborted) {
           setBlobLoadError("Nao foi possivel carregar o ficheiro.");
         }
       } finally {
-        if (!cancelled) {
-          setBlobLoadingDocId((cur) => (cur === activeTabId ? null : cur));
+        if (!ac.signal.aborted) {
+          setBlobLoadingDocId((cur) => (cur === docId ? null : cur));
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, [activeTabId, vaultId, activeVaultMeta, lastGiteaCommitHash]);
 
   const migrateDocPrefixes = useCallback(
@@ -2763,8 +2851,18 @@ function VaultOpenWorkspace({
 
   const vaultStatsLine = `${treeStats.files} arquivos, ${treeStats.folders} pastas`;
   return (
-    <>
-      <div className="flex h-full overflow-hidden">
+    <div className="relative h-full">
+      {!contentVisible && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
+        </div>
+      )}
+      <div
+        className={cn(
+          "flex h-full overflow-hidden transition-opacity duration-300",
+          contentVisible ? "opacity-100" : "opacity-0 pointer-events-none",
+        )}
+      >
         {sidebarCollapsed ? (
             <div className="flex w-8 shrink-0 flex-col border-r border-border bg-sidebar/30 py-1">
               <button
@@ -3150,7 +3248,7 @@ function VaultOpenWorkspace({
         onCancel={() => setExplorerDeleteItems(null)}
         onConfirm={confirmExplorerDeleteFromDialog}
       />
-    </>
+    </div>
   );
 }
 

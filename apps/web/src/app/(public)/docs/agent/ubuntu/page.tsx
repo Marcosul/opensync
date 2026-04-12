@@ -2,6 +2,8 @@ import Link from "next/link";
 
 import type { Metadata } from "next";
 
+import { getUbuntuInstallOnelinerForServer } from "@/lib/opensync-public-urls";
+
 export const metadata: Metadata = {
   title: "Agente Ubuntu | OpenSync",
   description:
@@ -12,6 +14,8 @@ const codeClass =
   "rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground";
 
 export default function UbuntuAgentDocPage() {
+  const installOneliner = getUbuntuInstallOnelinerForServer();
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-10 text-foreground">
       <h1 className="text-2xl font-semibold tracking-tight">
@@ -22,34 +26,23 @@ export default function UbuntuAgentDocPage() {
         <strong className="font-medium text-foreground">sem</strong> editar ficheiros de configuração manualmente.
       </p>
 
-      {/* ── Instalação ── */}
-      <h2 className="mt-8 text-lg font-medium">1. Instalar o pacote</h2>
+      {/* ── Instalação + wizard ── */}
+      <h2 className="mt-8 text-lg font-medium">1. Instalar e configurar</h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        Descarregue o <code className={codeClass}>.deb</code> mais recente e instale com:
+        No Ubuntu (amd64), uma linha: o site serve um script que descarrega o{" "}
+        <code className={codeClass}>.deb</code>, instala com <code className={codeClass}>dpkg</code> e de seguida corre{" "}
+        <code className={codeClass}>opensync-ubuntu init</code> (o assistente interativo).
       </p>
       <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
-        {`sudo dpkg -i opensync-ubuntu_*.deb`}
+        {installOneliner}
       </pre>
-      <a
-        href="https://gitea.opensync.space/opensync/opensync/releases"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline"
-      >
-        Descarregar .deb →
-      </a>
-
-      {/* ── Configuração ── */}
-      <h2 className="mt-8 text-lg font-medium">2. Configurar com o wizard</h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        Execute o comando abaixo. O wizard pede apenas o e-mail e o token de workspace (
-        <code className={codeClass}>usk_...</code>) e trata do resto automaticamente.
+        Com <code className={codeClass}>curl … | bash</code> o script volta a ligar o teclado ao terminal para o wizard.
+        Para inspecionar o instalador antes de executar, abra o URL no browser ou use{" "}
+        <code className={codeClass}>curl -fsSL …</code> sem enviar a saída para o bash.
       </p>
-      <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
-        {`opensync-ubuntu init`}
-      </pre>
 
-      <p className="mt-4 text-sm font-medium text-foreground">O wizard irá:</p>
+      <p className="mt-4 text-sm font-medium text-foreground">O assistente irá:</p>
       <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
         <li>Pedir o e-mail da conta OpenSync.</li>
         <li>
@@ -69,7 +62,7 @@ export default function UbuntuAgentDocPage() {
       </ol>
 
       {/* ── Gestão ── */}
-      <h2 className="mt-8 text-lg font-medium">3. Gerir o serviço</h2>
+      <h2 className="mt-8 text-lg font-medium">2. Gerir o serviço</h2>
       <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
         {`# Ver estado do sync
 opensync-ubuntu status
