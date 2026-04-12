@@ -1,8 +1,9 @@
 "use client";
 
-import { BookOpen, Copy, ExternalLink, Monitor } from "lucide-react";
+import { apiRequest } from "@/api/rest/generic";
+import { BookOpen, Copy, ExternalLink, KeyRound, Monitor } from "lucide-react";
 import Link from "next/link";
-import { useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -12,6 +13,9 @@ import {
   getUbuntuInstallScriptUrlForServer,
 } from "@/lib/opensync-public-urls";
 import { cn } from "@/lib/utils";
+
+const tokenLabelInputClass =
+  "mt-2 h-9 w-full max-w-md rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40";
 
 export type ConnectAgentSkillStep3PanelProps = {
   skillGuideUrl: string;
@@ -37,6 +41,41 @@ export function ConnectAgentSkillStep3Panel({
   const ubuntuPanelId = `${baseId}-tab-ubuntu`;
   const skillPanelId = `${baseId}-tab-skill`;
   const [activeTab, setActiveTab] = useState<"ubuntu" | "skill">("ubuntu");
+  const [workspaceTokenLabel, setWorkspaceTokenLabel] = useState("");
+  const [workspaceTokenBusy, setWorkspaceTokenBusy] = useState(false);
+  const [workspaceTokenError, setWorkspaceTokenError] = useState<string | null>(null);
+  const [workspaceTokenValue, setWorkspaceTokenValue] = useState<string | null>(null);
+
+  const generateWorkspaceToken = useCallback(async () => {
+    setWorkspaceTokenError(null);
+    setWorkspaceTokenValue(null);
+    setWorkspaceTokenBusy(true);
+    try {
+      const result = await apiRequest<{ token: string; id: string; label: string }>(
+        "/api/user-access-keys",
+        {
+          method: "POST",
+          body: {
+            label: workspaceTokenLabel.trim() || "OpenSync — ligar agente",
+          },
+        },
+      );
+      setWorkspaceTokenValue(result.token);
+      setWorkspaceTokenLabel("");
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "Não foi possível gerar o token.";
+      let msg = raw;
+      try {
+        const parsed = JSON.parse(raw) as { error?: string };
+        if (parsed?.error) msg = parsed.error;
+      } catch {
+        /* manter raw */
+      }
+      setWorkspaceTokenError(msg);
+    } finally {
+      setWorkspaceTokenBusy(false);
+    }
+  }, [workspaceTokenLabel]);
 
   const ubuntuInstallOneliner = useMemo(
     () => getUbuntuInstallOnelinerForClient() || getUbuntuInstallOnelinerForServer(),
@@ -131,22 +170,76 @@ export function ConnectAgentSkillStep3Panel({
             <div className="min-w-0">
               <p className="text-xs font-medium text-foreground">Gere um token de workspace</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Em{" "}
+                O token começa por <span className="font-mono text-[10px]">usk_...</span> e será pedido no passo 2 (
+                <span className="font-mono">opensync-ubuntu init</span>). Pode gerá-lo aqui ou em{" "}
                 <Link
                   href="/settings?section=access-tokens"
                   className="font-medium text-primary underline-offset-4 hover:underline"
                 >
                   Configurações → Tokens de acesso
-                </Link>{" "}
-                clique em <strong className="font-medium text-foreground">Gerar token</strong> e guarde o{" "}
-                <span className="font-mono text-[10px]">usk_...</span> — será pedido pelo assistente no passo 2.
+                </Link>
+                .
               </p>
-              <Link
-                href="/settings?section=access-tokens"
-                className={cn(buttonVariants({ variant: "default", size: "sm" }), "mt-2 inline-flex")}
+              <label htmlFor={`${baseId}-token-label`} className="sr-only">
+                Nome do token (opcional)
+              </label>
+              <input
+                id={`${baseId}-token-label`}
+                type="text"
+                autoComplete="off"
+                placeholder="Nome do token (opcional)"
+                value={workspaceTokenLabel}
+                onChange={(e) => setWorkspaceTokenLabel(e.target.value)}
+                disabled={workspaceTokenBusy}
+                className={tokenLabelInputClass}
+              />
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="mt-2"
+                disabled={workspaceTokenBusy}
+                onClick={() => void generateWorkspaceToken()}
               >
-                Gerar token agora
-              </Link>
+                <KeyRound className="mr-1.5 size-3.5" aria-hidden />
+                {workspaceTokenBusy ? "A gerar…" : "Gerar token"}
+              </Button>
+              {workspaceTokenError ? (
+                <p className="mt-2 text-xs text-destructive">{workspaceTokenError}</p>
+              ) : null}
+              {workspaceTokenValue ? (
+                <div className="mt-3 space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 dark:border-amber-800/60 dark:bg-amber-950/35">
+                  <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                    Copie agora — o token não volta a aparecer nesta página.
+                  </p>
+                  <div className="flex items-center gap-2 rounded-md border border-amber-200/80 bg-background/80 px-2 py-1.5 dark:border-amber-900/50">
+                    <code className="min-w-0 flex-1 break-all text-[10px] text-foreground sm:text-[11px]">
+                      {workspaceTokenValue}
+                    </code>
+                    <button
+                      type="button"
+                      title="Copiar token"
+                      className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                      onClick={() => onCopyBlock(workspaceTokenValue)}
+                    >
+                      <Copy className="size-4" aria-hidden />
+                    </button>
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-amber-950/90 dark:text-amber-100/90">
+                    Guarde num sítio seguro. No Ubuntu, quando o instalador abrir o assistente, cole este valor quando
+                    pedir o token de workspace.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs text-amber-950 hover:bg-amber-200/30 dark:text-amber-100 dark:hover:bg-amber-900/30"
+                    onClick={() => setWorkspaceTokenValue(null)}
+                  >
+                    Fechar
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </li>
 

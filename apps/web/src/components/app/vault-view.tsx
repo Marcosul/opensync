@@ -2181,6 +2181,11 @@ function VaultOpenWorkspace({
     () => (treeRoot.type === "dir" ? treeRoot.children : []),
     [treeRoot]
   );
+  /** Conteúdo da árvore (não identidade); evita re-disparar sync URL↔UI quando só muda a referência do nó raiz. */
+  const treeDocIdsKey = useMemo(
+    () => [...collectDocIdsFromTree(treeChildren)].sort().join("\n"),
+    [treeChildren]
+  );
   const treeStats = useMemo(() => countTreeStats(treeChildren), [treeChildren]);
   const rootExplorerLabel =
     activeVaultMeta?.kind === "openclaw" ? OPENCLAW_ROOT_LABEL : (activeVaultMeta?.pathLabel ?? "~");
@@ -2203,6 +2208,8 @@ function VaultOpenWorkspace({
   const [histFuture, setHistFuture] = useState<string[]>([]);
   const [editorSourceMode, setEditorSourceMode] = useState(false);
   const prevEditorTabRef = useRef<string | undefined>(undefined);
+  const editorSourceModeRef = useRef(editorSourceMode);
+  editorSourceModeRef.current = editorSourceMode;
 
   useEffect(() => {
     setHistPast([]);
@@ -2213,7 +2220,8 @@ function VaultOpenWorkspace({
   useEffect(() => {
     if (prevEditorTabRef.current === activeTabId) return;
     prevEditorTabRef.current = activeTabId;
-    setEditorSourceMode((prev) => (prev ? false : prev));
+    if (!editorSourceModeRef.current) return;
+    setEditorSourceMode(false);
   }, [activeTabId]);
 
   useEffect(() => {
@@ -2228,33 +2236,77 @@ function VaultOpenWorkspace({
     return treeRoot.path;
   }, [treeRoot, activeVaultMeta?.kind]);
 
+  const urlTargetKey = `${vaultId}|${vaultPageQuery.file ?? ""}|${vaultPageQuery.folder ?? ""}|${vaultPageQuery.view ?? ""}`;
+  const appliedUrlTargetRef = useRef("");
+  /** Dedupe de `open` vindo da URL (useLayoutEffect); reposto quando muda `?file=`. */
+  const urlLayoutOpenDedupeRef = useRef("");
+  const prevUrlFileParamForLayoutRef = useRef<string | null>(null);
+  /** Ignora abertura pela URL no mesmo tick que `browseSelectFile`. */
+  const skipVaultUrlOpenEffectRef = useRef(false);
+  /** Evita `setVaultPageQuery` repetido enquanto nuqs ainda não refletiu o último push. */
+  const lastUrlPushPayloadRef = useRef<{ f: string | null; v: string | null } | null>(null);
+
   const browseSelectFile = useCallback(
     (id: string) => {
       if (id === activeTabId && viewMode === "editor" && openTabs.includes(id)) {
         return;
       }
+      skipVaultUrlOpenEffectRef.current = true;
+      window.setTimeout(() => {
+        skipVaultUrlOpenEffectRef.current = false;
+      }, 0);
       if (id !== activeTabId && activeTabId) {
         setHistPast((p) => [...p, activeTabId]);
         setHistFuture([]);
       }
       dispatchUi({ type: "open", id });
+      void setVaultPageQuery({ file: id, folder: null, view: null });
     },
-    [activeTabId, viewMode, openTabs]
+    [activeTabId, viewMode, openTabs, setVaultPageQuery]
   );
-
-  const urlTargetKey = `${vaultId}|${vaultPageQuery.file ?? ""}|${vaultPageQuery.folder ?? ""}|${vaultPageQuery.view ?? ""}`;
-  const appliedUrlTargetRef = useRef("");
 
   useEffect(() => {
     appliedUrlTargetRef.current = "";
+    urlLayoutOpenDedupeRef.current = "";
+    prevUrlFileParamForLayoutRef.current = null;
+    lastUrlPushPayloadRef.current = null;
   }, [vaultId]);
 
+  useLayoutEffect(() => {
+    if (skipVaultUrlOpenEffectRef.current) return;
+    const file = vaultPageQuery.file;
+    if (!file) return;
+
+    if (prevUrlFileParamForLayoutRef.current !== file) {
+      urlLayoutOpenDedupeRef.current = "";
+      prevUrlFileParamForLayoutRef.current = file;
+    }
+
+    const root = treeRootRef.current;
+    const childrenForTree = root.type === "dir" ? root.children : [];
+    if (!collectDocIdsFromTree(childrenForTree).includes(file)) return;
+
+    const { activeTabId: curTab, viewMode: curView, openTabs: curOpen } = uiLatestRef.current;
+    if (file === curTab && curView === "editor" && curOpen.includes(file)) {
+      urlLayoutOpenDedupeRef.current = "";
+      return;
+    }
+
+    const dedupe = `${vaultId}\0${file}`;
+    if (urlLayoutOpenDedupeRef.current === dedupe) return;
+    urlLayoutOpenDedupeRef.current = dedupe;
+    dispatchUi({ type: "open", id: file });
+  }, [vaultPageQuery.file, treeDocIdsKey, vaultId, dispatchUi]);
+
   useEffect(() => {
+    if (skipVaultUrlOpenEffectRef.current) return;
     if (appliedUrlTargetRef.current === urlTargetKey) return;
 
     const file = vaultPageQuery.file;
     const folder = vaultPageQuery.folder;
     const viewGraph = vaultPageQuery.view === "graph";
+    const root = treeRootRef.current;
+    const childrenForTree = root.type === "dir" ? root.children : [];
 
     if (!file && !folder && !viewGraph) {
       appliedUrlTargetRef.current = urlTargetKey;
@@ -2270,29 +2322,31 @@ function VaultOpenWorkspace({
     }
 
     if (file) {
-      const ids = collectDocIdsFromTree(treeChildren);
+      const ids = collectDocIdsFromTree(childrenForTree);
       if (ids.includes(file)) {
         const expandForFile = () => {
+          const paths = findAncestorDirPathsForDoc(childrenForTree, file);
           setExpandedPaths((prev) => {
+            let changed = false;
             const next = new Set(prev);
-            for (const p of findAncestorDirPathsForDoc(treeChildren, file)) {
-              next.add(p);
+            for (const p of paths) {
+              if (!next.has(p)) {
+                next.add(p);
+                changed = true;
+              }
             }
-            return next;
+            return changed ? next : prev;
           });
         };
-        if (file !== activeTabId || viewMode !== "editor") {
-          browseSelectFile(file);
-        }
         expandForFile();
-        appliedUrlTargetRef.current = urlTargetKey;
         setUrlSyncReady(true);
+        appliedUrlTargetRef.current = urlTargetKey;
       }
       return;
     }
 
-    if (folder && treeRoot.type === "dir") {
-      const treePath = findDirTreePathByRelativePath(treeRoot, folder);
+    if (folder && root.type === "dir") {
+      const treePath = findDirTreePathByRelativePath(root, folder);
       if (treePath) {
         appliedUrlTargetRef.current = urlTargetKey;
         setExpandedPaths((prev) => {
@@ -2308,17 +2362,7 @@ function VaultOpenWorkspace({
         setUrlSyncReady(true);
       }
     }
-  }, [
-    urlTargetKey,
-    vaultPageQuery.file,
-    vaultPageQuery.folder,
-    vaultPageQuery.view,
-    treeChildren,
-    treeRoot,
-    browseSelectFile,
-    activeTabId,
-    viewMode,
-  ]);
+  }, [urlTargetKey, treeDocIdsKey, dispatchUi]);
 
   useEffect(() => {
     if (urlSyncReady) return;
@@ -2340,8 +2384,16 @@ function VaultOpenWorkspace({
     const qFolder = vaultPageQuery.folder ?? null;
 
     if (qFile === nextFile && qView === nextView && !qFolder) {
+      lastUrlPushPayloadRef.current = null;
       return;
     }
+
+    const payload = { f: nextFile, v: nextView };
+    const last = lastUrlPushPayloadRef.current;
+    if (last && last.f === payload.f && last.v === payload.v) {
+      return;
+    }
+    lastUrlPushPayloadRef.current = payload;
 
     void setVaultPageQuery({
       file: nextFile,
