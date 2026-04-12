@@ -1,12 +1,12 @@
-import { Cpu, FolderOpen, Plus, Wifi, WifiOff } from "lucide-react";
+import { FolderOpen, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { AddVaultCard } from "@/components/dashboard/add-vault-card";
+import { VaultCard } from "@/components/dashboard/vault-card";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { fetchVaultListForUser } from "@/lib/server/vault-list";
 import { deriveAgentMode, deriveVaultName, formatAgentPreview } from "@/lib/vault-display";
 import type { VaultListItem } from "@/lib/vault-list-types";
-import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
@@ -43,6 +43,7 @@ export default async function DashboardPage() {
             agentMode: deriveAgentMode(agentRaw as Record<string, unknown>),
             fileCount: 11,
             isEmpty: false,
+            managedByProfile: true,
           },
         ]
       : [];
@@ -85,73 +86,8 @@ type VaultItem = {
   isEmpty?: boolean;
   /** Vault Nest + Gitea: página para deploy key e cron. */
   gitSetupLink?: boolean;
+  managedByProfile?: boolean;
 };
-
-// ─── Components ─────────────────────────────────────────────────────────────
-
-function VaultCard({ vault }: { vault: VaultItem }) {
-  const primaryHref = vault.gitSetupLink
-    ? `/dashboard/vaults/${encodeURIComponent(vault.id)}/git`
-    : `/vault?vaultId=${encodeURIComponent(vault.id)}`;
-
-  return (
-    <div className="group relative z-0 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
-    <Link href={primaryHref} className="flex min-w-0 flex-1 flex-col gap-3 outline-none">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-muted/50">
-            <FolderOpen className="size-4 text-muted-foreground group-hover:text-primary transition-colors" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate font-medium text-sm text-foreground">{vault.name}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {vault.isEmpty ? "Sem agente" : `${vault.fileCount} arquivos`}
-            </p>
-          </div>
-        </div>
-
-        {/* Connection badge */}
-        <div
-          className={cn(
-            "flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-            vault.connected
-              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
-              : "bg-muted text-muted-foreground"
-          )}
-        >
-          {vault.connected ? (
-            <Wifi className="size-3" />
-          ) : (
-            <WifiOff className="size-3" />
-          )}
-          {vault.connected ? "Conectado" : "Offline"}
-        </div>
-      </div>
-
-      {/* Agent / detalhe */}
-      <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5">
-        {vault.isEmpty ? (
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-          {vault.description}
-        </p>
-      </div>
-    </Link>
-      {vault.gitSetupLink ? (
-        <Link
-          href={`/vault?vaultId=${encodeURIComponent(vault.id)}`}
-          className="text-center text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          Abrir explorador do cofre
-        </Link>
-      ) : null}
-    </div>
-  );
-}
 
 function EmptyVaults() {
   return (

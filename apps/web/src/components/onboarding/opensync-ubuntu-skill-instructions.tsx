@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, ExternalLink, Monitor } from "lucide-react";
+import { BookOpen, ExternalLink, Monitor, Terminal } from "lucide-react";
 import Link from "next/link";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -10,22 +10,15 @@ const codeBoxClass =
   "mt-1.5 rounded-lg border border-border bg-muted/50 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-foreground sm:text-[11px]";
 
 export type ConnectAgentSkillStep3PanelProps = {
-  /** URL absoluta da página do guia OpenSync. */
   skillGuideUrl: string;
-  /** URL absoluta do ficheiro SKILL.md (text/markdown) para o agente obter por fetch ou download. */
   skillMdUrl: string;
   apiBaseUrl: string;
   vaultId: string;
-  /** Se vazio, o bloco de credenciais pede para gerar a chave (ex.: botão na mesma página). */
   agentApiKey?: string;
   onCopyBlock: (text: string) => void;
-  /** Texto da caixa âmbar no rodapé (predefinição: assistente / dashboard). */
   footerHint?: string;
 };
 
-/**
- * Passo 3 do assistente: guia OpenSync + credenciais do vault.
- */
 export function ConnectAgentSkillStep3Panel({
   skillGuideUrl,
   skillMdUrl,
@@ -36,131 +29,119 @@ export function ConnectAgentSkillStep3Panel({
   footerHint,
 }: ConnectAgentSkillStep3PanelProps) {
   const hasApiKey = agentApiKey.trim().length > 0;
+
   const envBlock = [
     `export OPENSYNC_API_URL="${apiBaseUrl}"`,
     `export OPENSYNC_VAULT_ID="${vaultId}"`,
     `export OPENSYNC_AGENT_API_KEY="${agentApiKey}"`,
   ].join("\n");
 
-  const ubuntuServiceBlock = [
-    "systemctl --user daemon-reload",
-    "systemctl --user enable opensync-ubuntu",
-    "systemctl --user start opensync-ubuntu",
-    "journalctl --user -u opensync-ubuntu -f",
-  ].join("\n");
-
-  const cronBlockOptional = [
-    "openclaw cron add \\",
-    '  --name "OpenSync vault sync (30m)" \\',
-    "  --every 30m \\",
-    "  --session isolated \\",
-    `  --message "OpenSync: snapshot via API ${apiBaseUrl}/agent/vaults/${vaultId}/files/snapshot com JSON {files} + Bearer OPENSYNC_AGENT_API_KEY." \\`,
-    "  --tools exec \\",
-    "  --delivery none",
-  ].join("\n");
-
   return (
-    <div
-      className="space-y-6 rounded-xl border border-primary/25 bg-primary/[0.06] p-4 sm:p-5"
-      aria-labelledby="opensync-connect-heading"
-    >
-      <div className="flex items-start gap-2.5">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-background/80">
-          <Monitor className="size-4 text-primary" aria-hidden />
-        </div>
-        <div className="min-w-0">
-          <h3 id="opensync-connect-heading" className="text-sm font-semibold text-foreground">
-            Ligar o vault ao seu Ubuntu
-          </h3>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Para sincronizar <strong className="font-medium text-foreground">qualquer pasta</strong> no computador,
-            só precisa do <span className="font-mono text-[10px]">opensync-ubuntu</span> e da API key —{" "}
-            <strong className="font-medium text-foreground">sem</strong> OpenClaw,{" "}
-            <strong className="font-medium text-foreground">sem</strong> skill e{" "}
-            <strong className="font-medium text-foreground">sem</strong> plugin.
-          </p>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-border bg-background/60 p-3 sm:p-4">
-        <div className="flex items-start gap-2">
-          <Monitor className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+    <div className="space-y-4" aria-labelledby="opensync-connect-heading">
+      {/* ── Opção 1: opensync-ubuntu ── */}
+      <div className="rounded-xl border border-border bg-background/60 p-4 sm:p-5">
+        <div className="flex items-start gap-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+            <Monitor className="size-4 text-primary" aria-hidden />
+          </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-foreground">1. opensync-ubuntu (fluxo completo)</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Instale o pacote <span className="font-mono text-foreground">opensync-ubuntu</span>, execute{" "}
-              <span className="font-mono text-foreground">opensync-ubuntu init</span> e indique o{" "}
-              <strong className="font-medium text-foreground">caminho absoluto</strong> da pasta que quer manter igual
-              ao vault (pode ser qualquer directório com permissões de leitura/escrita).
+            <p className="text-sm font-semibold text-foreground">Opção 1 — App Ubuntu (recomendado)</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Instale o app e execute um wizard de configuração. Sem assistente, sem plugin.
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Link
-                href="/docs/agent/ubuntu"
-                className={cn(buttonVariants({ variant: "default", size: "sm" }))}
+          </div>
+        </div>
+
+        <ol className="mt-4 space-y-3">
+          <li className="flex gap-2.5">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">1</span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-foreground">Gere um token de workspace</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Vá em{" "}
+                <Link
+                  href="/settings?section=access-tokens"
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Configurações → Tokens de acesso
+                </Link>{" "}
+                e clique em <strong className="font-medium text-foreground">Gerar token</strong>. Guarde o{" "}
+                <span className="font-mono text-[10px]">usk_...</span> — será pedido no passo 3.
+              </p>
+            </div>
+          </li>
+
+          <li className="flex gap-2.5">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">2</span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-foreground">Instale o pacote .deb</p>
+              <pre className={codeBoxClass}>{"sudo dpkg -i opensync-ubuntu_*.deb"}</pre>
+              <a
+                href="https://gitea.opensync.space/opensync/opensync/releases"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-2 inline-flex")}
               >
-                Guia de instalação
-              </Link>
-              <Button type="button" variant="outline" size="sm" onClick={() => onCopyBlock("opensync-ubuntu init")}>
-                Copiar comando init
+                Baixar .deb
+                <ExternalLink className="ml-1.5 size-3.5 opacity-70" />
+              </a>
+            </div>
+          </li>
+
+          <li className="flex gap-2.5">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">3</span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-foreground">Execute o wizard de configuração</p>
+              <pre className={codeBoxClass}>{"opensync-ubuntu init"}</pre>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground sm:text-[11px]">
+                O wizard pede e-mail, token <span className="font-mono">usk_...</span>, escolha da pasta local e
+                seleciona (ou cria) o vault. O serviço é ativado automaticamente no boot.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-1"
+                onClick={() => onCopyBlock("opensync-ubuntu init")}
+              >
+                Copiar comando
               </Button>
             </div>
-            <p className="mt-2 text-[10px] font-medium text-foreground sm:text-[11px]">Serviço em segundo plano</p>
-            <pre className={cn(codeBoxClass, "mt-1 whitespace-pre-wrap break-all")}>{ubuntuServiceBlock}</pre>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={() => onCopyBlock(ubuntuServiceBlock)}
-            >
-              Copiar comandos systemd
-            </Button>
-          </div>
+          </li>
+        </ol>
+
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
+          <Link
+            href="/docs/agent/ubuntu"
+            className={cn(buttonVariants({ variant: "default", size: "sm" }))}
+          >
+            Guia completo
+          </Link>
+          <Link
+            href="/settings?section=access-tokens"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            Gerar token agora
+          </Link>
         </div>
       </div>
 
-      <div>
-        <p className="text-xs font-medium text-foreground">2. Credenciais deste vault</p>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          O <span className="font-mono text-foreground">opensync-ubuntu</span> grava API URL, vault ID e token em{" "}
-          <span className="font-mono text-[10px]">~/.config/opensync/</span> durante o{" "}
-          <span className="font-mono text-[10px]">init</span>. O bloco abaixo é para copiar/colar noutro terminal ou
-          scripts; os valores são os mesmos.
-        </p>
-        {hasApiKey ? (
-          <>
-            <pre className={cn(codeBoxClass, "mt-2 whitespace-pre-wrap break-all")}>{envBlock}</pre>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              Copie e cole no <strong className="font-medium text-foreground">chat do agente</strong> (para aplicar no
-              ambiente) ou num <strong className="font-medium text-foreground">terminal na máquina do agente</strong>.
-            </p>
-            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => onCopyBlock(envBlock)}>
-              Copie as credenciais
-            </Button>
-          </>
-        ) : (
-          <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-            Gere uma <strong className="font-medium text-foreground">API key</strong> com o botão{" "}
-            <strong className="font-medium text-foreground">Gerar API key</strong> na secção acima desta página. A chave
-            só é mostrada <strong className="font-medium text-foreground">uma vez</strong>; guarde-a antes de sair.
+      {/* ── Opção 2: via SKILL ── */}
+      <div className="rounded-xl border border-dashed border-border bg-muted/10 p-4 sm:p-5">
+        <div className="flex items-start gap-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+            <BookOpen className="size-4 text-muted-foreground" aria-hidden />
           </div>
-        )}
-      </div>
-
-      <div className="rounded-lg border border-dashed border-border bg-muted/15 p-3 sm:p-4">
-        <div className="flex items-start gap-2">
-          <BookOpen className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <div className="min-w-0">
-            <p className="text-xs font-medium text-foreground">3. Só para OpenClaw (ignorar se usa só Ubuntu)</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Quem sincroniza <strong className="font-medium text-foreground">só</strong> com{" "}
-              <span className="font-mono text-[10px]">opensync-ubuntu</span> pode saltar esta secção. Isto é apenas para
-              quem quer o mesmo vault ligado a um <strong className="font-medium text-foreground">assistente</strong>{" "}
-              OpenClaw (skill + cron).
+            <p className="text-sm font-semibold text-foreground">Opção 2 — Via SKILL (OpenClaw)</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Se usa o assistente OpenClaw, instale a skill OpenSync. Ela inclui os passos
+              de instalação do <span className="font-mono text-[10px]">opensync-ubuntu</span> e guia o agente
+              a configurar o serviço automaticamente.
             </p>
           </div>
         </div>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="mt-3 flex flex-wrap gap-2">
           <a
             href={skillGuideUrl}
             target="_blank"
@@ -183,23 +164,47 @@ export function ConnectAgentSkillStep3Panel({
             Copiar URL SKILL.md
           </Button>
         </div>
-        <p className="mt-2 text-[10px] text-muted-foreground sm:text-[11px]">
-          Cron exemplo (endpoint{" "}
-          <span className="break-all font-mono text-foreground">
-            /agent/vaults/{vaultId}/files/snapshot
-          </span>
-          ):
-        </p>
-        <pre className={cn(codeBoxClass, "mt-1 whitespace-pre-wrap break-all")}>{cronBlockOptional}</pre>
-        <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => onCopyBlock(cronBlockOptional)}>
-          Copiar cron OpenClaw
-        </Button>
       </div>
 
-      <div className="rounded-lg border border-amber-500/35 bg-amber-500/[0.07] px-3 py-2.5 text-xs text-amber-950 dark:text-amber-100">
-        {footerHint ??
-          "Guarde a API key: não a voltamos a mostrar. Para qualquer pasta no Ubuntu, basta opensync-ubuntu + init — sem skill nem plugin. Deploy key no mesmo ecrã é só para git na VPS."}
-      </div>
+      {/* ── Avançado: API key direta ── */}
+      <details className="group rounded-xl border border-border">
+        <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-xs font-medium text-muted-foreground hover:text-foreground">
+          <Terminal className="size-3.5" />
+          Avançado — API key direta (scripts / VPS)
+        </summary>
+        <div className="border-t border-border px-4 pb-4 pt-3">
+          <p className="text-xs text-muted-foreground">
+            Para scripts, servidores ou integração manual sem o app ubuntu. Gere uma API key{" "}
+            <span className="font-mono text-[10px]">osk_...</span> na secção{" "}
+            <strong className="font-medium text-foreground">API key para scripts/VPS</strong> abaixo e use as variáveis aqui.
+          </p>
+          {hasApiKey ? (
+            <>
+              <pre className={cn(codeBoxClass, "mt-2 whitespace-pre-wrap break-all")}>{envBlock}</pre>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => onCopyBlock(envBlock)}
+              >
+                Copiar variáveis
+              </Button>
+            </>
+          ) : (
+            <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+              Gere uma <strong className="font-medium text-foreground">API key</strong> com o botão acima.
+              A chave só é mostrada uma vez.
+            </div>
+          )}
+        </div>
+      </details>
+
+      {footerHint ? (
+        <div className="rounded-lg border border-amber-500/35 bg-amber-500/[0.07] px-3 py-2.5 text-xs text-amber-950 dark:text-amber-100">
+          {footerHint}
+        </div>
+      ) : null}
     </div>
   );
 }

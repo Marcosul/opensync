@@ -17,7 +17,7 @@ async function sync(workspaceDir, token, vaultId) {
     if (Object.keys(files).length === 0) {
         throw new Error("Nenhum ficheiro de texto no workspace para enviar. Adicione notas ou ficheiros .md e tente de novo.");
     }
-    const res = await fetch(`${base}/git/${encodeURIComponent(resolvedVaultId)}/push`, {
+    const res = await fetch(`${base}/agent/vaults/${encodeURIComponent(resolvedVaultId)}/files/snapshot`, {
         method: "POST",
         headers: {
             Authorization: `Bearer ${token}`,

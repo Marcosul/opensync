@@ -6,12 +6,10 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
 } from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
-import { RefreshCw, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Maximize2, RefreshCw, ZoomIn, ZoomOut } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -24,12 +22,12 @@ import type { GraphEdge, GraphNode, VaultGraphResponse } from "@/app/api/vaults/
 import { cn } from "@/lib/utils";
 
 // ---------- tipos internos D3 ----------
-type D3Node = SimulationNodeDatum & GraphNode;
-type D3Link = SimulationLinkDatum<D3Node> & { type: GraphEdge["type"] };
+type D3Node = GraphNode & { x?: number; y?: number; vx?: number; vy?: number; index?: number };
+type D3Link = { source: string | D3Node; target: string | D3Node; type: GraphEdge["type"] };
 
 // ---------- cores ----------
-const COLOR_MD = "#1D9E75";      // teal — brand
-const COLOR_FILE = "#6b7280";    // cinza
+const COLOR_MD = "#1D9E75";       // teal — brand
+const COLOR_FILE = "#6b7280";     // cinza
 const COLOR_EDGE_WIKI = "#1D9E75";
 const COLOR_EDGE_LINK = "#94a3b8";
 const COLOR_SELECTED = "#f59e0b";
@@ -43,23 +41,21 @@ interface Props {
 export function VaultGraphView({ data, onNodeClick, className }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef<ReturnType<typeof zoom> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const zoomRef = useRef<any>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
 
   const resetZoom = useCallback(() => {
     if (!svgRef.current || !zoomRef.current) return;
-    select(svgRef.current).transition().duration(300).call(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      zoomRef.current.transform as any,
-      zoomIdentity,
-    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (select(svgRef.current) as any).transition().duration(300).call(zoomRef.current.transform, zoomIdentity);
   }, []);
 
   const zoomBy = useCallback((factor: number) => {
     if (!svgRef.current || !zoomRef.current) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    select(svgRef.current).transition().duration(200).call((zoomRef.current as any).scaleBy, factor);
+    (select(svgRef.current) as any).transition().duration(200).call(zoomRef.current.scaleBy, factor);
   }, []);
 
   useLayoutEffect(() => {
@@ -98,7 +94,7 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
 
     // defs: marcador de seta
     svg.append("defs").append("marker")
-      .attr("id", "arrow")
+      .attr("id", "arrow-og")
       .attr("viewBox", "0 -4 8 8")
       .attr("refX", 14)
       .attr("refY", 0)
@@ -113,20 +109,27 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
     const g = svg.append("g").attr("class", "graph-root");
 
     // ---- zoom ----
-    const zoomBehavior = zoom<SVGSVGElement, unknown>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const zoomBehavior = (zoom as any)()
       .scaleExtent([0.1, 8])
-      .on("zoom", (event) => {
-        g.attr("transform", event.transform);
+      .on("zoom", (event: { transform: { toString(): string } }) => {
+        g.attr("transform", event.transform.toString());
       });
     zoomRef.current = zoomBehavior;
-    svg.call(zoomBehavior);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (svg as any).call(zoomBehavior);
 
     // ---- simulação ----
-    const sim = forceSimulation<D3Node>(nodes)
-      .force("link", forceLink<D3Node, D3Link>(links).id((d) => d.id).distance(80).strength(0.4))
-      .force("charge", forceManyBody<D3Node>().strength(-180))
-      .force("center", forceCenter(w / 2, h / 2))
-      .force("collide", forceCollide<D3Node>(18));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sim = (forceSimulation as any)(nodes)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .force("link", (forceLink as any)(links).id((d: D3Node) => d.id).distance(80).strength(0.4))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .force("charge", (forceManyBody as any)().strength(-180))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .force("center", (forceCenter as any)(w / 2, h / 2))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .force("collide", (forceCollide as any)(18));
 
     // ---- arestas ----
     const link = g.append("g")
@@ -134,10 +137,10 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
       .selectAll("line")
       .data(links)
       .join("line")
-      .attr("stroke", (d) => d.type === "wikilink" ? COLOR_EDGE_WIKI : COLOR_EDGE_LINK)
+      .attr("stroke", (d: D3Link) => d.type === "wikilink" ? COLOR_EDGE_WIKI : COLOR_EDGE_LINK)
       .attr("stroke-opacity", 0.55)
-      .attr("stroke-width", (d) => d.type === "wikilink" ? 1.5 : 1)
-      .attr("marker-end", (d) => d.type === "wikilink" ? "url(#arrow)" : null);
+      .attr("stroke-width", (d: D3Link) => d.type === "wikilink" ? 1.5 : 1)
+      .attr("marker-end", (d: D3Link) => d.type === "wikilink" ? "url(#arrow-og)" : null);
 
     // ---- nós ----
     const node = g.append("g")
@@ -146,11 +149,11 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
       .data(nodes)
       .join("g")
       .attr("cursor", "pointer")
-      .on("click", (_event, d) => {
+      .on("click", (_event: MouseEvent, d: D3Node) => {
         setSelected((prev) => (prev === d.id ? null : d.id));
         onNodeClick?.(d);
       })
-      .on("mouseenter", (event, d) => {
+      .on("mouseenter", (event: MouseEvent, d: D3Node) => {
         const rect = (event.target as Element).closest("svg")?.getBoundingClientRect();
         if (!rect) return;
         setTooltip({
@@ -162,8 +165,8 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
       .on("mouseleave", () => setTooltip(null));
 
     node.append("circle")
-      .attr("r", (d) => d.type === "markdown" ? 7 : 5)
-      .attr("fill", (d) => d.type === "markdown" ? COLOR_MD : COLOR_FILE)
+      .attr("r", (d: D3Node) => d.type === "markdown" ? 7 : 5)
+      .attr("fill", (d: D3Node) => d.type === "markdown" ? COLOR_MD : COLOR_FILE)
       .attr("stroke", "#fff")
       .attr("stroke-width", 1.5)
       .attr("opacity", 0.9);
@@ -175,32 +178,18 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
       .attr("fill", "currentColor")
       .attr("opacity", 0.8)
       .attr("pointer-events", "none")
-      .text((d) => (d.label.length > 22 ? d.label.slice(0, 20) + "…" : d.label));
+      .text((d: D3Node) => (d.label.length > 22 ? d.label.slice(0, 20) + "…" : d.label));
 
     // ---- tick ----
     sim.on("tick", () => {
       link
-        .attr("x1", (d) => (d.source as D3Node).x ?? 0)
-        .attr("y1", (d) => (d.source as D3Node).y ?? 0)
-        .attr("x2", (d) => (d.target as D3Node).x ?? 0)
-        .attr("y2", (d) => (d.target as D3Node).y ?? 0);
+        .attr("x1", (d: D3Link) => (d.source as D3Node).x ?? 0)
+        .attr("y1", (d: D3Link) => (d.source as D3Node).y ?? 0)
+        .attr("x2", (d: D3Link) => (d.target as D3Node).x ?? 0)
+        .attr("y2", (d: D3Link) => (d.target as D3Node).y ?? 0);
 
-      node.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      node.attr("transform", (d: D3Node) => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
-
-    // ---- highlight selected ----
-    const highlight = () => {
-      node.select("circle")
-        .attr("fill", (d) => {
-          if (d.id === selected) return COLOR_SELECTED;
-          return d.type === "markdown" ? COLOR_MD : COLOR_FILE;
-        })
-        .attr("r", (d) => {
-          if (d.id === selected) return 9;
-          return d.type === "markdown" ? 7 : 5;
-        });
-    };
-    highlight();
 
     return () => {
       sim.stop();
@@ -212,14 +201,16 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
   useEffect(() => {
     if (!svgRef.current) return;
     select(svgRef.current)
-      .selectAll<SVGCircleElement, D3Node>(".nodes g circle")
-      .attr("fill", (d) => {
-        if (d.id === selected) return COLOR_SELECTED;
-        return d.type === "markdown" ? COLOR_MD : COLOR_FILE;
+      .selectAll(".nodes g circle")
+      .attr("fill", (d: unknown) => {
+        const n = d as D3Node;
+        if (n.id === selected) return COLOR_SELECTED;
+        return n.type === "markdown" ? COLOR_MD : COLOR_FILE;
       })
-      .attr("r", (d) => {
-        if (d.id === selected) return 9;
-        return d.type === "markdown" ? 7 : 5;
+      .attr("r", (d: unknown) => {
+        const n = d as D3Node;
+        if (n.id === selected) return 9;
+        return n.type === "markdown" ? 7 : 5;
       });
   }, [selected]);
 
@@ -276,7 +267,7 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
           <span className="text-muted-foreground">Outro arquivo</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block h-px w-4" style={{ background: COLOR_EDGE_WIKI, height: 2 }} />
+          <span className="inline-block h-0.5 w-4" style={{ background: COLOR_EDGE_WIKI }} />
           <span className="text-muted-foreground">[[wikilink]]</span>
         </div>
         <div className="flex items-center gap-2">

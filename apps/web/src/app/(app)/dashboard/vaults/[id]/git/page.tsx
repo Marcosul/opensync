@@ -170,67 +170,24 @@ export default function VaultGitSetupPage() {
           <ArrowLeft className="size-3.5" />
           Dashboard
         </Link>
-        <span className="text-sm font-medium text-foreground/80">Agente e Git</span>
+        <span className="text-sm font-medium text-foreground/80">Ligar agente</span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <section className="mx-auto w-full max-w-2xl space-y-8 rounded-2xl border bg-card p-5 shadow-sm sm:p-8">
+
+          {/* ── Cabeçalho ── */}
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Ubuntu + API
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight">Ligar o agente</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Para <strong className="font-medium text-foreground">qualquer pasta</strong> no Ubuntu:{" "}
-              <strong className="font-medium text-foreground">opensync-ubuntu</strong> + API key abaixo —{" "}
-              <strong className="font-medium text-foreground">sem</strong> skill OpenSync e{" "}
-              <strong className="font-medium text-foreground">sem</strong> plugin. O painel seguinte explica o{" "}
-              <span className="font-mono text-xs">init</span>. Secção OpenClaw no mesmo painel é só para quem usa
-              assistente. Para <span className="font-mono text-xs">git push</span> na VPS, use a{" "}
-              <strong className="font-medium text-foreground">deploy key</strong> no fundo da página.
+              Sincronize qualquer pasta do Ubuntu com este vault. Escolha uma das opções abaixo.
             </p>
           </div>
 
-          <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4 sm:p-5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              API do agente (HTTP)
-            </p>
-            <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">Gerar API key</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Cada geração cria uma credencial nova; as anteriores podem continuar válidas em paralelo.
-            </p>
-            <div className="mt-3">
-              <p className="text-xs font-medium text-muted-foreground">Vault ID</p>
-              <pre className={monoBlockClass}>{vaultId}</pre>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="mt-2 h-8 text-xs"
-                onClick={() => void copy(vaultId)}
-              >
-                <Copy className="mr-1 size-3.5" />
-                Copiar ID
-              </Button>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                disabled={agentApiBusy}
-                onClick={() => void handleGenerateAgentApiToken()}
-              >
-                <KeyRound className="mr-2 size-4" />
-                {agentApiBusy ? "A gerar…" : "Gerar API key"}
-              </Button>
-            </div>
-            {agentApiError ? <p className="mt-3 text-sm text-destructive">{agentApiError}</p> : null}
-            {lastAgentApiToken ? (
-              <p className="mt-4 text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                Chave gerada — copie as variáveis no passo 2 do painel seguinte (inclui a API key completa).
-              </p>
-            ) : null}
-          </div>
-
+          {/* ── Painel principal (App Ubuntu / SKILL) ── */}
           <ConnectAgentSkillStep3Panel
             skillGuideUrl={skillGuideUrl}
             skillMdUrl={skillMdUrl}
@@ -238,9 +195,54 @@ export default function VaultGitSetupPage() {
             vaultId={vaultId}
             agentApiKey={lastAgentApiToken?.token}
             onCopyBlock={(text) => void copy(text)}
-            footerHint="Guarde a API key: não a voltamos a mostrar. Pode gerar outra com o botão «Gerar API key» acima. Para git push direto ao Gitea, use a deploy key na secção abaixo."
           />
 
+          {/* ── API key para scripts/VPS (avançado) ── */}
+          <details className="group rounded-xl border border-border">
+            <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground">
+              <KeyRound className="size-4" />
+              API key para scripts/VPS (<span className="font-mono text-xs">osk_...</span>)
+            </summary>
+            <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+              <p className="text-xs text-muted-foreground">
+                Apenas para uso direto em scripts, servidores ou VPS — sem instalar o app ubuntu.
+                Cada geração cria uma credencial nova; as anteriores continuam válidas.
+              </p>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">Vault ID</p>
+                <pre className={monoBlockClass}>{vaultId}</pre>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 h-8 text-xs"
+                  onClick={() => void copy(vaultId)}
+                >
+                  <Copy className="mr-1 size-3.5" />
+                  Copiar ID
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={agentApiBusy}
+                  onClick={() => void handleGenerateAgentApiToken()}
+                >
+                  <KeyRound className="mr-2 size-4" />
+                  {agentApiBusy ? "A gerar…" : "Gerar API key"}
+                </Button>
+              </div>
+              {agentApiError ? <p className="text-sm text-destructive">{agentApiError}</p> : null}
+              {lastAgentApiToken ? (
+                <p className="text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                  Chave gerada. Copie as variáveis na secção «Avançado» acima (inclui a API key completa).
+                  Guarde-a agora — não voltamos a mostrá-la.
+                </p>
+              ) : null}
+            </div>
+          </details>
+
+          {/* ── Deploy key SSH (VPS git push) ── */}
           <div className="border-t border-border pt-8">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Alternativa — Git na VPS

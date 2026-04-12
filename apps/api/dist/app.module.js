@@ -18,6 +18,8 @@ const commits_module_1 = require("./commits/commits.module");
 const graph_module_1 = require("./graph/graph.module");
 const plans_module_1 = require("./plans/plans.module");
 const billing_module_1 = require("./billing/billing.module");
+const user_access_keys_module_1 = require("./user-access-keys/user-access-keys.module");
+const user_module_1 = require("./user/user.module");
 const health_controller_1 = require("./health.controller");
 const prisma_module_1 = require("./common/prisma.module");
 let AppModule = class AppModule {
@@ -38,6 +40,8 @@ exports.AppModule = AppModule = __decorate([
             graph_module_1.GraphModule,
             plans_module_1.PlansModule,
             billing_module_1.BillingModule,
+            user_access_keys_module_1.UserAccessKeysModule,
+            user_module_1.UserModule,
         ],
     })
 ], AppModule);

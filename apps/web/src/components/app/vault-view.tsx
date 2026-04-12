@@ -30,6 +30,7 @@ import {
   PanelLeft,
   Plus,
   Search,
+  Share2,
   SquarePen,
   Tag,
   X,
@@ -2872,6 +2873,16 @@ function VaultOpenWorkspace({
             <GitBranch className="size-3.5" />
             Grafo
           </TabButton>
+          {isBackendSyncVaultId(vaultId) && (
+            <Link
+              href={`/vault/${encodeURIComponent(vaultId)}/graph`}
+              title="Ver grafo completo do vault (via API)"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Share2 className="size-3.5" />
+              Grafo API
+            </Link>
+          )}
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
             {openTabs.map((id) => (
               <FileTab
