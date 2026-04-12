@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 import {
   type DragEvent,
   type FocusEvent,
@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { VaultExplorerContextMenu, type ExplorerCommand } from "@/components/app/vault-explorer-context-menu";
+import { VaultExplorerFileIcon } from "@/components/app/vault-explorer-file-icon";
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
 import type { ExplorerItemRef } from "@/components/app/vault-tree-ops";
 import { VAULT_EXPLORER_DRAG_MIME } from "@/components/app/vault-tree-ops";
@@ -220,6 +221,10 @@ export function VaultExplorerTreeView({
                       <ChevronRight className="size-3.5 shrink-0 opacity-60" />
                     )}
                   </button>
+                  <Folder
+                    className="size-3.5 shrink-0 text-sky-600 opacity-85 dark:text-sky-400"
+                    aria-hidden
+                  />
                   <input
                     autoFocus
                     aria-label="Novo nome da pasta"
@@ -302,10 +307,14 @@ export function VaultExplorerTreeView({
                       e.currentTarget.blur();
                     }}
                     className={cn(
-                      "min-w-0 flex-1 rounded px-1 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border",
+                      "flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left font-mono text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border",
                       rowVisual(folderRow, false)
                     )}
                   >
+                    <Folder
+                      className="size-3.5 shrink-0 text-sky-600 opacity-85 dark:text-sky-400"
+                      aria-hidden
+                    />
                     <span className="min-w-0 truncate">{entry.name}</span>
                   </button>
                 </div>
@@ -336,7 +345,7 @@ export function VaultExplorerTreeView({
           return (
             <li key={`${entry.name}-disabled`}>
               <span className="flex items-center gap-2 rounded px-2 py-1 font-mono text-[11px] text-muted-foreground/30">
-                <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/20" />
+                <VaultExplorerFileIcon fileName={entry.name} size={14} className="opacity-40" />
                 {entry.name}
               </span>
             </li>
@@ -416,12 +425,7 @@ export function VaultExplorerTreeView({
                     rowVisual(fileRow, active)
                   )}
                 >
-                  <span
-                    className={cn(
-                      "size-1.5 shrink-0 rounded-full",
-                      active ? "bg-primary" : "bg-muted-foreground/35"
-                    )}
-                  />
+                  <VaultExplorerFileIcon fileName={entry.name} active={active} size={14} />
                   <span className="min-w-0 truncate">{entry.name}</span>
                 </button>
               </VaultExplorerContextMenu>

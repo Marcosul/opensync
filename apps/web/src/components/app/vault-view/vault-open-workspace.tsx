@@ -72,7 +72,6 @@ import {
 } from "@/components/app/vault-tree-ops";
 import {
   OPENCLAW_ROOT_LABEL,
-  findDocBreadcrumbFromEntries,
   mockDocToMarkdown,
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
@@ -98,6 +97,7 @@ import {
   isBackendSyncVaultId,
   usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
+import { isVaultPlainTextDocId } from "@/lib/vault-doc-kind";
 import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import { cn } from "@/lib/utils";
 
@@ -124,6 +124,7 @@ import { TagsPanel } from "./vault-tags-panel";
 import { TabButton } from "./vault-tab-button";
 import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-reducer";
 import type { SidebarMode, TreeSortOrder } from "./explorer-tree-utils";
+import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
 
 export type VaultOpenWorkspaceProps = {
   vaultId: string;
@@ -648,8 +649,12 @@ export function VaultOpenWorkspace({
   useEffect(() => {
     if (prevEditorTabRef.current === activeTabId) return;
     prevEditorTabRef.current = activeTabId;
-    if (!editorSourceModeRef.current) return;
-    setEditorSourceMode(false);
+    if (!activeTabId) return;
+    if (isVaultPlainTextDocId(activeTabId)) {
+      setEditorSourceMode(true);
+      return;
+    }
+    if (editorSourceModeRef.current) setEditorSourceMode(false);
   }, [activeTabId]);
 
   useEffect(() => {
@@ -1046,6 +1051,10 @@ export function VaultOpenWorkspace({
       return;
     }
     setTreeRoot(r.root);
+    skipVaultUrlOpenEffectRef.current = true;
+    window.setTimeout(() => {
+      skipVaultUrlOpenEffectRef.current = false;
+    }, 0);
     dispatchUi({ type: "closeMany", ids: r.closedDocIds });
     setNoteContents((prev) => {
       const next = { ...prev };
@@ -1098,6 +1107,10 @@ export function VaultOpenWorkspace({
   }, []);
 
   const closeTab = useCallback((id: string) => {
+    skipVaultUrlOpenEffectRef.current = true;
+    window.setTimeout(() => {
+      skipVaultUrlOpenEffectRef.current = false;
+    }, 0);
     dispatchUi({ type: "close", id });
   }, []);
 
@@ -1112,10 +1125,14 @@ export function VaultOpenWorkspace({
   const graphHighlightId = activeTabId || null;
 
   const editorBreadcrumb = useMemo(
-    () => findDocBreadcrumbFromEntries(treeChildren, activeTabId || ""),
-    [treeChildren, activeTabId]
+    () => vaultDocBreadcrumb(treeChildren, activeTabId || ""),
+    [treeChildren, activeTabId],
   );
   const editorBreadcrumbLabel = editorBreadcrumb.join(" / ");
+
+  /** Evita mostrar breadcrumb / chrome do editor enquanto o blob lazy ainda não chegou (sem “flash” do path). */
+  const editorSubChromeLoading =
+    usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading;
 
   const handleExplorerCommand = useCallback(
     (cmd: ExplorerCommand) => {
@@ -1598,7 +1615,7 @@ export function VaultOpenWorkspace({
           ) : null}
         </div>
 
-        {viewMode === "editor" && activeTabId ? (
+        {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
           <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card/20 px-1">
             <button
               type="button"
@@ -1657,18 +1674,20 @@ export function VaultOpenWorkspace({
                 </Menu.Positioner>
               </Menu.Portal>
             </Menu.Root>
-            <button
-              type="button"
-              onClick={() => setEditorSourceMode((v) => !v)}
-              className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
-                editorSourceMode && "bg-muted text-foreground"
-              )}
-              title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
-              aria-pressed={editorSourceMode}
-            >
-              <FileCode2 className="size-4" />
-            </button>
+            {!isVaultPlainTextDocId(activeTabId) ? (
+              <button
+                type="button"
+                onClick={() => setEditorSourceMode((v) => !v)}
+                className={cn(
+                  "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                  editorSourceMode && "bg-muted text-foreground",
+                )}
+                title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
+                aria-pressed={editorSourceMode}
+              >
+                <FileCode2 className="size-4" />
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -1707,6 +1726,7 @@ export function VaultOpenWorkspace({
             hideTopChrome
             sourceMode={editorSourceMode}
             onSourceModeChange={setEditorSourceMode}
+            plainTextDocument={isVaultPlainTextDocId(activeTabId)}
           />
         )}
       </div>

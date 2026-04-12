@@ -40,6 +40,7 @@ import {
   type ExplorerInlineRenameState,
   type ExplorerVisibleRow,
 } from "@/components/app/vault-explorer-tree-view";
+import { VaultExplorerFileIcon } from "@/components/app/vault-explorer-file-icon";
 import { VaultSidebarFooter } from "@/components/app/vault-switcher";
 import {
   filterEntriesByNameQuery,
@@ -626,26 +627,33 @@ export function FileTree({
                 Nenhum arquivo
               </li>
             ) : (
-              searchHits.map((f) => (
-                <li key={f.docId}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(f.docId)}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-[11px] transition-colors",
-                      selectedId === f.docId
-                        ? "bg-primary/12 font-medium text-primary"
-                        : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
-                    )}
-                  >
-                    <span
-                      className="size-1.5 shrink-0 rounded-full bg-muted-foreground/35"
-                      aria-hidden
-                    />
-                    <span className="min-w-0 truncate">{f.label}</span>
-                  </button>
-                </li>
-              ))
+              searchHits.map((f) => {
+                const shortName = f.label.includes("/")
+                  ? (f.label.split("/").pop() ?? f.label)
+                  : f.label;
+                return (
+                  <li key={f.docId}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(f.docId)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-[11px] transition-colors",
+                        selectedId === f.docId
+                          ? "bg-primary/12 font-medium text-primary"
+                          : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
+                      )}
+                    >
+                      <VaultExplorerFileIcon
+                        fileName={shortName}
+                        active={selectedId === f.docId}
+                        size={13}
+                        className="shrink-0"
+                      />
+                      <span className="min-w-0 truncate">{f.label}</span>
+                    </button>
+                  </li>
+                );
+              })
             )}
           </ul>
         )}

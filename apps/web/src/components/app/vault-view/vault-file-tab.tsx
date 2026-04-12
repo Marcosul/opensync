@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 
+import { VaultExplorerFileIcon } from "@/components/app/vault-explorer-file-icon";
 import { cn } from "@/lib/utils";
 
 /** Separador de ficheiro com botão fechar. */
@@ -30,10 +31,11 @@ export function FileTab({
       <button
         type="button"
         onClick={onSelect}
-        className="min-w-0 flex-1 truncate px-2 py-1 text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 truncate px-2 py-1 text-left"
         title={fileId}
       >
-        {shortName}
+        <VaultExplorerFileIcon fileName={shortName} active={active} size={13} className="shrink-0" />
+        <span className="min-w-0 truncate">{shortName}</span>
       </button>
       <button
         type="button"
