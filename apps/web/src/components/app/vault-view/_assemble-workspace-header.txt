@@ -1,0 +1,124 @@
+"use client";
+
+/**
+ * Estado principal do cofre aberto: snapshot local, URL, sync Gitea/Git lazy, editor e explorador.
+ * Componente grande de propósito — a lógica está agrupada por secções; subsistemas extraídos para `./`.
+ */
+
+import { Menu } from "@base-ui/react/menu";
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CloudUpload,
+  Columns,
+  FileCode2,
+  GitBranch,
+  Loader2,
+  MoreVertical,
+  PanelLeft,
+  Plus,
+  Share2,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { apiRequest } from "@/api/rest/generic";
+import {
+  applyMissionMarkdownToSnapshot,
+  countTreeStats,
+  loadSnapshotWithSshBridge,
+  readAndConsumePendingAgentProject,
+  saveSnapshot,
+  writeActiveVaultId,
+  type VaultBookmark,
+  type VaultMeta,
+  type VaultSnapshotV1,
+  type VaultUiState,
+} from "@/components/app/vault-persistence";
+import { VaultManageDialog } from "@/components/app/vault-switcher";
+import type { ExplorerCommand } from "@/components/app/vault-explorer-context-menu";
+import type { ExplorerInlineRenameState } from "@/components/app/vault-explorer-tree-view";
+import { VaultNoteEditor } from "@/components/app/vault-note-editor";
+import {
+  addBaseToParent,
+  addCanvasToParent,
+  addFolderToParent,
+  addNoteToParent,
+  collectDocIdsFromTree,
+  deleteExplorerItems,
+  duplicateFile,
+  findAncestorDirPathsForDoc,
+  findDir,
+  findFileNameForDocId,
+  moveDirectory,
+  moveExplorerItemsToParent,
+  moveFile,
+  pruneExpandedPathsToTree,
+  renameDirectory,
+  renameFile,
+  type ExplorerItemRef,
+} from "@/components/app/vault-tree-ops";
+import {
+  OPENCLAW_ROOT_LABEL,
+  findDocBreadcrumbFromEntries,
+  mockDocToMarkdown,
+  type TreeEntry,
+} from "@/components/marketing/openclaw-workspace-mock";
+import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
+import {
+  fetchVaultGitBlobQueryFn,
+  LAZY_GIT_BLOB_GC_MS,
+  LAZY_GIT_BLOB_STALE_MS,
+  vaultGitBlobQueryKey,
+  vaultGitBlobQueryKeyRoot,
+} from "@/lib/vault-git-blob-query";
+import {
+  GIT_LAZY_PLACEHOLDER_DOC_ID,
+  collectLazyGitRepoRelativePaths,
+  gitTreePathsToVaultSnapshot,
+  isGitKeepMarkerPath,
+  isGitLazyVaultTree,
+  mergeLazyGitNoteContentsAfterRemoteTree,
+} from "@/lib/vault-git-tree-import";
+import {
+  flattenVaultTreeToSyncFiles,
+  initialNoteContentsForLazyGitVault,
+  isBackendSyncVaultId,
+  usesLazyGitRemote,
+} from "@/lib/vault-sync-flatten";
+import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
+import { cn } from "@/lib/utils";
+
+import { BacklinksPanel } from "./vault-backlinks-panel";
+import { DOC_BY_ID } from "./doc-registry";
+import {
+  LAZY_OPEN_TAB_PREFETCH_CONCURRENCY,
+  LAZY_OPEN_TAB_PREFETCH_MAX,
+  prefetchLazyGitVaultBlobs,
+} from "./prefetch-lazy-git-vault-blobs";
+import { buildGraphFromVault, computeTopTags, noteMarkdown } from "./vault-graph-model";
+import {
+  applyNoteContentsDocPrefixMigration,
+  buildDocIdRemapFromPrefixes,
+} from "./note-contents-migration";
+import { treePathAncestors } from "./vault-path-utils";
+import type { VaultPageQueryState } from "./vault-page-query-types";
+import { vaultChromeMenuItemClass } from "./vault-chrome-styles";
+import { VaultExplorerDeleteConfirmDialog } from "./vault-explorer-delete-dialog";
+import { FileTab } from "./vault-file-tab";
+import { FileTree } from "./vault-file-tree";
+import { FullGraph } from "./vault-full-graph";
+import { TagsPanel } from "./vault-tags-panel";
+import { TabButton } from "./vault-tab-button";
+import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-reducer";
