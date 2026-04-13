@@ -11,6 +11,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useQueryStates } from "nuqs";
@@ -49,10 +50,25 @@ export function VaultView() {
 
   const vaultIdFromUrl = vaultPageQuery.vaultId ?? vaultPageQuery.vault;
 
-  const activeVaultMeta = useMemo(
+  const activeVaultMetaRaw = useMemo(
     () => (activeVaultId ? vaultMetas.find((m) => m.id === activeVaultId) : undefined),
     [vaultMetas, activeVaultId],
   );
+  // Estabiliza a referência: só produz novo objeto quando os campos relevantes mudam.
+  // Evita que cada fetch da lista de vaults dispare `scheduleGitTreeRefresh` desnecessariamente.
+  const stableMetaRef = useRef(activeVaultMetaRaw);
+  if (
+    activeVaultMetaRaw?.id !== stableMetaRef.current?.id ||
+    activeVaultMetaRaw?.remoteSync !== stableMetaRef.current?.remoteSync ||
+    activeVaultMetaRaw?.kind !== stableMetaRef.current?.kind ||
+    activeVaultMetaRaw?.name !== stableMetaRef.current?.name ||
+    activeVaultMetaRaw?.managedByProfile !== stableMetaRef.current?.managedByProfile ||
+    activeVaultMetaRaw?.deletable !== stableMetaRef.current?.deletable ||
+    (activeVaultMetaRaw === undefined) !== (stableMetaRef.current === undefined)
+  ) {
+    stableMetaRef.current = activeVaultMetaRaw;
+  }
+  const activeVaultMeta = stableMetaRef.current;
 
   useEffect(() => {
     if (!vaultPageQuery.vault || vaultPageQuery.vaultId) return;
