@@ -23,6 +23,48 @@ async function ask(rl: readline.Interface, q: string, def?: string): Promise<str
   return a || (def ?? "");
 }
 
+/** Pede o token usk_ e volta a pedir ate a API aceitar (Ctrl+C para sair). */
+async function promptUskTokenUntilValid(
+  rl: readline.Interface,
+  apiUrl: string,
+): Promise<{ uskToken: string; email: string }> {
+  console.log("\n  🔑 Passo 1 — token de workspace (usk_...)");
+  console.log("  Abre o painel, gera um token e cola aqui quando estiver pronto.");
+  console.log("  https://opensync.space/settings?section=access-tokens\n");
+
+  for (;;) {
+    const raw = await ask(rl, "Cole o token usk_");
+    const uskToken = raw.trim();
+    if (!uskToken) {
+      console.log(
+        "  ⏳ A aguardar — gera o token no painel, cola aqui e carrega Enter. (Ctrl+C para cancelar)\n",
+      );
+      continue;
+    }
+    if (!uskToken.startsWith("usk_")) {
+      console.error("  ❌ O token tem de comecar com usk_. Tenta de novo.\n");
+      continue;
+    }
+    try {
+      console.log("\n  ⏳ A validar o token com a API...");
+      const me = await api.fetchMe(apiUrl, uskToken);
+      console.log(`  ✅ Autenticado como ${me.email}\n`);
+      return { uskToken, email: me.email };
+    } catch (e: unknown) {
+      const err = e as { status?: number; message?: string };
+      if (err?.status === 401 || err?.status === 403) {
+        console.error(
+          "  ❌ Token invalido ou revogado. Gera um novo em Definicoes → Tokens de acesso e cola outra vez.\n",
+        );
+        continue;
+      }
+      console.error("  ❌ Erro de rede/API:", err?.message ?? String(e));
+      console.error("  Verifica a ligacao e tenta de novo.\n");
+      continue;
+    }
+  }
+}
+
 async function cmdInit(): Promise<void> {
   const rl = readline.createInterface({ input, output });
   try {
@@ -30,47 +72,11 @@ async function cmdInit(): Promise<void> {
 
     console.log("OpenSync Ubuntu — sincroniza qualquer pasta com um vault OpenSync");
     console.log("──────────────────────────────────────────────────────────────────\n");
+    console.log("  Nao tem conta? Crie uma em: https://opensync.space/login");
 
-    // ── Passo 1: Email ────────────────────────────────────────────────────────
-    console.log("  Nao tem conta? Crie uma em: https://opensync.space/login\n");
-    const email = await ask(rl, "E-mail da conta OpenSync");
-    if (!email || !email.includes("@")) {
-      console.error("Erro: e-mail invalido.");
-      process.exit(1);
-    }
+    const { uskToken } = await promptUskTokenUntilValid(rl, API_URL);
 
-    // ── Passo 2: Token do workspace (usk_...) ─────────────────────────────────
-    console.log("\n  Nao tem um token? Gere em:");
-    console.log("  https://opensync.space/settings?section=access-tokens\n");
-    const uskToken = await ask(rl, "Token de acesso (usk_...)");
-    if (!uskToken.startsWith("usk_")) {
-      console.error("Erro: token invalido. Deve comecar com usk_");
-      process.exit(1);
-    }
-
-    // ── Passo 3: Autenticar ───────────────────────────────────────────────────
-    console.log("\nAutenticando...");
-    let confirmedEmail: string;
-    try {
-      const me = await api.fetchMe(API_URL, uskToken);
-      confirmedEmail = me.email;
-      if (confirmedEmail.toLowerCase() !== email.toLowerCase()) {
-        console.error(`Erro: token pertence a outra conta (${confirmedEmail}).`);
-        process.exit(1);
-      }
-      console.log(`✓ Autenticado como ${confirmedEmail}`);
-    } catch (e: unknown) {
-      const err = e as { status?: number; message?: string };
-      if (err?.status === 401 || err?.status === 403) {
-        console.error("Erro: token invalido ou revogado.");
-        console.error("  Gere um novo em: https://opensync.space/settings?section=access-tokens");
-        process.exit(1);
-      }
-      console.error("Erro ao conectar com a API:", err?.message ?? String(e));
-      process.exit(1);
-    }
-
-    // ── Passo 4: Listar vaults existentes ─────────────────────────────────────
+    // ── Passo 2: Listar vaults existentes ─────────────────────────────────────
     console.log("\nBuscando seus vaults...");
     let vaults: api.UserVault[] = [];
     try {
@@ -135,7 +141,7 @@ async function cmdInit(): Promise<void> {
       }
     }
 
-    // ── Passo 5: Pasta local ──────────────────────────────────────────────────
+    // ── Passo 3: Pasta local ──────────────────────────────────────────────────
     const homeDir = process.env.HOME ?? "/home";
     const syncDir = await ask(
       rl,
@@ -147,7 +153,7 @@ async function cmdInit(): Promise<void> {
       process.exit(1);
     }
 
-    // ── Passo 6: Gerar sync token (osk_...) ──────────────────────────────────
+    // ── Passo 4: Gerar sync token (osk_...) ──────────────────────────────────
     console.log("\nGerando token de sync...");
     let syncToken: string;
     try {
@@ -160,7 +166,7 @@ async function cmdInit(): Promise<void> {
       process.exit(1);
     }
 
-    // ── Passo 7: Salvar config ────────────────────────────────────────────────
+    // ── Passo 5: Salvar config ────────────────────────────────────────────────
     const poll = await ask(rl, "Intervalo de poll em segundos", "20");
 
     const cfg: AgentConfig = {
@@ -181,7 +187,7 @@ async function cmdInit(): Promise<void> {
     console.log("  pasta:   ", syncDir);
     console.log("  config:  ", defaultConfigPath());
 
-    // ── Passo 8: Ativar systemd ───────────────────────────────────────────────
+    // ── Passo 6: Ativar systemd ───────────────────────────────────────────────
     const activate = await ask(rl, "\nAtivar e iniciar servico systemd agora? (s/n)", "s");
     if (activate.toLowerCase() === "s" || activate.toLowerCase() === "sim") {
       spawnSync("loginctl", ["enable-linger", process.env.USER ?? ""], { stdio: "inherit" });
