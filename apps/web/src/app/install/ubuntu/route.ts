@@ -64,7 +64,7 @@ ok "Arquitectura x86_64 — OK"
 
 say ""
 hdr "📦 Pré-requisito: Node.js 20+ (pacote apt 'nodejs')"
-say "O pacote 'opensync-ubuntu' declara Depends no pacote **apt** 'nodejs' >= 20. O dpkg não olha para nvm/fnm/snap no teu PATH."
+say "O pacote 'opensync-ubuntu' declara Depends no pacote apt 'nodejs' >= 20. O dpkg não olha para nvm/fnm/snap no teu PATH."
 maj=\$(apt_nodejs_major)
 path_maj=\$(path_node_major)
 if [[ "\$maj" -lt 20 ]]; then
@@ -72,7 +72,7 @@ if [[ "\$maj" -lt 20 ]]; then
   if [[ "\$path_maj" -ge 20 ]]; then
     say ""
     say "\${C}ℹ️  O teu 'node' no terminal já é v\${path_maj}+ (muito provavelmente nvm, fnm ou binário fora do apt).\${N}"
-    say "   Mesmo assim o **dpkg** só aceita o .deb se o pacote **apt** 'nodejs' for >= 20."
+    say "   Mesmo assim o dpkg só aceita o .deb se o pacote apt 'nodejs' for >= 20."
     say "   Isto não remove o teu nvm: o apt instala/atualiza o pacote do sistema em paralelo."
     say ""
   fi
@@ -81,7 +81,7 @@ if [[ "\$maj" -lt 20 ]]; then
   say "     \${C}curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -\${N}"
   say "     \${C}sudo apt-get install -y nodejs\${N}"
   say ""
-  say "  \${B}2)\${N} Confirma o **apt**, não só \${C}node -v\${N}:"
+  say "  \${B}2)\${N} Confirma o apt, não só \${C}node -v\${N}:"
   say "     \${C}apt-cache policy nodejs\${N}  (versão instalada / candidata deve ser 20+)"
   say ""
   say "  \${B}3)\${N} Volta a correr:"
@@ -124,26 +124,44 @@ say ""
 say "\${G}\${B}🎉 Pacote opensync-ubuntu instalado com sucesso!\${N}"
 say ""
 
-hdr "🔑 Próximos passos"
-say "  \${B}1)\${N} Gera um \${M}token de workspace\${N} (prefixo usk_...) no painel:"
-say "     \${C}\${OPENSYNC_WEB_ORIGIN}/settings?section=access-tokens\${N}"
-say ""
-say "  \${B}2)\${N} Daqui a momentos abrimos o assistente \${C}opensync-ubuntu init\${N}:"
-say "     pede \${M}e-mail\${N}, \${M}token\${N}, \${M}pasta local\${N} e \${M}vault\${N}."
-say ""
-say "  \${B}3)\${N} Usa um \${Y}terminal interactivo\${N} (não colas teclas de seta no meio do script)."
-say ""
-
-warn "A abrir o assistente… (se ficar preso, corre manualmente: opensync-ubuntu init)"
-say ""
-
-# curl | bash liga o stdin ao pipe; o wizard interactivo precisa do /dev/tty
+# curl | bash liga o stdin ao pipe; read/init precisam do /dev/tty
 if [[ -r /dev/tty ]]; then
   exec 0</dev/tty
 else
-  warn "Sem /dev/tty — corre manualmente: \${C}opensync-ubuntu init\${N}"
+  warn "Sem /dev/tty — exporte OPENSYNC_WORKSPACE_TOKEN=usk_... e corre: \${C}opensync-ubuntu init\${N}"
   exit 0
 fi
+
+hdr "🔑 Token de workspace (usk_...)"
+say "Gera o token no painel (fica à espera até colares e carregares Enter)."
+say "\${C}\${OPENSYNC_WEB_ORIGIN}/settings?section=access-tokens\${N}"
+say ""
+say "\${D}O assistente opensync-ubuntu init usa esta variável e continua com pasta e vault.\${N}"
+say ""
+
+while true; do
+  say "\${Y}Cole o token usk_ e carregue Enter:\${N}"
+  if ! read -r OPENSYNC_WORKSPACE_TOKEN; then
+    err "Leitura cancelada."
+    exit 1
+  fi
+  OPENSYNC_WORKSPACE_TOKEN=\$(printf '%s' "\$OPENSYNC_WORKSPACE_TOKEN" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  export OPENSYNC_WORKSPACE_TOKEN
+  if [[ -z "\$OPENSYNC_WORKSPACE_TOKEN" ]]; then
+    say "\${D}A aguardar… gera o token no painel e cola aqui.\${N}"
+    continue
+  fi
+  if [[ "\$OPENSYNC_WORKSPACE_TOKEN" != usk_* ]]; then
+    warn "O token tem de comecar com usk_. Tenta de novo."
+    continue
+  fi
+  break
+done
+
+say ""
+ok "Token recebido. A abrir o assistente (vault, pasta, systemd)…"
+say ""
+
 opensync-ubuntu init
 `;
 }

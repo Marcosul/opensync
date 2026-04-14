@@ -28,6 +28,36 @@ async function promptUskTokenUntilValid(
   rl: readline.Interface,
   apiUrl: string,
 ): Promise<{ uskToken: string; email: string }> {
+  const readEnvToken = (): string =>
+    (process.env.OPENSYNC_WORKSPACE_TOKEN ?? process.env.OPENSYNC_USK_TOKEN ?? "").trim();
+
+  let fromEnv = readEnvToken();
+  if (fromEnv) {
+    if (!fromEnv.startsWith("usk_")) {
+      console.error(
+        "  ❌ OPENSYNC_WORKSPACE_TOKEN / OPENSYNC_USK_TOKEN deve comecar com usk_. Ignorando env.\n",
+      );
+      delete process.env.OPENSYNC_WORKSPACE_TOKEN;
+      delete process.env.OPENSYNC_USK_TOKEN;
+    } else {
+      try {
+        console.log("\n  ⏳ A validar token (variavel OPENSYNC_WORKSPACE_TOKEN)…");
+        const me = await api.fetchMe(apiUrl, fromEnv);
+        console.log(`  ✅ Autenticado como ${me.email}\n`);
+        return { uskToken: fromEnv, email: me.email };
+      } catch (e: unknown) {
+        const err = e as { status?: number; message?: string };
+        console.error(
+          "  ❌ Token em OPENSYNC_WORKSPACE_TOKEN invalido ou revogado:",
+          err?.message ?? String(e),
+        );
+        console.error("  A pedir o token de novo no assistente.\n");
+        delete process.env.OPENSYNC_WORKSPACE_TOKEN;
+        delete process.env.OPENSYNC_USK_TOKEN;
+      }
+    }
+  }
+
   console.log("\n  🔑 Passo 1 — token de workspace (usk_...)");
   console.log("  Abre o painel, gera um token e cola aqui quando estiver pronto.");
   console.log("  https://opensync.space/settings?section=access-tokens\n");
