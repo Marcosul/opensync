@@ -124,10 +124,9 @@ say ""
 say "\${G}\${B}🎉 Pacote opensync-ubuntu instalado com sucesso!\${N}"
 say ""
 
-# curl | bash liga o stdin ao pipe; read/init precisam do /dev/tty
-if [[ -r /dev/tty ]]; then
-  exec 0</dev/tty
-else
+# curl | bash: o stdin do bash é o pipe do curl — NÃO uses 'exec 0</dev/tty' no meio do script
+# (o bash pode deixar de ler o resto do script). Lê sempre de </dev/tty> e passa o tty ao init.
+if [[ ! -r /dev/tty ]]; then
   warn "Sem /dev/tty — exporte OPENSYNC_WORKSPACE_TOKEN=usk_... e corre: \${C}opensync-ubuntu init\${N}"
   exit 0
 fi
@@ -141,7 +140,7 @@ say ""
 
 while true; do
   say "\${Y}Cole o token usk_ e carregue Enter:\${N}"
-  if ! read -r OPENSYNC_WORKSPACE_TOKEN; then
+  if ! IFS= read -r OPENSYNC_WORKSPACE_TOKEN < /dev/tty; then
     err "Leitura cancelada."
     exit 1
   fi
@@ -162,7 +161,7 @@ say ""
 ok "Token recebido. A abrir o assistente (vault, pasta, systemd)…"
 say ""
 
-opensync-ubuntu init
+opensync-ubuntu init < /dev/tty
 `;
 }
 
