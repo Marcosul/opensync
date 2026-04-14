@@ -36,10 +36,14 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
     const backend = await backendRequest<{ vaults: BackendVault[] }>("/vaults", user);
     backendVaults = backend.vaults;
   } catch (err) {
-    console.error(
-      "\x1b[33m⚠️ [vault-list]\x1b[0m \x1b[31mBackend falhou — seguindo só com dados locais\x1b[0m",
-      err instanceof Error ? err.message : err,
-    );
+    // Não usar console.error/warn aqui por defeito: o Next (Turbopack) pode mostrar isso como
+    // overlay no browser. Falha de fetch é esperada se o Nest não estiver a correr.
+    if (process.env.OPENSYNC_DEBUG_VAULT_LIST === "1") {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.info(
+        `[vault-list] Backend indisponível (${detail}). Perfil Supabase apenas. Arranca a API (pnpm dev:api) para listar vaults do servidor.`,
+      );
+    }
   }
 
   const o =

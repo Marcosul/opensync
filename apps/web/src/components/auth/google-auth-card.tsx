@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser-client";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 
 type GoogleAuthCardProps = {
   title: string;
@@ -43,6 +44,33 @@ export function GoogleAuthCard({
     } finally {
       setIsLoading(false);
     }
+  }
+
+  if (!isSupabaseConfigured()) {
+    return (
+      <section className="w-full max-w-md rounded-2xl border border-destructive/30 bg-card p-6 shadow-sm sm:p-8">
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          O projeto precisa das variaveis publicas do Supabase para o login. Copia{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+            apps/web/.env.example
+          </code>{" "}
+          para{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">apps/web/.env</code> e
+          preenche{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+            NEXT_PUBLIC_SUPABASE_URL
+          </code>{" "}
+          e{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+            NEXT_PUBLIC_SUPABASE_ANON_KEY
+          </code>{" "}
+          (mesmo projeto em{" "}
+          <span className="whitespace-nowrap">dashboard.supabase.com</span> &gt; Settings &gt; API).
+          Reinicia o servidor de desenvolvimento depois de gravar o ficheiro.
+        </p>
+      </section>
+    );
   }
 
   return (

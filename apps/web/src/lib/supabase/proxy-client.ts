@@ -1,10 +1,18 @@
 import { createServerClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getSupabaseEnv } from "@/lib/supabase/env";
+import { getSupabaseEnvOrNull } from "@/lib/supabase/env";
 
-export function createSupabaseProxyClient(request: NextRequest) {
-  const { url, anonKey } = getSupabaseEnv();
+export function createSupabaseProxyClient(request: NextRequest): {
+  supabase: SupabaseClient;
+  response: NextResponse;
+} | null {
+  const env = getSupabaseEnvOrNull();
+  if (!env) {
+    return null;
+  }
+  const { url, anonKey } = env;
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(url, anonKey, {

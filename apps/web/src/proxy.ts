@@ -36,7 +36,15 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const { supabase, response } = createSupabaseProxyClient(request);
+  const proxyClient = createSupabaseProxyClient(request);
+  if (!proxyClient) {
+    if (isPrivatePath(pathname)) {
+      return NextResponse.redirect(new URL("/sign-in", request.url));
+    }
+    return NextResponse.next();
+  }
+
+  const { supabase, response } = proxyClient;
   const {
     data: { user },
   } = await supabase.auth.getUser();

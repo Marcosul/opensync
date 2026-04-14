@@ -13,6 +13,9 @@ export type AgentConfig = {
 
 const DEFAULT_IGNORE = [".git", "node_modules", ".cache", ".DS_Store", "*.tmp", "*.swp"];
 
+/** Intervalo entre polls remotos (segundos) quando não definido em config.json. */
+export const DEFAULT_POLL_INTERVAL_SECONDS = 30;
+
 export function configDir(): string {
   return path.join(os.homedir(), ".config", "opensync");
 }
@@ -42,7 +45,7 @@ export function loadConfig(): AgentConfig {
     apiUrl: raw.apiUrl.replace(/\/+$/, ""),
     vaultId: raw.vaultId.trim(),
     syncDir: path.resolve(raw.syncDir.trim()),
-    pollIntervalSeconds: Math.max(5, raw.pollIntervalSeconds ?? 20),
+    pollIntervalSeconds: Math.max(5, raw.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS),
     ignore: Array.isArray(raw.ignore) ? raw.ignore : DEFAULT_IGNORE,
     maxFileSizeBytes: raw.maxFileSizeBytes ?? 1048576,
   };

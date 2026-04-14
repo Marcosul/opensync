@@ -12,6 +12,7 @@ import {
   defaultConfigPath,
   tokenPath,
   sqlitePath,
+  DEFAULT_POLL_INTERVAL_SECONDS,
 } from "./config";
 import { runAgent } from "./engine";
 import * as api from "./api";
@@ -197,13 +198,11 @@ async function cmdInit(): Promise<void> {
     }
 
     // ── Passo 5: Salvar config ────────────────────────────────────────────────
-    const poll = await ask(rl, "Intervalo de poll em segundos", "20");
-
     const cfg: AgentConfig = {
       apiUrl: API_URL,
       vaultId,
       syncDir,
-      pollIntervalSeconds: Math.max(5, parseInt(poll, 10) || 20),
+      pollIntervalSeconds: Math.max(5, DEFAULT_POLL_INTERVAL_SECONDS),
       ignore: [".git", "node_modules", ".cache", ".DS_Store", "*.tmp", "*.swp"],
       maxFileSizeBytes: 1048576,
     };
@@ -217,31 +216,28 @@ async function cmdInit(): Promise<void> {
     console.log("  pasta:   ", syncDir);
     console.log("  config:  ", defaultConfigPath());
 
-    // ── Passo 6: Ativar systemd ───────────────────────────────────────────────
-    const activate = await ask(rl, "\nAtivar e iniciar servico systemd agora? (s/n)", "s");
-    if (activate.toLowerCase() === "s" || activate.toLowerCase() === "sim") {
-      spawnSync("loginctl", ["enable-linger", process.env.USER ?? ""], { stdio: "inherit" });
-      spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
-      spawnSync("systemctl", ["--user", "enable", "opensync-ubuntu"], { stdio: "inherit" });
-      const start = spawnSync("systemctl", ["--user", "start", "opensync-ubuntu"], { stdio: "inherit" });
+    // ── Passo 6: Ativar systemd (sempre por defeito) ────────────────────────────
+    console.log("\nA activar e iniciar o servico systemd (utilizador)…");
+    spawnSync("loginctl", ["enable-linger", process.env.USER ?? ""], { stdio: "inherit" });
+    spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
+    spawnSync("systemctl", ["--user", "enable", "opensync-ubuntu"], { stdio: "inherit" });
+    const start = spawnSync("systemctl", ["--user", "start", "opensync-ubuntu"], { stdio: "inherit" });
 
-      if (start.status === 0) {
-        console.log("\n✓ Servico opensync-ubuntu iniciado e habilitado no boot.");
-        console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
-        console.log("  Status: opensync-ubuntu status");
-      } else {
-        console.log("\nNao foi possivel iniciar o servico. Comandos manuais:");
-        console.log("  loginctl enable-linger $USER");
-        console.log("  systemctl --user daemon-reload");
-        console.log("  systemctl --user enable opensync-ubuntu");
-        console.log("  systemctl --user start opensync-ubuntu");
-      }
+    if (start.status === 0) {
+      console.log("\n✓ Servico opensync-ubuntu iniciado e habilitado no boot.");
+      console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
+      console.log("  Status: opensync-ubuntu status");
     } else {
-      console.log("\nPara iniciar manualmente:");
-      console.log("  opensync-ubuntu run");
-      console.log("Ou como servico em segundo plano:");
-      console.log("  systemctl --user enable --now opensync-ubuntu");
+      console.log("\nNao foi possivel iniciar o servico. Comandos manuais:");
+      console.log("  loginctl enable-linger $USER");
+      console.log("  systemctl --user daemon-reload");
+      console.log("  systemctl --user enable opensync-ubuntu");
+      console.log("  systemctl --user start opensync-ubuntu");
     }
+
+    console.log("\n──────────────────────────────────────────────────────────────────");
+    console.log("  ✅ Instalado com sucesso! — OpenSync Ubuntu esta pronto a sincronizar.");
+    console.log("──────────────────────────────────────────────────────────────────\n");
   } finally {
     rl.close();
   }
