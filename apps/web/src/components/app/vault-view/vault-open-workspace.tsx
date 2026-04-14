@@ -208,6 +208,8 @@ export function VaultOpenWorkspace({
   const lastBlobFetchRef = useRef<{ tab: string; commit: string | null } | null>(null);
   /** Commit (12 chars) dos blobs lazy já alinhados com `noteContents` — evita refetch ao trocar de separador. */
   const lazyGitBlobsSnapshotCommitRef = useRef<string | null>(null);
+  /** Último commit com o qual `mergeLazyGitNoteContentsAfterRemoteTree` foi aplicado (evict só quando muda). */
+  const lastLazyGitTreeCommitShortRef = useRef<string | null>(null);
 
   const activeVaultMetaRef = useRef(activeVaultMeta);
   activeVaultMetaRef.current = activeVaultMeta;
@@ -246,6 +248,9 @@ export function VaultOpenWorkspace({
         if (allowed.size === 0) {
           allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
         }
+        const evictRemoteCachedBodies =
+          lastLazyGitTreeCommitShortRef.current !== null &&
+          short !== lastLazyGitTreeCommitShortRef.current;
         setLastGiteaCommitHash(short);
         setTreeRoot(next.tree);
         setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
@@ -256,10 +261,12 @@ export function VaultOpenWorkspace({
             remotePaths,
             allowed,
             lazyGitDirtyDocIdsRef.current,
+            evictRemoteCachedBodies,
           );
           noteContentsRef.current = merged;
           return merged;
         });
+        lastLazyGitTreeCommitShortRef.current = short;
         lastBlobFetchRef.current = null;
         lazyGitBlobsSnapshotCommitRef.current = null;
         lazyGitDirtyDocIdsRef.current.clear();
@@ -369,6 +376,9 @@ export function VaultOpenWorkspace({
           if (allowed.size === 0) {
             allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
           }
+          const evictRemoteCachedBodies =
+            lastLazyGitTreeCommitShortRef.current !== null &&
+            short !== lastLazyGitTreeCommitShortRef.current;
           setTreeRoot(next.tree);
           setNoteContents((prev) => {
             const merged = mergeLazyGitNoteContentsAfterRemoteTree(
@@ -377,10 +387,12 @@ export function VaultOpenWorkspace({
               remotePaths,
               allowed,
               lazyGitDirtyDocIdsRef.current,
+              evictRemoteCachedBodies,
             );
             noteContentsRef.current = merged;
             return merged;
           });
+          lastLazyGitTreeCommitShortRef.current = short;
           lastBlobFetchRef.current = null;
           lazyGitBlobsSnapshotCommitRef.current = null;
           setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
@@ -477,6 +489,7 @@ export function VaultOpenWorkspace({
     lazyGitDirtyDocIdsRef.current.clear();
     lastBlobFetchRef.current = null;
     lazyGitBlobsSnapshotCommitRef.current = null;
+    lastLazyGitTreeCommitShortRef.current = null;
     setLastGiteaCommitHash(null);
     setGiteaSyncError(null);
   }, [vaultId, queryClient]);

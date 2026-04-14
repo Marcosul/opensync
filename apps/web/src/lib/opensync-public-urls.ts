@@ -17,6 +17,21 @@ const FALLBACK_APP_ORIGIN = "https://opensync.space";
 /** Caminho do script de instalação Ubuntu servido pelo Next (GET). */
 export const UBUNTU_INSTALL_SCRIPT_PATH = "/install/ubuntu";
 
+/**
+ * Versão do pacote `.deb` em `public/releases/` (alinhado com `apps/opensync-ubuntu/package.json` e `build-deb.sh`).
+ */
+export const UBUNTU_DEB_PACKAGE_VERSION = "0.1.0";
+
+/** Caminho público do `.deb` quando servido pelo próprio site (ficheiro em `apps/web/public/releases/`). */
+export function getDefaultUbuntuDebPathname(): string {
+  return `/releases/opensync-ubuntu_${UBUNTU_DEB_PACKAGE_VERSION}_amd64.deb`;
+}
+
+/** URL HTTPS do `.deb` por defeito (sem `OPENSYNC_UBUNTU_DEB_URL` no servidor). */
+export function getDefaultUbuntuDebUrlForServer(): string {
+  return `${getPublicAppOriginForServer()}${getDefaultUbuntuDebPathname()}`;
+}
+
 export function getPublicApiBaseUrlForClient(): string {
   return normalizePublicApiBaseUrl(process.env.NEXT_PUBLIC_API_URL) || FALLBACK_API_BASE;
 }

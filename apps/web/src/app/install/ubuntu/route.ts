@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  getDefaultUbuntuDebUrlForServer,
+  getPublicAppOriginForServer,
+} from "@/lib/opensync-public-urls";
+
 function isAllowedDebUrl(parsed: URL): boolean {
   if (parsed.protocol === "https:") return true;
   if (process.env.NODE_ENV !== "development") return false;
@@ -13,8 +18,9 @@ function bashSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildInstallScript(debUrl: string): string {
+function buildInstallScript(debUrl: string, webOrigin: string): string {
   const quoted = bashSingleQuoted(debUrl);
+  const quotedOrigin = bashSingleQuoted(webOrigin.replace(/\/+$/, ""));
   return `#!/usr/bin/env bash
 set -euo pipefail
 
@@ -24,6 +30,7 @@ if [[ "$arch" != "x86_64" ]]; then
   exit 1
 fi
 
+OPENSYNC_WEB_ORIGIN=${quotedOrigin}
 DEB_URL=${quoted}
 
 tmpdir="$(mktemp -d)"
@@ -40,7 +47,7 @@ fi
 echo ""
 echo "Instalação do pacote concluída."
 echo "A seguir: assistente opensync-ubuntu init (e-mail, token usk_..., pasta, vault)."
-echo "Token de workspace: https://opensync.space/settings?section=access-tokens"
+echo "Token de workspace: \${OPENSYNC_WEB_ORIGIN}/settings?section=access-tokens"
 echo ""
 
 # curl | bash liga o stdin ao pipe; o wizard interativo precisa do terminal.
@@ -56,13 +63,8 @@ opensync-ubuntu init
  * Uso: curl -fsSL "https://opensync.space/install/ubuntu" | bash
  */
 export async function GET() {
-  const raw = (process.env.OPENSYNC_UBUNTU_DEB_URL ?? "").trim();
-  if (!raw) {
-    return new NextResponse(
-      "OpenSync: instalador indisponível — OPENSYNC_UBUNTU_DEB_URL não está definido no servidor.\n",
-      { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } },
-    );
-  }
+  const raw =
+    (process.env.OPENSYNC_UBUNTU_DEB_URL ?? "").trim() || getDefaultUbuntuDebUrlForServer();
 
   let parsed: URL;
   try {
@@ -80,7 +82,7 @@ export async function GET() {
     );
   }
 
-  const body = buildInstallScript(parsed.toString());
+  const body = buildInstallScript(parsed.toString(), getPublicAppOriginForServer());
 
   return new NextResponse(body, {
     status: 200,
