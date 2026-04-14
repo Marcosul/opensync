@@ -40,6 +40,12 @@ apt_nodejs_major() {
   if [[ "\$ver" =~ ^([0-9]+) ]]; then echo "\${BASH_REMATCH[1]}"; else echo 0; fi
 }
 
+# Primeira componente de versão do 'node' no PATH (nvm/fnm/etc.) — não satisfaz o dpkg sozinha
+path_node_major() {
+  command -v node >/dev/null 2>&1 || { echo 0; return; }
+  node -p 'parseInt(process.version.slice(1).split(".")[0],10)' 2>/dev/null || echo 0
+}
+
 OPENSYNC_WEB_ORIGIN=${quotedOrigin}
 DEB_URL=${quoted}
 
@@ -58,22 +64,30 @@ ok "Arquitectura x86_64 — OK"
 
 say ""
 hdr "📦 Pré-requisito: Node.js 20+ (pacote apt 'nodejs')"
-say "O pacote 'opensync-ubuntu' exige 'nodejs' >= 20 instalado via APT (dpkg não usa nvm/fnm)."
+say "O pacote 'opensync-ubuntu' declara Depends no pacote **apt** 'nodejs' >= 20. O dpkg não olha para nvm/fnm/snap no teu PATH."
 maj=\$(apt_nodejs_major)
+path_maj=\$(path_node_major)
 if [[ "\$maj" -lt 20 ]]; then
-  warn "Encontrado: pacote apt 'nodejs' com versão principal \${maj:-0} (precisa >= 20)."
-  say ""
+  warn "Pacote apt 'nodejs': série principal \${maj:-0} (precisa >= 20)."
+  if [[ "\$path_maj" -ge 20 ]]; then
+    say ""
+    say "\${C}ℹ️  O teu 'node' no terminal já é v\${path_maj}+ (muito provavelmente nvm, fnm ou binário fora do apt).\${N}"
+    say "   Mesmo assim o **dpkg** só aceita o .deb se o pacote **apt** 'nodejs' for >= 20."
+    say "   Isto não remove o teu nvm: o apt instala/atualiza o pacote do sistema em paralelo."
+    say ""
+  fi
   say "\${M}O que fazer:\${N}"
-  say "  \${B}1)\${N} Instalar Node 20 LTS (exemplo com NodeSource — Ubuntu/Debian):"
+  say "  \${B}1)\${N} Subir o pacote apt 'nodejs' para 20+ (ex.: NodeSource):"
   say "     \${C}curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -\${N}"
   say "     \${C}sudo apt-get install -y nodejs\${N}"
   say ""
-  say "  \${B}2)\${N} Confirma: \${C}node -v\${N} → v20 ou superior."
+  say "  \${B}2)\${N} Confirma o **apt**, não só \${C}node -v\${N}:"
+  say "     \${C}apt-cache policy nodejs\${N}  (versão instalada / candidata deve ser 20+)"
   say ""
-  say "  \${B}3)\${N} Volta a correr este instalador:"
+  say "  \${B}3)\${N} Volta a correr:"
   say "     \${C}curl -fsSL \${OPENSYNC_WEB_ORIGIN}/install/ubuntu | bash\${N}"
   say ""
-  err "Instalação cancelada até o Node 20+ estar no sistema (apt)."
+  err "Instalação cancelada até o pacote apt 'nodejs' satisfazer o dpkg (>= 20)."
   exit 1
 fi
 ok "Pacote apt nodejs satisfaz (principal >= 20)."
