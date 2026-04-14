@@ -27,9 +27,37 @@ export function getDefaultUbuntuDebPathname(): string {
   return `/releases/opensync-ubuntu_${UBUNTU_DEB_PACKAGE_VERSION}_amd64.deb`;
 }
 
-/** URL HTTPS do `.deb` por defeito (sem `OPENSYNC_UBUNTU_DEB_URL` no servidor). */
+/** URL HTTPS do `.deb` por defeito (ficheiro em `public/releases/` no mesmo host da app). */
 export function getDefaultUbuntuDebUrlForServer(): string {
   return `${getPublicAppOriginForServer()}${getDefaultUbuntuDebPathname()}`;
+}
+
+/**
+ * URL pública do `.deb` no Supabase Storage (bucket `installer`, object público).
+ * Usa `NEXT_PUBLIC_SUPABASE_URL` — já presente no deploy típico; evita 404 em `/releases/...` sem ficheiro.
+ */
+export function getSupabasePublicInstallerDebUrlForServer(): string {
+  const supabase = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  if (!supabase) return "";
+  try {
+    const u = new URL(supabase);
+    if (u.protocol !== "https:") return "";
+  } catch {
+    return "";
+  }
+  const objectPath = `/storage/v1/object/public/installer/opensync-ubuntu_${UBUNTU_DEB_PACKAGE_VERSION}_amd64.deb`;
+  return `${supabase}${objectPath}`;
+}
+
+/**
+ * Ordem: `OPENSYNC_UBUNTU_DEB_URL` → URL derivada do Supabase (`installer/`) → mesmo host `/releases/...`.
+ */
+export function resolveUbuntuDebDownloadUrlForServer(): string {
+  const explicit = (process.env.OPENSYNC_UBUNTU_DEB_URL ?? "").trim();
+  if (explicit) return explicit;
+  const fromSupabase = getSupabasePublicInstallerDebUrlForServer();
+  if (fromSupabase) return fromSupabase;
+  return getDefaultUbuntuDebUrlForServer();
 }
 
 export function getPublicApiBaseUrlForClient(): string {

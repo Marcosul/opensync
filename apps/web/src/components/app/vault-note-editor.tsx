@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, FileCode2 } from "lucide-react";
+import { flushSync } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -441,6 +442,13 @@ export function VaultNoteEditor({
   const [headingEditSession, setHeadingEditSession] = useState(false);
   const skipBlurCommitRef = useRef(false);
   const draftRef = useRef(draft);
+  /** Garante `replaceSegment` com o Markdown mais recente (ex.: após `flushSync` + `onChange`). */
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  /** Após Enter no título: focar o corpo no início da linha, não no fim. */
+  const focusCaretToStartRef = useRef(false);
+  /** Evita reabrir edição logo após Escape numa nota vazia. */
+  const skipAutoOpenEmptyRef = useRef(false);
 
   const segments = useMemo(() => extractMarkdownSegments(value), [value]);
 
@@ -454,7 +462,12 @@ export function VaultNoteEditor({
       const el = textareaRef.current;
       if (el) {
         el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
+        if (focusCaretToStartRef.current) {
+          focusCaretToStartRef.current = false;
+          el.setSelectionRange(0, 0);
+        } else {
+          el.setSelectionRange(el.value.length, el.value.length);
+        }
       }
     });
     return () => cancelAnimationFrame(id);
@@ -497,28 +510,30 @@ export function VaultNoteEditor({
 
   const beginEditBlock = useCallback(
     (start: number, end: number, source: string) => {
+      const v = valueRef.current;
       const normalized = normalizeNewlineBeforeHeadings(source);
       if (shouldAutoSplitBlockDraft(normalized)) {
         setHeadingEditSession(false);
-        const merged = replaceSegment(value, start, end, normalized);
-        if (merged !== value) onChange(merged);
+        const merged = replaceSegment(v, start, end, normalized);
+        if (merged !== v) onChange(merged);
         return;
       }
       setHeadingEditSession(parseSingleLineHeading(normalized) !== null);
       setDraft(normalized);
       setEditingBlock({ start, end });
     },
-    [onChange, value]
+    [onChange]
   );
 
   const commitBlock = useCallback(() => {
     if (!editingBlock) return;
     setHeadingEditSession(false);
     const normalized = normalizeNewlineBeforeHeadings(draft);
-    const next = replaceSegment(value, editingBlock.start, editingBlock.end, normalized);
-    if (next !== value) onChange(next);
+    const v = valueRef.current;
+    const next = replaceSegment(v, editingBlock.start, editingBlock.end, normalized);
+    if (next !== v) onChange(next);
     setEditingBlock(null);
-  }, [draft, editingBlock, onChange, value]);
+  }, [draft, editingBlock, onChange]);
 
   const handleDraftChange = useCallback(
     (nextDraft: string) => {
@@ -527,11 +542,12 @@ export function VaultNoteEditor({
       if (!editingBlock) return;
       if (!shouldAutoSplitBlockDraft(normalized)) return;
       setHeadingEditSession(false);
-      const merged = replaceSegment(value, editingBlock.start, editingBlock.end, normalized);
-      if (merged !== value) onChange(merged);
+      const v = valueRef.current;
+      const merged = replaceSegment(v, editingBlock.start, editingBlock.end, normalized);
+      if (merged !== v) onChange(merged);
       setEditingBlock(null);
     },
-    [editingBlock, onChange, value]
+    [editingBlock, onChange]
   );
 
   const onBlockBlur = useCallback(() => {
@@ -547,6 +563,7 @@ export function VaultNoteEditor({
       if (e.key === "Escape") {
         e.preventDefault();
         skipBlurCommitRef.current = true;
+        if (valueRef.current.trim() === "") skipAutoOpenEmptyRef.current = true;
         setHeadingEditSession(false);
         setEditingBlock(null);
       }
@@ -563,15 +580,65 @@ export function VaultNoteEditor({
       if (e.key === "Escape") {
         e.preventDefault();
         skipBlurCommitRef.current = true;
+        if (valueRef.current.trim() === "") skipAutoOpenEmptyRef.current = true;
         setHeadingEditSession(false);
         setEditingBlock(null);
       } else if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        commitBlock();
+        if (!headingEditSession || !editingBlock) {
+          commitBlock();
+          return;
+        }
+        const ta = e.currentTarget;
+        const pos = ta.selectionStart;
+        const nextDraft = normalizeNewlineBeforeHeadings(
+          draft.slice(0, pos) + "\n\n" + draft.slice(pos),
+        );
+        const v = valueRef.current;
+        const merged = replaceSegment(v, editingBlock.start, editingBlock.end, nextDraft);
+        if (merged !== v) {
+          flushSync(() => {
+            onChange(merged);
+          });
+          valueRef.current = merged;
+        }
+        const blocks = extractMarkdownSegments(merged).filter(
+          (s): s is Extract<MarkdownSegment, { kind: "block" }> => s.kind === "block",
+        );
+        if (blocks.length >= 2) {
+          const body = blocks[1];
+          focusCaretToStartRef.current = true;
+          setHeadingEditSession(parseSingleLineHeading(body.source) !== null);
+          setDraft(body.source);
+          setEditingBlock({ start: body.start, end: body.end });
+        } else {
+          setHeadingEditSession(false);
+          setEditingBlock(null);
+        }
       }
     },
-    [commitBlock]
+    [commitBlock, draft, editingBlock, headingEditSession, onChange]
   );
+
+  useEffect(() => {
+    if (value.trim() !== "") skipAutoOpenEmptyRef.current = false;
+  }, [value]);
+
+  useEffect(() => {
+    skipAutoOpenEmptyRef.current = false;
+  }, [docId]);
+
+  useEffect(() => {
+    if (useTextareaLayout || plainTextDocument) return;
+    if (value.trim() !== "") return;
+    if (editingBlock !== null) return;
+    if (skipAutoOpenEmptyRef.current) return;
+    const segs = extractMarkdownSegments(value);
+    if (segs.length !== 1) return;
+    const s0 = segs[0];
+    if (!s0 || s0.kind !== "block") return;
+    beginEditBlock(s0.start, s0.end, s0.source);
+  }, [beginEditBlock, docId, editingBlock, plainTextDocument, useTextareaLayout, value]);
 
   const words = useMemo(() => countWords(value), [value]);
   const chars = value.length;
@@ -738,12 +805,9 @@ export function VaultNoteEditor({
                         "flex min-h-[min(40vh,16rem)] flex-col justify-center py-8",
                       "cursor-text outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-primary/35"
                     )}
+                    aria-label={blockLooksEmpty ? "Editar nota" : undefined}
                   >
-                    {blockLooksEmpty ? (
-                      <p className="pointer-events-none select-none text-base leading-7 text-muted-foreground/70">
-                        Clique para escrever nesta nota.
-                      </p>
-                    ) : (
+                    {blockLooksEmpty ? null : (
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={components}

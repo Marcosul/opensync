@@ -595,6 +595,8 @@ export function VaultOpenWorkspace({
     enabled: lazyActiveBlobQueryEnabled,
     staleTime: LAZY_GIT_BLOB_STALE_MS,
     gcTime: LAZY_GIT_BLOB_GC_MS,
+    /** Evita o ecrã "A carregar…" em ficheiros vazios: o editor mostra-se já com texto vazio até o blob chegar. */
+    placeholderData: "",
   });
 
   useEffect(() => {
@@ -1726,6 +1728,9 @@ export function VaultOpenWorkspace({
             docId={activeTabId}
             value={
               noteContents[activeTabId] ??
+              (lazyActiveBlobQueryEnabled
+                ? lazyBlobQuery.data
+                : undefined) ??
               (activeDoc ? mockDocToMarkdown(activeDoc) : `# ${activeTabId}\n\n`)
             }
             onChange={(next) => {
