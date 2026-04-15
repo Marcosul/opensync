@@ -1,2 +1,0 @@
-#!/bin/sh
-exec node /usr/lib/opensync-ubuntu/dist/cli.js "$@"

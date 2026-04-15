@@ -25,6 +25,47 @@ import { cn } from "@/lib/utils";
 type D3Node = GraphNode & { x?: number; y?: number; vx?: number; vy?: number; index?: number };
 type D3Link = { source: string | D3Node; target: string | D3Node; type: GraphEdge["type"] };
 
+const NODE_BOUNDS_PAD = 14;
+const VIEW_PAD = 40;
+/** Mínimo baixo o suficiente para vaults grandes caberem na vista ao ajustar zoom. */
+const ZOOM_MIN = 0.02;
+const ZOOM_MAX = 8;
+
+/** Encaixa as posições dos nós (e portanto as linhas entre eles) na área visível do SVG. */
+function fitNodesTransform(nodes: D3Node[], viewW: number, viewH: number) {
+  if (nodes.length === 0) return zoomIdentity;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    const x = n.x ?? viewW / 2;
+    const y = n.y ?? viewH / 2;
+    const r = n.type === "markdown" ? 7 : 5;
+    const labelPad = 10 + Math.min(n.label.length, 22) * 5.5;
+    minX = Math.min(minX, x - r - NODE_BOUNDS_PAD);
+    maxX = Math.max(maxX, x + r + labelPad + NODE_BOUNDS_PAD);
+    minY = Math.min(minY, y - r - NODE_BOUNDS_PAD);
+    maxY = Math.max(maxY, y + r + NODE_BOUNDS_PAD);
+  }
+
+  const bw = Math.max(maxX - minX, 1);
+  const bh = Math.max(maxY - minY, 1);
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+
+  const innerW = Math.max(viewW - VIEW_PAD * 2, 1);
+  const innerH = Math.max(viewH - VIEW_PAD * 2, 1);
+  const k = Math.min(innerW / bw, innerH / bh, ZOOM_MAX);
+  const kClamped = Math.max(ZOOM_MIN, k);
+
+  const tx = viewW / 2 - kClamped * midX;
+  const ty = viewH / 2 - kClamped * midY;
+
+  return zoomIdentity.translate(tx, ty).scale(kClamped);
+}
+
 // ---------- cores ----------
 const COLOR_MD = "#1D9E75";       // teal — brand
 const COLOR_FILE = "#6b7280";     // cinza
@@ -43,13 +84,18 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const zoomRef = useRef<any>(null);
+  /** Último layout (simulação) para o botão «ajustar vista». */
+  const graphLayoutRef = useRef<{ nodes: D3Node[]; w: number; h: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
 
-  const resetZoom = useCallback(() => {
+  const fitGraphInView = useCallback(() => {
     if (!svgRef.current || !zoomRef.current) return;
+    const layout = graphLayoutRef.current;
+    if (!layout?.nodes.length) return;
+    const t = fitNodesTransform(layout.nodes, layout.w, layout.h);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (select(svgRef.current) as any).transition().duration(300).call(zoomRef.current.transform, zoomIdentity);
+    (select(svgRef.current) as any).transition().duration(320).call(zoomRef.current.transform, t);
   }, []);
 
   const zoomBy = useCallback((factor: number) => {
@@ -111,7 +157,7 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
     // ---- zoom ----
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const zoomBehavior = (zoom as any)()
-      .scaleExtent([0.1, 8])
+      .scaleExtent([ZOOM_MIN, ZOOM_MAX])
       .on("zoom", (event: { transform: { toString(): string } }) => {
         g.attr("transform", event.transform.toString());
       });
@@ -189,13 +235,21 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
         .attr("y2", (d: D3Link) => (d.target as D3Node).y ?? 0);
 
       node.attr("transform", (d: D3Node) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+
+      graphLayoutRef.current = { nodes, w, h };
+    });
+
+    sim.on("end", () => {
+      fitGraphInView();
     });
 
     return () => {
+      graphLayoutRef.current = null;
+      sim.on("tick", null);
+      sim.on("end", null);
       sim.stop();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, fitGraphInView]);
 
   // re-highlight quando selected muda
   useEffect(() => {
@@ -248,9 +302,9 @@ export function VaultGraphView({ data, onNodeClick, className }: Props) {
         </button>
         <button
           type="button"
-          onClick={resetZoom}
+          onClick={fitGraphInView}
           className="flex size-7 items-center justify-center rounded-md border border-border bg-card/80 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-card hover:text-foreground"
-          title="Resetar zoom"
+          title="Ajustar zoom para mostrar todo o grafo (nós e ligações)"
         >
           <Maximize2 className="size-3.5" />
         </button>

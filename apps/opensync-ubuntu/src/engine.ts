@@ -110,6 +110,8 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
 
   // Arquivos que estamos escrevendo via download remoto — o watcher ignora esses.
   const remoteWriting = new Set<string>();
+  /** Ficheiro com alteração local ainda não enviada ao servidor — o poll remoto não sobrescreve até concluir o upload. */
+  const pendingLocalUpload = new Set<string>();
 
   const queue = new Set<string>();
   let processing = false;
@@ -122,7 +124,11 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
         const paths = [...queue];
         queue.clear();
         for (const rel of paths) {
-          await syncLocalPath(database, cfg, token, rel);
+          try {
+            await syncLocalPath(database, cfg, token, rel);
+          } finally {
+            pendingLocalUpload.delete(rel);
+          }
         }
       }
     } finally {
@@ -135,6 +141,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
   function schedule(rel: string): void {
     if (shouldIgnore(cfg, rel)) return;
     if (remoteWriting.has(rel)) return; // escrita remota em andamento — ignorar
+    pendingLocalUpload.add(rel);
     const prev = debouncers.get(rel);
     if (prev) clearTimeout(prev);
     debouncers.set(
@@ -149,6 +156,54 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
 
   let lastHeartbeatAt = 0;
 
+  /**
+   * Garante ficheiros locais alinhados com o estado actual no servidor (vault_files + backfill Gitea).
+   * Complementa o feed /changes: cobre casos em que o cursor ainda nao recebeu upserts ou o Postgres
+   * foi hidratado via Gitea sem o utilizador ter aberto o vault na web.
+   */
+  async function pullMissingFromRemoteManifest(): Promise<void> {
+    let manifest: { commitHash: string; entries: api.ManifestEntry[] };
+    try {
+      manifest = await api.fetchVaultManifest(cfg, token);
+    } catch (e: unknown) {
+      const err = e as { status?: number };
+      if (err?.status === 401 || err?.status === 403) {
+        console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync init");
+        process.exit(1);
+      }
+      console.error(`${C.yellow}${LOG}${C.reset} ⚠️ manifest pull`, e);
+      return;
+    }
+    let pulled = 0;
+    for (const ent of manifest.entries) {
+      if (pendingLocalUpload.has(ent.path)) continue;
+      const st = db.fileState(database, ent.path);
+      if (st && st.remote_version === ent.version && !st.is_deleted) continue;
+      remoteWriting.add(ent.path);
+      try {
+        const remote = await api.getFileContent(cfg, token, ent.path);
+        const h = db.hashContent(remote.content);
+        const abs = path.join(cfg.syncDir, ent.path);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, remote.content, "utf8");
+        db.upsertFileState(database, ent.path, remote.version, h);
+        pulled++;
+        console.log(LOG, "manifest aplicado:", ent.path, `v${remote.version}`);
+      } catch (e: unknown) {
+        console.error(LOG, "manifest entrada falhou:", ent.path, e);
+      } finally {
+        setTimeout(() => remoteWriting.delete(ent.path), DEBOUNCE_MS + 1000);
+      }
+    }
+    const manTail = BigInt((manifest.commitHash || "0").trim() || "0");
+    const cur = BigInt((db.getRemoteCursor(database) || "0").trim() || "0");
+    const next = cur > manTail ? cur : manTail;
+    db.setMeta(database, "remote_cursor", String(next));
+    if (pulled > 0 && process.env.OPENSYNC_VERBOSE === "1") {
+      console.log(`${C.cyan}${LOG}${C.reset} manifest: ${pulled} ficheiro(s) actualizado(s)${C.reset}`);
+    }
+  }
+
   async function pollRemote(): Promise<void> {
     let cursor = db.getRemoteCursor(database);
     let totalApplied = 0;
@@ -156,7 +211,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
       for (;;) {
         const { changes, next_cursor } = await api.fetchChanges(cfg, token, cursor);
         for (const ch of changes) {
-          await applyRemoteChange(database, cfg, token, ch, remoteWriting);
+          await applyRemoteChange(database, cfg, token, ch, remoteWriting, pendingLocalUpload);
           totalApplied++;
         }
         if (changes.length === 0) break;
@@ -187,6 +242,9 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
 
   // 1. Baixar mudanças remotas primeiro
   await pollRemote();
+
+  // 1b. Alinhar com manifesto servidor (backfill Gitea→Postgres + ficheiros activos)
+  await pullMissingFromRemoteManifest();
 
   // 2. FULL_RECONCILE: enviar arquivos locais existentes ainda não sincronizados
   await fullReconcile(database, cfg, token);
@@ -237,7 +295,9 @@ async function applyRemoteChange(
   token: string,
   ch: api.ChangeRow,
   remoteWriting: Set<string>,
+  pendingLocalUpload: Set<string>,
 ): Promise<void> {
+  if (pendingLocalUpload.has(ch.path)) return;
   const abs = path.join(cfg.syncDir, ch.path);
   const st = db.fileState(database, ch.path);
 

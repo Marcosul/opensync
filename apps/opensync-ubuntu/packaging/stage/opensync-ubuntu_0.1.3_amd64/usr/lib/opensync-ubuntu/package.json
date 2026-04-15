@@ -7,7 +7,6 @@
     "dist"
   ],
   "bin": {
-    "opensync-ubuntu": "./dist/cli.js",
     "opensync": "./dist/cli.js"
   },
   "scripts": {

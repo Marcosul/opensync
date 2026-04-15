@@ -130,6 +130,11 @@ import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-redu
 import type { SidebarMode, TreeSortOrder } from "./explorer-tree-utils";
 import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
 
+/** Deteção de novas revisões no servidor (ex.: OpenSync Ubuntu) sem depender de sync manual na web. */
+const LAZY_VAULT_REMOTE_TAIL_POLL_MS = 5000;
+/** Evita o indicador "a sincronizar" em pushes rápidos (menos piscar na barra). */
+const GITEA_SYNC_UI_SPIN_DELAY_MS = 280;
+
 export type VaultOpenWorkspaceProps = {
   vaultId: string;
   activeVaultMeta: VaultMeta;
@@ -215,7 +220,6 @@ export function VaultOpenWorkspace({
   const [giteaSyncStatus, setGiteaSyncStatus] = useState<
     "idle" | "syncing" | "synced" | "error"
   >("idle");
-  const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
   const [lazyGitQueryEpoch, setLazyGitQueryEpoch] = useState(0);
   /** Cofre Nest+snapshot local (SSH): incrementa só com edições / mutações locais — agenda sync Gitea. */
   const [fullSnapshotDirtyEpoch, setFullSnapshotDirtyEpoch] = useState(0);
@@ -253,6 +257,21 @@ export function VaultOpenWorkspace({
   const vaultIdRef = useRef(vaultId);
   vaultIdRef.current = vaultId;
   const prevVaultIdForBlobQueriesRef = useRef(vaultId);
+
+  /** Referência estável do meta do vault — evita `scheduleGitTreeRefresh` a cada render do pai. */
+  const lazyVaultProfileKey = useMemo(
+    () =>
+      `${activeVaultMeta.id}|${activeVaultMeta.kind}|${activeVaultMeta.remoteSync ?? "git"}|${activeVaultMeta.managedByProfile ? "1" : "0"}`,
+    [
+      activeVaultMeta.id,
+      activeVaultMeta.kind,
+      activeVaultMeta.remoteSync,
+      activeVaultMeta.managedByProfile,
+    ],
+  );
+
+  /** Último `commitHash` da API já reflectido em `lastGiteaCommitHash` (evita polls duplicados). */
+  const remoteTailPollSeenRef = useRef<string | null>(null);
 
   const markLazyGitDirtyDoc = useCallback((docId: string) => {
     if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) {
@@ -293,7 +312,7 @@ export function VaultOpenWorkspace({
         const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
         if (ac.signal.aborted) return;
         const remotePaths = data.entries.map((e) => e.path);
-        const short = data.commitHash.trim().slice(0, 12);
+        const remoteTail = data.commitHash.trim();
         const prevRoot = treeRootRef.current;
         const localPaths = isGitLazyVaultTree(prevRoot)
           ? collectLazyGitRepoRelativePaths(prevRoot)
@@ -310,8 +329,9 @@ export function VaultOpenWorkspace({
         }
         const evictRemoteCachedBodies =
           lastLazyGitTreeCommitShortRef.current !== null &&
-          short !== lastLazyGitTreeCommitShortRef.current;
-        setLastGiteaCommitHash(short);
+          remoteTail !== lastLazyGitTreeCommitShortRef.current;
+        setLastGiteaCommitHash(remoteTail);
+        remoteTailPollSeenRef.current = remoteTail;
         setTreeRoot(next.tree);
         setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
         setNoteContents((prev) => {
@@ -327,7 +347,7 @@ export function VaultOpenWorkspace({
           lazyPersistedNoteContentsRef.current = merged;
           return merged;
         });
-        lastLazyGitTreeCommitShortRef.current = short;
+        lastLazyGitTreeCommitShortRef.current = remoteTail;
         lastBlobFetchRef.current = null;
         lazyGitBlobsSnapshotCommitRef.current = null;
         lazyGitDirtyDocIdsRef.current.clear();
@@ -339,7 +359,7 @@ export function VaultOpenWorkspace({
           uiLatestRef,
           lastBlobFetchRef,
           blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
-          commitShort: short,
+          commitShort: remoteTail,
         });
       } catch {
         /* arvore local mantem-se; commit ja veio do push */
@@ -353,7 +373,10 @@ export function VaultOpenWorkspace({
       syncAbortRef.current?.abort();
       const ac = new AbortController();
       syncAbortRef.current = ac;
-      setGiteaSyncStatus("syncing");
+      let spinUiTimer: ReturnType<typeof setTimeout> | undefined;
+      spinUiTimer = setTimeout(() => {
+        if (!ac.signal.aborted) setGiteaSyncStatus("syncing");
+      }, GITEA_SYNC_UI_SPIN_DELAY_MS);
       setGiteaSyncError(null);
       try {
         const mergedContents = { ...noteContentsRef.current };
@@ -402,8 +425,9 @@ export function VaultOpenWorkspace({
         );
         if (ac.signal.aborted) return;
         setGiteaSyncStatus("synced");
-        const short = commitHash.trim().slice(0, 12);
-        setLastGiteaCommitHash(short);
+        const remoteTail = commitHash.trim();
+        setLastGiteaCommitHash(remoteTail);
+        remoteTailPollSeenRef.current = remoteTail;
         pendingPrefixMigrationsRef.current = [];
         lazyGitDirtyDocIdsRef.current.clear();
         lazyGitTreeDirtyRef.current = false;
@@ -420,6 +444,8 @@ export function VaultOpenWorkspace({
         setGiteaSyncStatus("error");
         setGiteaSyncError(err instanceof Error ? err.message : "Falha ao sincronizar");
         syncDirtyStartAtRef.current = null;
+      } finally {
+        if (spinUiTimer) clearTimeout(spinUiTimer);
       }
     },
     [refreshGitTreeAfterSync, applyPrefixMigrationsToContents],
@@ -435,8 +461,9 @@ export function VaultOpenWorkspace({
         try {
           const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
           if (ac.signal.aborted) return;
-          const short = data.commitHash.trim().slice(0, 12);
-          setLastGiteaCommitHash(short);
+          const remoteTail = data.commitHash.trim();
+          setLastGiteaCommitHash(remoteTail);
+          remoteTailPollSeenRef.current = remoteTail;
           const remotePaths = data.entries.map((e) => e.path);
           const remoteSet = new Set(remotePaths);
           const prevRoot = treeRootRef.current;
@@ -459,7 +486,7 @@ export function VaultOpenWorkspace({
           }
           const evictRemoteCachedBodies =
             lastLazyGitTreeCommitShortRef.current !== null &&
-            short !== lastLazyGitTreeCommitShortRef.current;
+            remoteTail !== lastLazyGitTreeCommitShortRef.current;
           setTreeRoot(next.tree);
           setNoteContents((prev) => {
             const merged = mergeLazyGitNoteContentsAfterRemoteTree(
@@ -474,7 +501,7 @@ export function VaultOpenWorkspace({
             lazyPersistedNoteContentsRef.current = merged;
             return merged;
           });
-          lastLazyGitTreeCommitShortRef.current = short;
+          lastLazyGitTreeCommitShortRef.current = remoteTail;
           lastBlobFetchRef.current = null;
           lazyGitBlobsSnapshotCommitRef.current = null;
           setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
@@ -493,7 +520,7 @@ export function VaultOpenWorkspace({
             uiLatestRef,
             lastBlobFetchRef,
             blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
-            commitShort: short,
+            commitShort: remoteTail,
           });
         } catch {
           /* mantem snapshot local */
@@ -532,7 +559,48 @@ export function VaultOpenWorkspace({
 
   useEffect(() => {
     scheduleGitTreeRefresh(vaultId, activeVaultMeta);
-  }, [vaultId, activeVaultMeta, scheduleGitTreeRefresh]);
+  }, [vaultId, lazyVaultProfileKey, scheduleGitTreeRefresh, activeVaultMeta]);
+
+  useEffect(() => {
+    remoteTailPollSeenRef.current = null;
+  }, [vaultId]);
+
+  useEffect(() => {
+    if (!usesLazyGitRemote(vaultId, activeVaultMeta)) return;
+    let cancelled = false;
+
+    const pollRemoteTail = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (cancelled) return;
+      try {
+        const data = await fetchVaultGitTree(vaultId);
+        if (cancelled) return;
+        const tail = data.commitHash.trim();
+        if (!tail || tail === remoteTailPollSeenRef.current) return;
+        remoteTailPollSeenRef.current = tail;
+        setLastGiteaCommitHash(tail);
+      } catch {
+        /* offline / throttling */
+      }
+    };
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void pollRemoteTail();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    const id = window.setInterval(pollRemoteTail, LAZY_VAULT_REMOTE_TAIL_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [vaultId, lazyVaultProfileKey, activeVaultMeta]);
 
 
 
@@ -741,8 +809,15 @@ export function VaultOpenWorkspace({
 
   const blobCommitKey =
     lastGiteaCommitHash && lastGiteaCommitHash.trim()
-      ? lastGiteaCommitHash.trim().slice(0, 12)
+      ? lastGiteaCommitHash.trim()
       : "pending";
+
+  const noteEditorRemountKey = useMemo(() => {
+    if (!activeTabId) return "";
+    if (!lazyGitRemote) return activeTabId;
+    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return activeTabId;
+    return `${activeTabId}\0${blobCommitKey}`;
+  }, [activeTabId, lazyGitRemote, blobCommitKey, lazyGitQueryEpoch]);
 
   const lazyActiveBlobQueryEnabled =
     Boolean(activeTabId) &&
@@ -777,41 +852,31 @@ export function VaultOpenWorkspace({
     const data = lazyBlobQuery.data;
     setNoteContents((prev) => {
       const cur = prev[activeTabId];
-      /** Só preencher quando ainda não há entrada em `noteContents`. `""` pode ser ficheiro vazio real ou edição do utilizador — nunca substituir por blob do servidor. */
       if (cur === undefined) {
         const next = { ...prev, [activeTabId]: data };
-        lazyPersistedNoteContentsRef.current = { ...lazyPersistedNoteContentsRef.current, [activeTabId]: data };
+        lazyPersistedNoteContentsRef.current = {
+          ...lazyPersistedNoteContentsRef.current,
+          [activeTabId]: data,
+        };
+        return next;
+      }
+      /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
+      if (cur !== data) {
+        const next = { ...prev, [activeTabId]: data };
+        lazyPersistedNoteContentsRef.current = {
+          ...lazyPersistedNoteContentsRef.current,
+          [activeTabId]: data,
+        };
         return next;
       }
       return prev;
     });
-  }, [activeTabId, lazyActiveBlobQueryEnabled, lazyBlobQuery.data, lazyBlobQuery.isFetching]);
-
-  useEffect(() => {
-    if (
-      !activeTabId ||
-      !lazyGitRemote ||
-      mockMarketingDocBlocksLazyGitBlob(activeTabId) ||
-      activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
-    ) {
-      setBlobLoadError(null);
-      return;
-    }
-    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) {
-      setBlobLoadError(null);
-      return;
-    }
-    if (lazyBlobQuery.isError) {
-      setBlobLoadError("Nao foi possivel carregar o ficheiro.");
-    } else {
-      setBlobLoadError(null);
-    }
   }, [
     activeTabId,
-    vaultId,
-    lazyGitRemote,
-    lazyBlobQuery.isError,
-    lazyGitQueryEpoch,
+    lazyActiveBlobQueryEnabled,
+    lazyBlobQuery.data,
+    lazyBlobQuery.isFetching,
+    blobCommitKey,
   ]);
 
   /** Com `placeholderData: ""` o query deixa de estar `pending` mas o fetch ainda corre — mostrar a carregar em vez do editor vazio com placeholder. */
@@ -824,6 +889,22 @@ export function VaultOpenWorkspace({
     !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
     noteContents[activeTabId] === undefined &&
     (lazyBlobQuery.isPending || lazyBlobQuery.isFetching);
+
+  /**
+   * Usar `error` (e não `isError` sozinho): durante retries o TanStack Query expõe o erro em
+   * `failureReason` e só popula `error` após esgotar tentativas — evita flash de erro entre backoff e retry.
+   */
+  const lazyGitBlobFatalLoadError =
+    activeTabId != null &&
+    lazyGitRemote &&
+    lazyActiveBlobQueryEnabled &&
+    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+    !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
+    !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
+    lazyBlobQuery.error != null &&
+    !lazyBlobQuery.isFetching
+      ? "Nao foi possivel carregar o ficheiro."
+      : null;
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [explorerSidebarWidth, setExplorerSidebarWidth] = useState(
@@ -1068,7 +1149,7 @@ export function VaultOpenWorkspace({
     if (commit == null || commit === "") return;
 
     let cancelled = false;
-    const short = commit.trim().slice(0, 12);
+    const commitKey = commit.trim();
     const priority = [...new Set([activeTabId, ...openTabs].filter(Boolean))] as string[];
     const candidates = priority.filter(
       (id) =>
@@ -1092,7 +1173,7 @@ export function VaultOpenWorkspace({
             if (lazyGitDirtyDocIdsRef.current.has(docId)) return;
             try {
               const content = await queryClient.fetchQuery({
-                queryKey: vaultGitBlobQueryKey(vaultId, docId, short),
+                queryKey: vaultGitBlobQueryKey(vaultId, docId, commitKey),
                 queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, docId, signal),
                 staleTime: LAZY_GIT_BLOB_STALE_MS,
               });
@@ -1104,7 +1185,7 @@ export function VaultOpenWorkspace({
         );
         if (cancelled) return;
         if (Object.keys(updates).length === 0) continue;
-        lazyGitBlobsSnapshotCommitRef.current = short;
+        lazyGitBlobsSnapshotCommitRef.current = commitKey;
         setNoteContents((prev) => {
           const next = { ...prev };
           for (const [k, v] of Object.entries(updates)) {
@@ -1974,10 +2055,10 @@ export function VaultOpenWorkspace({
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
           <div className="min-h-0 flex-1 bg-background" aria-busy="true" />
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
-          blobLoadError &&
+          lazyGitBlobFatalLoadError &&
           noteContents[activeTabId] === undefined ? (
           <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
-            {blobLoadError}
+            {lazyGitBlobFatalLoadError}
           </div>
         ) : isVaultPlainTextDocId(activeTabId) ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1985,11 +2066,7 @@ export function VaultOpenWorkspace({
               key={activeTabId}
               vaultId={vaultId}
               docId={activeTabId}
-              plateEditorMountKey={
-                lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
-                  ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
-                  : undefined
-              }
+              plateEditorMountKey={noteEditorRemountKey || undefined}
               value={
                 noteContents[activeTabId] ??
                 (lazyActiveBlobQueryEnabled
@@ -2021,11 +2098,7 @@ export function VaultOpenWorkspace({
               key={activeTabId}
               vaultId={vaultId}
               docId={activeTabId}
-              plateEditorMountKey={
-                lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
-                  ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
-                  : undefined
-              }
+              plateEditorMountKey={noteEditorRemountKey || undefined}
               value={
                 noteContents[activeTabId] ??
                 (lazyActiveBlobQueryEnabled

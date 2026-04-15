@@ -125,6 +125,22 @@ export async function fetchChanges(
   return JSON.parse(text) as { changes: ChangeRow[]; next_cursor: string };
 }
 
+export type ManifestEntry = { path: string; size: number; version: string };
+
+export async function fetchVaultManifest(
+  cfg: AgentConfig,
+  token: string,
+): Promise<{ commitHash: string; entries: ManifestEntry[] }> {
+  const base = apiBase(cfg);
+  const url = `${base}/agent/vaults/${encodeURIComponent(cfg.vaultId)}/files/manifest`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `manifest ${res.status}`);
+  return JSON.parse(text) as { commitHash: string; entries: ManifestEntry[] };
+}
+
 export async function upsertFile(
   cfg: AgentConfig,
   token: string,

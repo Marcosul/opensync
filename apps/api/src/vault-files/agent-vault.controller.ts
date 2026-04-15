@@ -33,6 +33,22 @@ export class AgentVaultController {
     return this.vaultFiles.getChanges(vaultId.trim(), cursor);
   }
 
+  /**
+   * Estado actual dos ficheiros no Postgres (mesma semantica que GET /vaults/:id/git/tree para utilizador),
+   * incluindo backfill Gitea→Postgres quando ainda nao ha linhas — necessario para o agente Ubuntu
+   * hidratar a pasta local mesmo sem o browser ter aberto o vault antes.
+   */
+  @Get(':vaultId/files/manifest')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async manifest(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+  ) {
+    const { vault } = await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    await this.vaultFiles.backfillFromGiteaIfEmpty(vault.id, vault.giteaRepo);
+    return this.vaultFiles.listTree(vault.id);
+  }
+
   @Post(':vaultId/files/upsert')
   @Throttle({ default: { limit: 180, ttl: 60_000 } })
   async upsert(
