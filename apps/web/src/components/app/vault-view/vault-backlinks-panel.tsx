@@ -1,9 +1,11 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useMemo } from "react";
 
 import { collectDocIdsFromTree } from "@/components/app/vault-tree-ops";
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
+import { cn } from "@/lib/utils";
 
 import { noteMarkdown } from "./vault-graph-model";
 
@@ -13,11 +15,14 @@ export function BacklinksPanel({
   treeChildren,
   noteContents,
   onSelect,
+  onRequestClose,
 }: {
   docId: string;
   treeChildren: TreeEntry[];
   noteContents: Record<string, string>;
   onSelect: (id: string) => void;
+  /** Fecha o painel resizável (toolbar do cofre). */
+  onRequestClose?: () => void;
 }) {
   const needle = `[[${docId}]]`;
   const backlinks = useMemo(() => {
@@ -26,11 +31,25 @@ export function BacklinksPanel({
   }, [docId, treeChildren, noteContents, needle]);
 
   return (
-    <div className="flex flex-col overflow-hidden">
-      <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2 pr-1">
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
           Backlinks ({backlinks.length})
         </span>
+        {onRequestClose ? (
+          <button
+            type="button"
+            onClick={onRequestClose}
+            title="Fechar painel"
+            aria-label="Fechar painel de backlinks"
+            className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground",
+              "hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
       </div>
       <div className="flex-1 overflow-y-auto px-2 py-1.5">
         {backlinks.length === 0 ? (

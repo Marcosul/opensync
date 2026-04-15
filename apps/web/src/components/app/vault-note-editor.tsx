@@ -41,7 +41,8 @@ export type VaultNoteEditorProps = {
    */
   plainTextDocument?: boolean;
   /**
-   * Scroll vertical no contentor do cofre (barra à direita do ecrã); o editor cresce com o conteúdo.
+   * Markdown: scroll na zona editável (entre cromado e rodapé), com rodapé fixo na base.
+   * Modo fonte (textarea): ajusta overflow da área da textarea.
    */
   edgeToEdgeScroll?: boolean;
   /** Inset à direita para Monaco/texto (painel fixo) sem `padding` no contentor — barra de scroll na borda. */
@@ -243,7 +244,7 @@ export function VaultNoteEditor({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col",
-          plainTextDocument || edgeToEdgeScroll ? "overflow-hidden" : "overflow-y-auto",
+          plainTextDocument ? "overflow-hidden" : "min-h-0 overflow-y-auto",
         )}
       >
         {useTextareaLayout ? (

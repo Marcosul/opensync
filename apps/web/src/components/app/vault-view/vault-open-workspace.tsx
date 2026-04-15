@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   FileCode2,
+  Link2,
   ListX,
   Loader2,
   MoreVertical,
@@ -104,6 +105,7 @@ import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import { cn } from "@/lib/utils";
 
 import { BacklinksPanel } from "./vault-backlinks-panel";
+import { VaultBacklinksResizeHandle } from "./vault-backlinks-resize-handle";
 import { DOC_BY_ID } from "./doc-registry";
 import {
   LAZY_OPEN_TAB_PREFETCH_CONCURRENCY,
@@ -827,6 +829,10 @@ export function VaultOpenWorkspace({
   const [explorerSidebarWidth, setExplorerSidebarWidth] = useState(
     defaultClientUiSettings.sidebarWidth,
   );
+  const [backlinksPanelOpen, setBacklinksPanelOpen] = useState(false);
+  const [backlinksPanelWidth, setBacklinksPanelWidth] = useState(
+    defaultClientUiSettings.backlinksPanelWidth,
+  );
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
   const [editorSourceMode, setEditorSourceMode] = useState(false);
@@ -854,8 +860,18 @@ export function VaultOpenWorkspace({
   }, [vaultId]);
 
   useLayoutEffect(() => {
-    setExplorerSidebarWidth(loadClientUiSettings().sidebarWidth);
+    const clientUi = loadClientUiSettings();
+    setExplorerSidebarWidth(clientUi.sidebarWidth);
+    setBacklinksPanelWidth(clientUi.backlinksPanelWidth);
   }, []);
+
+  useEffect(() => {
+    setBacklinksPanelOpen(false);
+  }, [vaultId]);
+
+  useEffect(() => {
+    if (viewMode === "graph") setBacklinksPanelOpen(false);
+  }, [viewMode]);
 
   const defaultNewItemParent = useMemo(() => {
     if (treeRoot.type !== "dir") return "openclaw-root";
@@ -1332,13 +1348,34 @@ export function VaultOpenWorkspace({
     );
   }, []);
 
-  const closeTab = useCallback((id: string) => {
-    skipVaultUrlOpenEffectRef.current = true;
-    window.setTimeout(() => {
-      skipVaultUrlOpenEffectRef.current = false;
-    }, 0);
-    dispatchUi({ type: "close", id });
-  }, []);
+  const closeTab = useCallback(
+    (id: string) => {
+      skipVaultUrlOpenEffectRef.current = true;
+      window.setTimeout(() => {
+        skipVaultUrlOpenEffectRef.current = false;
+      }, 0);
+
+      const { openTabs: tabs, activeTabId: cur, viewMode: vm } = uiLatestRef.current;
+      const idx = tabs.indexOf(id);
+      if (idx === -1) return;
+      const nextOpenTabs = tabs.filter((t) => t !== id);
+      let nextActiveTabId = cur;
+      if (cur === id) {
+        nextActiveTabId =
+          nextOpenTabs.length === 0
+            ? ""
+            : (nextOpenTabs[Math.max(0, idx - 1)] ?? nextOpenTabs[0] ?? "");
+      }
+      const nextViewMode = nextOpenTabs.length === 0 ? "graph" : vm;
+
+      const nextFile = nextViewMode === "graph" ? null : nextActiveTabId || null;
+      const nextUrlView = nextViewMode === "graph" ? "graph" : null;
+
+      dispatchUi({ type: "close", id });
+      void setVaultPageQuery({ file: nextFile, folder: null, view: nextUrlView });
+    },
+    [setVaultPageQuery],
+  );
 
   const closeAllTabs = useCallback(() => {
     if (openTabs.length === 0) return;
@@ -1347,7 +1384,8 @@ export function VaultOpenWorkspace({
       skipVaultUrlOpenEffectRef.current = false;
     }, 0);
     dispatchUi({ type: "closeMany", ids: [...openTabs] });
-  }, [openTabs]);
+    void setVaultPageQuery({ file: null, folder: null, view: "graph" });
+  }, [openTabs, setVaultPageQuery]);
 
   const activateTab = useCallback((id: string) => {
     dispatchUi({ type: "activate", id });
@@ -1786,8 +1824,9 @@ export function VaultOpenWorkspace({
             </div>
         )}
 
+      <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1 pr-[200px]">
+        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
           {isBackendSyncVaultId(vaultId) && (
             <Link
               href={`/vault/${encodeURIComponent(vaultId)}/graph`}
@@ -1814,6 +1853,23 @@ export function VaultOpenWorkspace({
               />
             ))}
           </div>
+          {viewMode === "editor" ? (
+            <button
+              type="button"
+              onClick={() => setBacklinksPanelOpen((o) => !o)}
+              title={backlinksPanelOpen ? "Fechar painel de backlinks" : "Abrir painel de backlinks"}
+              aria-expanded={backlinksPanelOpen}
+              aria-controls="vault-backlinks-panel"
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
+                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                backlinksPanelOpen && "bg-muted text-foreground",
+              )}
+            >
+              <Link2 className="size-3.5 shrink-0" aria-hidden />
+              <span className="hidden sm:inline">Backlinks</span>
+            </button>
+          ) : null}
           <button
             type="button"
             title="Nova nota (nova aba)"
@@ -1907,20 +1963,20 @@ export function VaultOpenWorkspace({
 
         {viewMode === "graph" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="min-h-0 flex-1 pr-[200px]">
+            <div className="min-h-0 flex-1">
               <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
             </div>
           </div>
         ) : openTabs.length === 0 || !activeTabId ? (
-          <div className="flex flex-1 items-center justify-center px-6 pr-[200px] text-center font-mono text-sm text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
-          <div className="min-h-0 flex-1 bg-background pr-[200px]" aria-busy="true" />
+          <div className="min-h-0 flex-1 bg-background" aria-busy="true" />
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
           blobLoadError &&
           noteContents[activeTabId] === undefined ? (
-          <div className="flex flex-1 items-center justify-center px-6 pr-[200px] text-center text-sm text-destructive">
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
             {blobLoadError}
           </div>
         ) : isVaultPlainTextDocId(activeTabId) ? (
@@ -1957,72 +2013,91 @@ export function VaultOpenWorkspace({
               sourceMode={editorSourceMode}
               onSourceModeChange={setEditorSourceMode}
               plainTextDocument
-              codeEditorPaddingRight={200}
             />
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="pr-[200px]">
-              <VaultNoteEditor
-                key={activeTabId}
-                vaultId={vaultId}
-                docId={activeTabId}
-                plateEditorMountKey={
-                  lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
-                    ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
-                    : undefined
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <VaultNoteEditor
+              key={activeTabId}
+              vaultId={vaultId}
+              docId={activeTabId}
+              plateEditorMountKey={
+                lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
+                  ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
+                  : undefined
+              }
+              value={
+                noteContents[activeTabId] ??
+                (lazyActiveBlobQueryEnabled
+                  ? lazyBlobQuery.data
+                  : undefined) ??
+                (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
+                  ? mockDocToMarkdown(activeDoc)
+                  : `# ${activeTabId}\n\n`)
+              }
+              onChange={(next) => {
+                if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+                  markLazyGitDirtyDoc(activeTabId);
+                } else if (isBackendSyncVaultId(vaultId)) {
+                  bumpFullSnapshotDirtyForPush();
                 }
-                value={
-                  noteContents[activeTabId] ??
-                  (lazyActiveBlobQueryEnabled
-                    ? lazyBlobQuery.data
-                    : undefined) ??
-                  (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
-                    ? mockDocToMarkdown(activeDoc)
-                    : `# ${activeTabId}\n\n`)
-                }
-                onChange={(next) => {
-                  if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
-                    markLazyGitDirtyDoc(activeTabId);
-                  } else if (isBackendSyncVaultId(vaultId)) {
-                    bumpFullSnapshotDirtyForPush();
-                  }
-                  setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
-                }}
-                breadcrumb={editorBreadcrumb}
-                onSelectFile={browseSelectFile}
-                hideTopChrome
-                sourceMode={editorSourceMode}
-                onSourceModeChange={setEditorSourceMode}
-                plainTextDocument={false}
-                edgeToEdgeScroll
-              />
-            </div>
+                setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
+              }}
+              breadcrumb={editorBreadcrumb}
+              onSelectFile={browseSelectFile}
+              hideTopChrome
+              sourceMode={editorSourceMode}
+              onSourceModeChange={setEditorSourceMode}
+              plainTextDocument={false}
+              edgeToEdgeScroll
+            />
           </div>
         )}
-      </div>
       </div>
 
-      <div
-        className="fixed z-30 flex w-[200px] flex-col border-l border-border bg-sidebar/30"
-        style={{ top: "2.25rem", bottom: 0, right: 0 }}
-        role="complementary"
-        aria-label="Painel lateral"
-      >
-        {viewMode === "graph" ? (
+      {viewMode === "graph" ? (
+        <aside
+          className="flex h-full min-h-0 w-[200px] shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+          role="complementary"
+          aria-label="Etiquetas"
+        >
           <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
-        ) : openTabs.length === 0 || !activeTabId ? (
-          <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
-            Abra um arquivo para ver backlinks.
-          </div>
-        ) : (
-          <BacklinksPanel
-            docId={activeTabId}
-            treeChildren={treeChildren}
-            noteContents={noteContents}
-            onSelect={browseSelectFile}
+        </aside>
+      ) : null}
+      {viewMode === "editor" && backlinksPanelOpen ? (
+        <>
+          <VaultBacklinksResizeHandle
+            panelWidth={backlinksPanelWidth}
+            onPanelWidthChange={setBacklinksPanelWidth}
+            onResizeEnd={(w) => {
+              setBacklinksPanelWidth(w);
+              patchClientUiSettings({ backlinksPanelWidth: w });
+            }}
           />
-        )}
+          <aside
+            id="vault-backlinks-panel"
+            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+            style={{ width: backlinksPanelWidth }}
+            role="complementary"
+            aria-label="Backlinks"
+          >
+            {openTabs.length === 0 || !activeTabId ? (
+              <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
+                Abra um arquivo para ver backlinks.
+              </div>
+            ) : (
+              <BacklinksPanel
+                docId={activeTabId}
+                treeChildren={treeChildren}
+                noteContents={noteContents}
+                onSelect={browseSelectFile}
+                onRequestClose={() => setBacklinksPanelOpen(false)}
+              />
+            )}
+          </aside>
+        </>
+      ) : null}
+      </div>
       </div>
 
       <VaultManageDialog

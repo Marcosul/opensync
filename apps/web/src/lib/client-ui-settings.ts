@@ -5,6 +5,8 @@ export const CLIENT_UI_SETTINGS_STORAGE_KEY = "opensync_client_ui_settings";
 
 export type ClientUiSettings = {
   sidebarWidth: number;
+  /** Largura do painel de backlinks (modo editor), quando aberto. */
+  backlinksPanelWidth: number;
   /** Mesmos valores que `UserSettings["baseTheme"]` — no JSON fica como `theme`. */
   theme: UserSettings["baseTheme"];
 };
@@ -13,14 +15,25 @@ const DEFAULT_SIDEBAR_WIDTH = 260;
 export const EXPLORER_SIDEBAR_MIN_WIDTH = 200;
 export const EXPLORER_SIDEBAR_MAX_WIDTH = 560;
 
+const DEFAULT_BACKLINKS_PANEL_WIDTH = 260;
+export const BACKLINKS_PANEL_MIN_WIDTH = 200;
+export const BACKLINKS_PANEL_MAX_WIDTH = 480;
+
 export const defaultClientUiSettings: ClientUiSettings = {
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+  backlinksPanelWidth: DEFAULT_BACKLINKS_PANEL_WIDTH,
   theme: "system",
 };
 
 export function clampExplorerSidebarWidth(n: number): number {
   return Math.round(
     Math.min(EXPLORER_SIDEBAR_MAX_WIDTH, Math.max(EXPLORER_SIDEBAR_MIN_WIDTH, n)),
+  );
+}
+
+export function clampBacklinksPanelWidth(n: number): number {
+  return Math.round(
+    Math.min(BACKLINKS_PANEL_MAX_WIDTH, Math.max(BACKLINKS_PANEL_MIN_WIDTH, n)),
   );
 }
 
@@ -43,8 +56,13 @@ export function loadClientUiSettings(): ClientUiSettings {
       typeof sidebarRaw === "number" && Number.isFinite(sidebarRaw)
         ? clampExplorerSidebarWidth(sidebarRaw)
         : defaultClientUiSettings.sidebarWidth;
+    const backlinksRaw = o.backlinksPanelWidth;
+    const backlinksPanelWidth =
+      typeof backlinksRaw === "number" && Number.isFinite(backlinksRaw)
+        ? clampBacklinksPanelWidth(backlinksRaw)
+        : defaultClientUiSettings.backlinksPanelWidth;
     const theme = isBaseTheme(o.theme) ? o.theme : defaultClientUiSettings.theme;
-    return { sidebarWidth, theme };
+    return { sidebarWidth, backlinksPanelWidth, theme };
   } catch {
     return { ...defaultClientUiSettings };
   }
@@ -65,6 +83,10 @@ export function patchClientUiSettings(partial: Partial<ClientUiSettings>): void 
     typeof partial.sidebarWidth === "number" && Number.isFinite(partial.sidebarWidth)
       ? clampExplorerSidebarWidth(partial.sidebarWidth)
       : prev.sidebarWidth;
+  const backlinksPanelWidth =
+    typeof partial.backlinksPanelWidth === "number" && Number.isFinite(partial.backlinksPanelWidth)
+      ? clampBacklinksPanelWidth(partial.backlinksPanelWidth)
+      : prev.backlinksPanelWidth;
   const theme = partial.theme !== undefined && isBaseTheme(partial.theme) ? partial.theme : prev.theme;
-  saveClientUiSettings({ sidebarWidth, theme });
+  saveClientUiSettings({ sidebarWidth, backlinksPanelWidth, theme });
 }
