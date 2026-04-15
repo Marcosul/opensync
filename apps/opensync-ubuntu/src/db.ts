@@ -120,6 +120,13 @@ export function setDeletedWithRemoteVersion(
   }
 }
 
+export function listDeletedPaths(db: Database.Database): string[] {
+  const rows = db
+    .prepare("SELECT path FROM files_state WHERE is_deleted = 1")
+    .all() as Array<{ path: string }>;
+  return rows.map((row) => row.path);
+}
+
 export function hashContent(s: string): string {
   return crypto.createHash("sha256").update(s, "utf8").digest("hex");
 }

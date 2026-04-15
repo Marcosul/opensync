@@ -41,6 +41,12 @@ exec node /usr/lib/opensync-ubuntu/dist/cli.js "$@"
 WRAP
 chmod 755 "$STAGE/usr/bin/opensync-ubuntu"
 
+cat >"$STAGE/usr/bin/opensync" <<'WRAP'
+#!/bin/sh
+exec node /usr/lib/opensync-ubuntu/dist/cli.js "$@"
+WRAP
+chmod 755 "$STAGE/usr/bin/opensync"
+
 cp "$ROOT/packaging/debian/opensync-ubuntu.service" "$STAGE/lib/systemd/user/opensync-ubuntu.service"
 
 dpkg-deb --root-owner-group --build "$STAGE" "$ROOT/packaging/${PKG}.deb"

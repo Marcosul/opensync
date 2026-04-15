@@ -1,7 +1,7 @@
 "use client";
 
 import { CodeNode } from "@lexical/code";
-import { GripVertical } from "lucide-react";
+import { GripVertical, Plus } from "lucide-react";
 import {
   $convertFromMarkdownString,
   $convertToMarkdownString,
@@ -51,8 +51,8 @@ import {
 import { $setBlocksType } from "@lexical/selection";
 import {
   $createParagraphNode,
-  $getNearestNodeOfType,
   $getSelection,
+  $getNearestNodeFromDOMNode,
   $isRangeSelection,
   $getRoot,
   CLICK_COMMAND,
@@ -142,6 +142,15 @@ const editorNodes = [
 
 // Em Lexical 0.43, `TRANSFORMERS` já cobre sintaxe de tabela Markdown (GFM).
 const markdownTransformers = [...TRANSFORMERS];
+
+function getNearestListNode(node: import("lexical").LexicalNode): ListNode | null {
+  let current: import("lexical").LexicalNode | null = node;
+  while (current) {
+    if ($isListNode(current)) return current;
+    current = current.getParent();
+  }
+  return null;
+}
 
 function onLexicalError(error: Error) {
   console.error(error);
@@ -267,7 +276,7 @@ function ToolbarPlugin() {
               ? anchorNode
               : anchorNode.getTopLevelElementOrThrow();
 
-          const listNode = $getNearestNodeOfType(element, ListNode);
+          const listNode = getNearestListNode(element);
           if (listNode && $isListNode(listNode)) {
             if (listNode.getListType() === "bullet") setBlockType("ul");
             else if (listNode.getListType() === "number") setBlockType("ol");
@@ -424,16 +433,140 @@ function isOnBlockMenu(element: HTMLElement): boolean {
 }
 
 function DraggableBlocksPlugin({ anchorElem }: { anchorElem: HTMLElement }) {
+  const [editor] = useLexicalComposerContext();
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const targetLineRef = useRef<HTMLDivElement | null>(null);
+  const [isInsertMenuOpen, setIsInsertMenuOpen] = useState(false);
+  const [activeBlockElem, setActiveBlockElem] = useState<HTMLElement | null>(null);
+
+  const focusInsertionPointBelowActiveBlock = useCallback(() => {
+    if (!activeBlockElem) return;
+    editor.update(() => {
+      const nearestNode = $getNearestNodeFromDOMNode(activeBlockElem);
+      if (!nearestNode) return;
+      const topLevel = nearestNode.getTopLevelElementOrThrow();
+      const nextSibling = topLevel.getNextSibling();
+      if (nextSibling) {
+        nextSibling.selectStart();
+        return;
+      }
+      const paragraph = $createParagraphNode();
+      topLevel.insertAfter(paragraph);
+      paragraph.select();
+    });
+  }, [activeBlockElem, editor]);
+
+  const applyBlockType = useCallback(
+    (value: "paragraph" | "h1" | "h2" | "h3" | "ul" | "ol" | "table") => {
+      focusInsertionPointBelowActiveBlock();
+      if (value === "ul") {
+        editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined);
+        return;
+      }
+      if (value === "ol") {
+        editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined);
+        return;
+      }
+      if (value === "table") {
+        editor.dispatchCommand(INSERT_TABLE_COMMAND, {
+          columns: "3",
+          includeHeaders: true,
+          rows: "3",
+        });
+        return;
+      }
+      editor.dispatchCommand(REMOVE_LIST_COMMAND, undefined);
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        if (value === "h1" || value === "h2" || value === "h3") {
+          $setBlocksType(selection, () => $createHeadingNode(value));
+          return;
+        }
+        $setBlocksType(selection, () => $createParagraphNode());
+      });
+    },
+    [editor, focusInsertionPointBelowActiveBlock],
+  );
+
+  useEffect(() => {
+    if (!isInsertMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest(".vault-draggable-block-menu")) return;
+      setIsInsertMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [isInsertMenuOpen]);
+
   return (
     <DraggableBlockPlugin_EXPERIMENTAL
       anchorElem={anchorElem}
+      menuRef={menuRef}
+      targetLineRef={targetLineRef}
       menuComponent={
-        <div className="vault-draggable-block-menu flex h-7 w-7 items-center justify-center rounded border border-border bg-background text-muted-foreground shadow-sm">
-          <GripVertical className="size-4" />
+        <div
+          ref={menuRef}
+          className="vault-draggable-block-menu pointer-events-auto absolute -left-9 top-0 z-10 flex items-center gap-1 text-muted-foreground"
+        >
+          <div className="relative">
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded border border-border bg-background shadow-sm transition-colors hover:text-foreground"
+              aria-label="Inserir bloco"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsInsertMenuOpen((prev) => !prev);
+              }}
+            >
+              <Plus className="size-4" />
+            </button>
+            {isInsertMenuOpen ? (
+              <div className="absolute left-0 top-8 z-20 w-48 rounded-lg border border-border bg-popover p-1 text-xs text-foreground shadow-xl">
+                {[
+                  ["Texto", "paragraph"],
+                  ["Heading 1", "h1"],
+                  ["Heading 2", "h2"],
+                  ["Heading 3", "h3"],
+                  ["Lista", "ul"],
+                  ["Lista numerada", "ol"],
+                  ["Tabela 3x3", "table"],
+                ].map(([label, value]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="flex w-full items-center rounded px-2 py-1.5 text-left hover:bg-muted/70"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      applyBlockType(
+                        value as "paragraph" | "h1" | "h2" | "h3" | "ul" | "ol" | "table",
+                      );
+                      setIsInsertMenuOpen(false);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="flex h-7 w-7 items-center justify-center rounded border border-border bg-background shadow-sm">
+            <GripVertical className="size-4" />
+          </div>
         </div>
       }
-      targetLineComponent={<div className="h-[2px] rounded bg-primary/60" />}
+      targetLineComponent={
+        <div
+          ref={targetLineRef}
+          className="pointer-events-none absolute left-0 top-0 h-[2px] rounded bg-primary/60"
+        />
+      }
       isOnMenu={isOnBlockMenu}
+      onElementChanged={setActiveBlockElem}
     />
   );
 }
@@ -640,7 +773,8 @@ export function VaultLexicalMarkdownEditor({
         contentEditable={
           <ContentEditable
             className={cn(
-              "min-h-[min(40vh,16rem)] rounded-md px-1 py-0.5",
+              // Gutter for DraggableBlockPlugin handle (w-7 ≈ 28px) — keep text clear of the grip
+              "ContentEditable__root min-h-[min(40vh,16rem)] rounded-md py-0.5 pl-10 pr-2 sm:pl-11",
               "focus-visible:outline-none",
             )}
             aria-label="Editar nota"

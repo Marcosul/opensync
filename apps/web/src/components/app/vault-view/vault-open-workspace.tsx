@@ -145,6 +145,28 @@ export function VaultOpenWorkspace({
   onActiveVaultIdChange,
   removeVault,
 }: VaultOpenWorkspaceProps) {
+  type PendingPrefixMigration = { from: string; to: string };
+  const applyPrefixMigrationsToContents = useCallback(
+    (
+      source: Record<string, string>,
+      migrations: readonly PendingPrefixMigration[],
+    ): Record<string, string> => {
+      if (migrations.length === 0) return source;
+      const next: Record<string, string> = {};
+      for (const [docId, content] of Object.entries(source)) {
+        let mappedDocId = docId;
+        for (const { from, to } of migrations) {
+          if (!from || from === to) continue;
+          if (mappedDocId.startsWith(from)) {
+            mappedDocId = `${to}${mappedDocId.slice(from.length)}`;
+          }
+        }
+        next[mappedDocId] = content;
+      }
+      return next;
+    },
+    [],
+  );
   const [manageVaultsOpen, setManageVaultsOpen] = useState(false);
   const [contentVisible, setContentVisible] = useState(
     () =>
@@ -210,6 +232,7 @@ export function VaultOpenWorkspace({
   const lazyGitBlobsSnapshotCommitRef = useRef<string | null>(null);
   /** Último commit com o qual `mergeLazyGitNoteContentsAfterRemoteTree` foi aplicado (evict só quando muda). */
   const lastLazyGitTreeCommitShortRef = useRef<string | null>(null);
+  const pendingPrefixMigrationsRef = useRef<PendingPrefixMigration[]>([]);
 
   const activeVaultMetaRef = useRef(activeVaultMeta);
   activeVaultMetaRef.current = activeVaultMeta;
@@ -316,6 +339,14 @@ export function VaultOpenWorkspace({
               }),
             );
           }
+          if (pendingPrefixMigrationsRef.current.length > 0) {
+            const remapped = applyPrefixMigrationsToContents(
+              mergedContents,
+              pendingPrefixMigrationsRef.current,
+            );
+            Object.keys(mergedContents).forEach((k) => delete mergedContents[k]);
+            Object.assign(mergedContents, remapped);
+          }
           noteContentsRef.current = mergedContents;
           setNoteContents(mergedContents);
         }
@@ -335,6 +366,7 @@ export function VaultOpenWorkspace({
         setGiteaSyncStatus("synced");
         const short = commitHash.trim().slice(0, 12);
         setLastGiteaCommitHash(short);
+        pendingPrefixMigrationsRef.current = [];
         lazyGitDirtyDocIdsRef.current.clear();
         if (isGitLazyVaultTree(treeRootRef.current)) {
           refreshGitTreeAfterSync(vaultId);
@@ -346,7 +378,7 @@ export function VaultOpenWorkspace({
         setGiteaSyncError(err instanceof Error ? err.message : "Falha ao sincronizar");
       }
     },
-    [refreshGitTreeAfterSync],
+    [refreshGitTreeAfterSync, applyPrefixMigrationsToContents],
   );
 
   const scheduleGitTreeRefresh = useCallback(
@@ -929,6 +961,7 @@ export function VaultOpenWorkspace({
   const migrateDocPrefixes = useCallback(
     (from: string, to: string) => {
       if (from === to) return;
+      pendingPrefixMigrationsRef.current.push({ from, to });
       setNoteContents((prev) => applyNoteContentsDocPrefixMigration(prev, from, to));
       const openIds = [...new Set([...openTabs, activeTabId].filter(Boolean))];
       const map = buildDocIdRemapFromPrefixes(from, to, openIds);

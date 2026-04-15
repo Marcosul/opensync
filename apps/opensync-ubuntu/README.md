@@ -13,6 +13,13 @@ pnpm --filter @opensync/opensync-ubuntu exec tsc
 node dist/cli.js init
 node dist/cli.js run
 node dist/cli.js status
+node dist/cli.js update
+```
+
+Depois de instalado via `.deb`, pode usar:
+
+```bash
+opensync update
 ```
 
 ## Pacote .deb

@@ -2,6 +2,7 @@
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   loadConfig,
@@ -17,6 +18,54 @@ import {
 import { runAgent } from "./engine";
 import * as api from "./api";
 import * as db from "./db";
+
+const DEFAULT_UPDATE_DEB_URL =
+  "https://gpnxlfnjuxqhlsmxwfmc.supabase.co/storage/v1/object/public/installer/opensync-ubuntu_0.1.0_amd64.deb";
+
+function runCommand(cmd: string, args: string[]): void {
+  const res = spawnSync(cmd, args, { stdio: "inherit" });
+  if (res.status !== 0) {
+    throw new Error(`${cmd} ${args.join(" ")} falhou (exit=${res.status ?? "?"})`);
+  }
+}
+
+async function cmdUpdate(): Promise<void> {
+  const debUrl = (process.env.OPENSYNC_UPDATE_DEB_URL ?? DEFAULT_UPDATE_DEB_URL).trim();
+  const tmpDebPath = path.join(
+    process.env.TMPDIR ?? "/tmp",
+    `opensync-ubuntu-update-${Date.now()}.deb`,
+  );
+
+  console.log("OpenSync Ubuntu — update");
+  console.log(`  pacote: ${debUrl}`);
+  console.log("  baixando...");
+
+  const response = await fetch(debUrl);
+  if (!response.ok) {
+    throw new Error(`falha ao baixar pacote (${response.status})`);
+  }
+  const data = Buffer.from(await response.arrayBuffer());
+  await fs.writeFile(tmpDebPath, data);
+  console.log(`  arquivo: ${tmpDebPath}`);
+
+  try {
+    console.log("  instalando .deb...");
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    if (isRoot) {
+      runCommand("dpkg", ["-i", tmpDebPath]);
+    } else {
+      runCommand("sudo", ["dpkg", "-i", tmpDebPath]);
+    }
+
+    console.log("  reiniciando servico local...");
+    runCommand("systemctl", ["--user", "daemon-reload"]);
+    runCommand("systemctl", ["--user", "restart", "opensync-ubuntu"]);
+    runCommand("systemctl", ["--user", "status", "opensync-ubuntu", "--no-pager", "--lines=3"]);
+    console.log("\n✅ OpenSync atualizado e servico reiniciado.");
+  } finally {
+    await fs.rm(tmpDebPath, { force: true });
+  }
+}
 
 async function ask(rl: readline.Interface, q: string, def?: string): Promise<string> {
   const hint = def !== undefined ? ` [${def}]` : "";
@@ -93,6 +142,75 @@ async function promptUskTokenUntilValid(
       console.error("  Verifica a ligacao e tenta de novo.\n");
       continue;
     }
+  }
+}
+
+function printHelp(): void {
+  console.log(`OpenSync CLI
+
+Uso:
+  opensync <comando>
+
+Comandos:
+  help        Mostra esta ajuda
+  update      Atualiza para a ultima versao e reinicia o servico local
+  reinstall   Reinstala o pacote atual e reinicia o servico local
+  uninstall   Remove o servico local (mantem configuracao local)
+  sync        Inicia a sincronizacao (alias de run)
+  restart     Reinicia o servico local opensync-ubuntu
+  stop        Para o servico local opensync-ubuntu
+  list-vault  Lista os vaults da conta usando token usk_
+`);
+}
+
+async function cmdRestart(): Promise<void> {
+  runCommand("systemctl", ["--user", "daemon-reload"]);
+  runCommand("systemctl", ["--user", "restart", "opensync-ubuntu"]);
+  runCommand("systemctl", ["--user", "status", "opensync-ubuntu", "--no-pager", "--lines=3"]);
+  console.log("✅ Servico reiniciado.");
+}
+
+async function cmdStop(): Promise<void> {
+  runCommand("systemctl", ["--user", "stop", "opensync-ubuntu"]);
+  runCommand("systemctl", ["--user", "status", "opensync-ubuntu", "--no-pager", "--lines=3"]);
+  console.log("✅ Servico parado.");
+}
+
+async function cmdUninstall(): Promise<void> {
+  console.log("OpenSync Ubuntu — uninstall");
+  runCommand("systemctl", ["--user", "stop", "opensync-ubuntu"]);
+  runCommand("systemctl", ["--user", "disable", "opensync-ubuntu"]);
+  runCommand("systemctl", ["--user", "daemon-reload"]);
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  if (isRoot) {
+    runCommand("dpkg", ["-r", "opensync-ubuntu"]);
+  } else {
+    runCommand("sudo", ["dpkg", "-r", "opensync-ubuntu"]);
+  }
+  console.log("✅ OpenSync removido do sistema.");
+}
+
+async function cmdReinstall(): Promise<void> {
+  console.log("OpenSync Ubuntu — reinstall");
+  await cmdUpdate();
+}
+
+async function cmdListVault(): Promise<void> {
+  const rl = readline.createInterface({ input, output });
+  try {
+    const API_URL = "https://api.opensync.space/api";
+    const { uskToken, email } = await promptUskTokenUntilValid(rl, API_URL);
+    const vaults = await api.fetchUserVaults(API_URL, uskToken);
+    console.log(`\nVaults de ${email}:`);
+    if (vaults.length === 0) {
+      console.log("  (nenhum vault)");
+      return;
+    }
+    for (const [i, v] of vaults.entries()) {
+      console.log(`  ${i + 1}. ${v.name} [${v.id}] — workspace: ${v.workspaceName}`);
+    }
+  } finally {
+    rl.close();
   }
 }
 
@@ -286,11 +404,15 @@ async function cmdStatus(): Promise<void> {
 
 async function main(): Promise<void> {
   const cmd = process.argv[2] ?? "run";
+  if (cmd === "help" || cmd === "--help" || cmd === "-h") {
+    printHelp();
+    return;
+  }
   if (cmd === "init") {
     await cmdInit();
     return;
   }
-  if (cmd === "run" || cmd === "") {
+  if (cmd === "run" || cmd === "" || cmd === "sync") {
     await cmdRun();
     return;
   }
@@ -298,7 +420,31 @@ async function main(): Promise<void> {
     await cmdStatus();
     return;
   }
-  console.error("Uso: opensync-ubuntu init | opensync-ubuntu run | opensync-ubuntu status");
+  if (cmd === "update") {
+    await cmdUpdate();
+    return;
+  }
+  if (cmd === "restart") {
+    await cmdRestart();
+    return;
+  }
+  if (cmd === "stop") {
+    await cmdStop();
+    return;
+  }
+  if (cmd === "uninstall") {
+    await cmdUninstall();
+    return;
+  }
+  if (cmd === "reinstall") {
+    await cmdReinstall();
+    return;
+  }
+  if (cmd === "list-vault") {
+    await cmdListVault();
+    return;
+  }
+  printHelp();
   process.exit(1);
 }
 

@@ -42,6 +42,26 @@ async function readLocalFile(abs: string, maxBytes: number): Promise<string | nu
   }
 }
 
+async function reconcileDeletedLocalFiles(
+  database: Database.Database,
+  cfg: AgentConfig,
+  remoteWriting: Set<string>,
+): Promise<void> {
+  const deletedPaths = db.listDeletedPaths(database);
+  if (deletedPaths.length === 0) return;
+  for (const rel of deletedPaths) {
+    const abs = path.join(cfg.syncDir, rel);
+    remoteWriting.add(rel);
+    try {
+      await fs.rm(abs, { force: true });
+    } catch {
+      /* ignora erro de permissão momentânea; próximo ciclo tenta de novo */
+    } finally {
+      setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
+    }
+  }
+}
+
 /** Varre o diretório local e faz upload de arquivos ainda não sincronizados.
  *  Executado no início de cada run para garantir que arquivos pré-existentes
  *  sejam enviados ao vault (FULL_RECONCILE do PRD sec. 5.1). */
@@ -144,6 +164,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
         db.setMeta(database, "remote_cursor", cursor);
         if (changes.length < 500) break;
       }
+      await reconcileDeletedLocalFiles(database, cfg, remoteWriting);
       const now = Date.now();
       if (now - lastHeartbeatAt >= HEARTBEAT_MS || process.env.OPENSYNC_VERBOSE === "1") {
         const tail = db.getRemoteCursor(database);
@@ -223,10 +244,14 @@ async function applyRemoteChange(
   if (ch.deleted) {
     // Se já está marcado como deletado com a mesma versão, nada a fazer.
     if (st?.is_deleted && st.remote_version === ch.version) return;
+    remoteWriting.add(ch.path);
     try {
-      await fs.unlink(abs);
+      await fs.rm(abs, { force: true });
     } catch {
       /* ok */
+    } finally {
+      // Mantém bloqueio por um ciclo para o watcher ignorar "unlink" gerado pelo pull remoto.
+      setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
     }
     db.markRemoteDeleted(database, ch.path, ch.version);
     return;
