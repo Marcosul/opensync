@@ -10,6 +10,17 @@ import type Database from "better-sqlite3";
 const LOG = "[opensync-ubuntu]";
 const DEBOUNCE_MS = 3000;
 
+/** ANSI — visível em journalctl e terminal */
+const C = {
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  cyan: "\x1b[36m",
+  yellow: "\x1b[33m",
+  reset: "\x1b[0m",
+};
+
+const HEARTBEAT_MS = 60_000;
+
 function shouldIgnore(cfg: AgentConfig, rel: string): boolean {
   const parts = rel.split("/");
   for (const p of parts) {
@@ -116,18 +127,30 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     );
   }
 
+  let lastHeartbeatAt = 0;
+
   async function pollRemote(): Promise<void> {
     let cursor = db.getRemoteCursor(database);
+    let totalApplied = 0;
     try {
       for (;;) {
         const { changes, next_cursor } = await api.fetchChanges(cfg, token, cursor);
         for (const ch of changes) {
           await applyRemoteChange(database, cfg, token, ch, remoteWriting);
+          totalApplied++;
         }
         if (changes.length === 0) break;
         cursor = next_cursor;
         db.setMeta(database, "remote_cursor", cursor);
         if (changes.length < 500) break;
+      }
+      const now = Date.now();
+      if (now - lastHeartbeatAt >= HEARTBEAT_MS || process.env.OPENSYNC_VERBOSE === "1") {
+        const tail = db.getRemoteCursor(database);
+        console.log(
+          `${C.cyan}${LOG}${C.reset} ${C.green}💓 poll remoto OK${C.reset} ${C.dim}· cursor=${tail} · aplicadas neste ciclo=${totalApplied}${C.reset}`,
+        );
+        lastHeartbeatAt = now;
       }
     } catch (e: unknown) {
       const err = e as { status?: number };
@@ -135,7 +158,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
         console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync-ubuntu init");
         process.exit(1);
       }
-      console.error(LOG, "poll error", e);
+      console.error(`${C.yellow}${LOG}${C.reset} ⚠️ poll error`, e);
     }
   }
 
@@ -158,17 +181,31 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     schedule(rel);
   });
 
-  const pollTimer = setInterval(() => {
-    void pollRemote();
-  }, cfg.pollIntervalSeconds * 1000);
+  const intervalMs = cfg.pollIntervalSeconds * 1000;
+  let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+  let pollLoopStopped = false;
 
-  console.log(LOG, "running syncDir=", syncRoot);
+  function scheduleNextPoll(): void {
+    pollTimeout = setTimeout(() => {
+      void (async () => {
+        await pollRemote();
+        if (!pollLoopStopped) scheduleNextPoll();
+      })();
+    }, intervalMs);
+  }
+
+  scheduleNextPoll();
+
+  console.log(
+    `${C.cyan}${LOG}${C.reset} ${C.green}🚀 agente a correr${C.reset} ${C.dim}syncDir=${syncRoot} · poll a cada ${cfg.pollIntervalSeconds}s (sem precisar de abrir a pasta)${C.reset}`,
+  );
   await new Promise<void>((resolve) => {
     const stop = () => resolve();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
-  clearInterval(pollTimer);
+  pollLoopStopped = true;
+  if (pollTimeout) clearTimeout(pollTimeout);
   await watcher.close();
   database.close();
 }

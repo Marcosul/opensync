@@ -6,9 +6,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { WorkspaceMemberStatus } from '@prisma/client';
 import { hashAgentBearerToken } from '../common/agent-token.util';
 import { PrismaService } from '../common/prisma.service';
 import { GiteaService } from '../sync/gitea.service';
+import { WorkspaceAccessService, workspaceWhereForUser } from '../workspaces/workspace-access.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { generateOpensshEd25519KeyPair } from '../sync/openssh-keygen.util';
 import { CreateVaultDto } from './dto/create-vault.dto';
@@ -30,15 +32,25 @@ export class VaultsService {
     private readonly prisma: PrismaService,
     private readonly gitea: GiteaService,
     private readonly workspaces: WorkspacesService,
+    private readonly workspaceAccess: WorkspaceAccessService,
   ) {}
 
   private normalizeName(name: string): string {
     return name.trim().slice(0, 120);
   }
 
-  private vaultWhereUser(userId: string) {
+  private isLegacySchemaError(error: unknown): boolean {
+    if (!error || typeof error !== 'object' || !('code' in error)) {
+      return false;
+    }
+    const code = (error as { code?: string }).code;
+    return code === 'P2021' || code === 'P2022';
+  }
+
+  /** Vaults em workspaces onde o utilizador é dono ou membro ativo. */
+  private vaultWhereAccessible(userId: string) {
     return {
-      workspace: { userId },
+      workspace: workspaceWhereForUser(userId),
     } as const;
   }
 
@@ -52,7 +64,7 @@ export class VaultsService {
     workspaceId: string,
   ): Promise<string> {
     const ws = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, userId },
+      where: { id: workspaceId, ...workspaceWhereForUser(userId) },
       select: { id: true, name: true, giteaOrg: true },
     });
     if (!ws) {
@@ -149,10 +161,32 @@ export class VaultsService {
       where: {
         id: vaultId,
         isActive: true,
-        ...this.vaultWhereUser(userId),
+        ...this.vaultWhereAccessible(userId),
       },
       select: { id: true, giteaRepo: true },
     });
+  }
+
+  /**
+   * Vault acessível para leitura + papel EDITOR ou ADMIN (sync, deploy keys, etc.).
+   */
+  async assertVaultWritableForUser(
+    userId: string,
+    vaultId: string,
+  ): Promise<{ id: string; giteaRepo: string }> {
+    const vault = await this.prisma.vault.findFirst({
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereAccessible(userId),
+      },
+      select: { id: true, workspaceId: true, giteaRepo: true },
+    });
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, vault.workspaceId);
+    return { id: vault.id, giteaRepo: vault.giteaRepo };
   }
 
   /**
@@ -164,13 +198,19 @@ export class VaultsService {
       where: {
         id: vaultId,
         isActive: true,
-        ...this.vaultWhereUser(userId),
+        ...this.vaultWhereAccessible(userId),
       },
-      select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        giteaRepo: true,
+        agentDeployKeyGiteaId: true,
+      },
     });
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, vault.workspaceId);
 
     if (vault.agentDeployKeyGiteaId != null) {
       try {
@@ -234,13 +274,19 @@ export class VaultsService {
       where: {
         id: vaultId,
         isActive: true,
-        ...this.vaultWhereUser(userId),
+        ...this.vaultWhereAccessible(userId),
       },
-      select: { id: true, giteaRepo: true, agentDeployKeyGiteaId: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        giteaRepo: true,
+        agentDeployKeyGiteaId: true,
+      },
     });
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, vault.workspaceId);
     if (vault.agentDeployKeyGiteaId == null) {
       return { ok: true as const, removed: false };
     }
@@ -263,13 +309,14 @@ export class VaultsService {
       where: {
         id: vaultId,
         isActive: true,
-        ...this.vaultWhereUser(userId),
+        ...this.vaultWhereAccessible(userId),
       },
-      select: { id: true },
+      select: { id: true, workspaceId: true },
     });
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, vault.workspaceId);
 
     const raw = randomBytes(32).toString('base64url');
     const token = `osk_${raw}`;
@@ -296,18 +343,59 @@ export class VaultsService {
   }
 
   async listVaultsForUser(userId: string) {
-    const vaults = await this.prisma.vault.findMany({
-      where: { isActive: true, ...this.vaultWhereUser(userId) },
-      orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        workspaceId: true,
-        name: true,
-        path: true,
-        giteaRepo: true,
-        createdAt: true,
-      },
-    });
+    let vaults: Array<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      path: string;
+      giteaRepo: string;
+      createdAt: Date;
+    }>;
+    try {
+      vaults = await this.prisma.vault.findMany({
+        where: { isActive: true, ...this.vaultWhereAccessible(userId) },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          workspaceId: true,
+          name: true,
+          path: true,
+          giteaRepo: true,
+          createdAt: true,
+        },
+      });
+    } catch (error) {
+      if (!this.isLegacySchemaError(error)) {
+        throw error;
+      }
+      this.logger.warn(
+        `${colors.yellow}⚠️ Vault em modo compatibilidade de schema:${colors.reset} user=${userId} code=${(error as { code?: string }).code ?? 'unknown'}`,
+      );
+      vaults = await this.prisma.vault.findMany({
+        where: {
+          isActive: true,
+          workspace: {
+            OR: [
+              { userId },
+              {
+                members: {
+                  some: { profileId: userId, status: WorkspaceMemberStatus.ACTIVE },
+                },
+              },
+            ],
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          workspaceId: true,
+          name: true,
+          path: true,
+          giteaRepo: true,
+          createdAt: true,
+        },
+      });
+    }
 
     this.logger.log(
       `${colors.yellow}📚 Vaults listados:${colors.reset} user=${userId} count=${vaults.length}`,
@@ -320,13 +408,14 @@ export class VaultsService {
       where: {
         id: vaultId,
         isActive: true,
-        ...this.vaultWhereUser(userId),
+        ...this.vaultWhereAccessible(userId),
       },
-      select: { id: true, giteaRepo: true },
+      select: { id: true, workspaceId: true, giteaRepo: true },
     });
     if (!existing) {
       return;
     }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, existing.workspaceId);
 
     await this.prisma.vault.update({
       where: { id: vaultId },

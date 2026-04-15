@@ -1725,6 +1725,7 @@ export function VaultOpenWorkspace({
         ) : (
           <VaultNoteEditor
             key={activeTabId}
+            vaultId={vaultId}
             docId={activeTabId}
             value={
               noteContents[activeTabId] ??

@@ -6,6 +6,7 @@ import { FolderOpen, LogOut, PanelLeft, PanelsTopLeft, Settings } from "lucide-r
 import { useState } from "react";
 
 import { OpensyncLogo } from "@/components/brand/opensync-logo";
+import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -52,6 +53,8 @@ export function AppSidebar() {
           </div>
         )}
       </div>
+
+      {!collapsed ? <WorkspaceSwitcher /> : null}
 
       {/* Nav items */}
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../common/prisma.service';
+import { workspaceWhereForUser } from '../workspaces/workspace-access.service';
 import { VaultsService } from '../vaults/vaults.service';
 import { hashAgentBearerToken } from '../common/agent-token.util';
 
@@ -19,7 +20,7 @@ export class UserService {
     const vaultList = await this.prisma.vault.findMany({
       where: {
         isActive: true,
-        workspace: { userId },
+        workspace: workspaceWhereForUser(userId),
       },
       select: {
         id: true,

@@ -61,6 +61,7 @@ export async function fetchVaultListForUser(user: User): Promise<VaultListResult
 
   const vaults: VaultListItem[] = backendForList.map((v) => ({
     id: v.id,
+    workspaceId: v.workspaceId,
     name: v.name,
     pathLabel: v.giteaRepo,
     kind: "blank" as const,

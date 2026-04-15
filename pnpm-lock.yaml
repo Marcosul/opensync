@@ -59,6 +59,9 @@ importers:
       fastify:
         specifier: ^4.28.1
         version: 4.28.1
+      lib0:
+        specifier: ^0.2.117
+        version: 0.2.117
       passport-jwt:
         specifier: ^4.0.1
         version: 4.0.1
@@ -74,6 +77,15 @@ importers:
       stripe:
         specifier: ^14.0.0
         version: 14.25.0
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
+      y-protocols:
+        specifier: ^1.0.7
+        version: 1.0.7(yjs@13.6.30)
+      yjs:
+        specifier: ^13.6.30
+        version: 13.6.30
     devDependencies:
       '@nestjs/cli':
         specifier: ^10.0.0
@@ -93,6 +105,9 @@ importers:
       '@types/passport-jwt':
         specifier: ^4.0.0
         version: 4.0.1
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       dotenv:
         specifier: ^17.4.1
         version: 17.4.1
@@ -151,9 +166,18 @@ importers:
       '@lexical/rich-text':
         specifier: ^0.43.0
         version: 0.43.0
+      '@lexical/selection':
+        specifier: ^0.43.0
+        version: 0.43.0
+      '@lexical/table':
+        specifier: ^0.43.0
+        version: 0.43.0
       '@lexical/utils':
         specifier: ^0.43.0
         version: 0.43.0
+      '@lexical/yjs':
+        specifier: ^0.43.0
+        version: 0.43.0(yjs@13.6.30)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -214,6 +238,12 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      y-websocket:
+        specifier: ^3.0.0
+        version: 3.0.0(yjs@13.6.30)
+      yjs:
+        specifier: ^13.6.30
+        version: 13.6.30
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4
@@ -6036,6 +6066,18 @@ packages:
   wsl-utils@0.3.1:
     resolution: {integrity: sha512-g/eziiSUNBSsdDJtCLB8bdYEUMj4jR7AGeUo96p/3dTafgjHhpF4RiCFPiRILwjQoDXx5MqkBr4fwWtR3Ky4Wg==}
     engines: {node: '>=20'}
+
+  y-protocols@1.0.7:
+    resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
+    peerDependencies:
+      yjs: ^13.0.0
+
+  y-websocket@3.0.0:
+    resolution: {integrity: sha512-mUHy7AzkOZ834T/7piqtlA8Yk6AchqKqcrCXjKW8J1w2lPtRDjz8W5/CvXz9higKAHgKRKqpI3T33YkRFLkPtg==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
+    peerDependencies:
+      yjs: ^13.5.6
 
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
@@ -12562,6 +12604,17 @@ snapshots:
     dependencies:
       is-wsl: 3.1.1
       powershell-utils: 0.1.0
+
+  y-protocols@1.0.7(yjs@13.6.30):
+    dependencies:
+      lib0: 0.2.117
+      yjs: 13.6.30
+
+  y-websocket@3.0.0(yjs@13.6.30):
+    dependencies:
+      lib0: 0.2.117
+      y-protocols: 1.0.7(yjs@13.6.30)
+      yjs: 13.6.30
 
   y18n@5.0.8: {}
 

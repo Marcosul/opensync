@@ -36,6 +36,21 @@ export type BackendVault = {
   createdAt: string;
 };
 
+/** GET sem cabeçalhos de utilizador (ex.: pré-visualização de convite público). */
+export async function backendPublicRequest<T>(path: string): Promise<T> {
+  const base = resolveBackendBaseUrl();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_API_URL/OPENSYNC_API_URL não configurado");
+  }
+  const url = `${base}${resolveBackendPath(path)}`;
+  const response = await fetch(url, { method: "GET", cache: "no-store" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Falha no backend (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
 export async function backendRequest<T>(
   path: string,
   user: BackendRequestUser,

@@ -225,6 +225,8 @@ async function cmdInit(): Promise<void> {
 
     if (start.status === 0) {
       console.log("\n✓ Servico opensync-ubuntu iniciado e habilitado no boot.");
+      console.log("  O poll remoto corre em background (nao depende de abrir a pasta no gestor de ficheiros).");
+      console.log("  Com loginctl enable-linger (acima), o sync continua com o PC ligado mesmo sem login na sessao.");
       console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
       console.log("  Status: opensync-ubuntu status");
     } else {

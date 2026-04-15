@@ -1,13 +1,16 @@
 model Workspace {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  name      String   @default("Default")
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  name      String    @default("Default")
   /// Organização Gitea deste workspace (username da org); criada na primeira vault.
-  giteaOrg  String?  @map("gitea_org")
-  createdAt DateTime @default(now()) @map("created_at")
+  giteaOrg  String?   @map("gitea_org")
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
 
-  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vaults Vault[]
+  user    Profile           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vaults  Vault[]
+  members WorkspaceMember[]
+  invites WorkspaceInvite[]
 
   @@unique([userId, name])
   @@map("workspaces")

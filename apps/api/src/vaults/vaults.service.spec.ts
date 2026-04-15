@@ -32,6 +32,10 @@ describe('VaultsService', () => {
     resolveWorkspaceForCreate: jest.fn().mockResolvedValue(WORKSPACE_ID),
   } as any;
 
+  const workspaceAccess = {
+    requireEditorOrAdmin: jest.fn().mockResolvedValue(undefined),
+  } as any;
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -59,7 +63,7 @@ describe('VaultsService', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const service = new VaultsService(prisma, gitea, workspaces);
+    const service = new VaultsService(prisma, gitea, workspaces, workspaceAccess);
     const result = await service.createVaultForUser('user-1', 'u@e.com', { name: 'Meu Vault' });
     expect(result.giteaRepo).toBe(`${GITEA_ORG_SLUG}/meu-vault-${REPO_WS_FRAG}`);
     expect(gitea.ensureOrg).toHaveBeenCalledWith({
@@ -85,7 +89,7 @@ describe('VaultsService', () => {
     prisma.profile.upsert.mockResolvedValue({});
     workspaces.resolveWorkspaceForCreate.mockResolvedValue(WORKSPACE_ID);
     prisma.vault.findFirst.mockResolvedValue({ id: 'already' });
-    const service = new VaultsService(prisma, gitea, workspaces);
+    const service = new VaultsService(prisma, gitea, workspaces, workspaceAccess);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Duplicado' }),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -105,7 +109,7 @@ describe('VaultsService', () => {
     );
     prisma.vault.create.mockRejectedValue(new Error('db down'));
 
-    const service = new VaultsService(prisma, gitea, workspaces);
+    const service = new VaultsService(prisma, gitea, workspaces, workspaceAccess);
     await expect(
       service.createVaultForUser('user-1', 'u@e.com', { name: 'Compensar' }),
     ).rejects.toThrow('db down');
@@ -118,11 +122,12 @@ describe('VaultsService', () => {
   it('desativa vault e apaga repo no Gitea', async () => {
     prisma.vault.findFirst.mockResolvedValue({
       id: 'v1',
+      workspaceId: WORKSPACE_ID,
       giteaRepo: 'opensync/v-x',
     });
     prisma.vault.update.mockResolvedValue({});
     gitea.deleteRepo.mockResolvedValue(undefined);
-    const service = new VaultsService(prisma, gitea, workspaces);
+    const service = new VaultsService(prisma, gitea, workspaces, workspaceAccess);
     await service.deleteVaultForUser('user-1', 'v1');
     expect(prisma.vault.update).toHaveBeenCalledWith({
       where: { id: 'v1' },
@@ -134,11 +139,12 @@ describe('VaultsService', () => {
   it('reativa vault se Gitea falhar ao apagar repo', async () => {
     prisma.vault.findFirst.mockResolvedValue({
       id: 'v1',
+      workspaceId: WORKSPACE_ID,
       giteaRepo: 'opensync/v-x',
     });
     prisma.vault.update.mockResolvedValue({});
     gitea.deleteRepo.mockRejectedValue(new BadGatewayException('gitea down'));
-    const service = new VaultsService(prisma, gitea, workspaces);
+    const service = new VaultsService(prisma, gitea, workspaces, workspaceAccess);
     await expect(service.deleteVaultForUser('user-1', 'v1')).rejects.toThrow(
       BadGatewayException,
     );
