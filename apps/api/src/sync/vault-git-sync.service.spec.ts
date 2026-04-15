@@ -1,6 +1,7 @@
 import {
   normalizeVaultRelativePath,
   validateVaultSyncFiles,
+  vaultPathLookupCandidates,
 } from './vault-git-sync.service';
 
 describe('VaultGitSyncService helpers', () => {
@@ -27,5 +28,15 @@ describe('VaultGitSyncService helpers', () => {
     expect(() =>
       validateVaultSyncFiles({ x: 1 } as unknown as Record<string, string>),
     ).toThrow();
+  });
+
+  it('vaultPathLookupCandidates alia workspace/ e openclaw/workspace/', () => {
+    expect(vaultPathLookupCandidates('workspace/memory/a.md').sort()).toEqual(
+      ['openclaw/workspace/memory/a.md', 'workspace/memory/a.md'].sort(),
+    );
+    expect(vaultPathLookupCandidates('openclaw/workspace/memory/a.md').sort()).toEqual(
+      ['openclaw/workspace/memory/a.md', 'workspace/memory/a.md'].sort(),
+    );
+    expect(vaultPathLookupCandidates('agents/x.json')).toEqual(['agents/x.json']);
   });
 });

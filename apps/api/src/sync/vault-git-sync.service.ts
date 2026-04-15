@@ -84,6 +84,23 @@ export function normalizeVaultRelativePath(raw: string): string | null {
   return parts.join('/');
 }
 
+/**
+ * Variantes de path para o mesmo ficheiro no espelho OpenClaw (árvore Git vs linhas antigas em `vault_files`).
+ * Ex.: repo com `workspace/memory/x.md` na raiz vs entrada `openclaw/workspace/memory/x.md` na BD.
+ */
+export function vaultPathLookupCandidates(raw: string): string[] {
+  const path = normalizeVaultRelativePath(raw);
+  if (!path) return [];
+  const out = new Set<string>([path]);
+  if (path.startsWith('workspace/')) {
+    out.add(`openclaw/${path}`);
+  }
+  if (path.startsWith('openclaw/workspace/')) {
+    out.add(path.slice('openclaw/'.length));
+  }
+  return [...out];
+}
+
 export function validateVaultSyncFiles(
   files: Record<string, string>,
 ): Map<string, string> {

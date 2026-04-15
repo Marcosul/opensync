@@ -40,6 +40,12 @@ export type VaultNoteEditorProps = {
    * mesmo que `sourceMode` venha false.
    */
   plainTextDocument?: boolean;
+  /**
+   * Scroll vertical no contentor do cofre (barra à direita do ecrã); o editor cresce com o conteúdo.
+   */
+  edgeToEdgeScroll?: boolean;
+  /** Inset à direita para Monaco/texto (painel fixo) sem `padding` no contentor — barra de scroll na borda. */
+  codeEditorPaddingRight?: number;
 };
 
 type CollabProfile = {
@@ -95,6 +101,8 @@ export function VaultNoteEditor({
   sourceMode: sourceModeProp,
   onSourceModeChange,
   plainTextDocument = false,
+  edgeToEdgeScroll = false,
+  codeEditorPaddingRight = 0,
 }: VaultNoteEditorProps) {
   const [internalSourceMode, setInternalSourceMode] = useState(false);
   const sourceMode = sourceModeProp ?? internalSourceMode;
@@ -235,7 +243,7 @@ export function VaultNoteEditor({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col",
-          plainTextDocument ? "overflow-hidden" : "overflow-y-auto",
+          plainTextDocument || edgeToEdgeScroll ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
         {useTextareaLayout ? (
@@ -246,6 +254,7 @@ export function VaultNoteEditor({
                   docId={docId}
                   value={value}
                   onChange={onChange}
+                  codeEditorPaddingRight={codeEditorPaddingRight}
                   className="mx-auto min-h-0 w-full max-w-[min(100%,56rem)] flex-1"
                 />
               ) : (
@@ -253,12 +262,18 @@ export function VaultNoteEditor({
                   docId={docId}
                   value={value}
                   onChange={onChange}
+                  paddingRight={codeEditorPaddingRight}
                   className="mx-auto min-h-0 w-full max-w-[min(100%,56rem)] flex-1"
                 />
               )}
             </div>
           ) : (
-            <div className="h-full overflow-y-auto px-4 py-6 sm:px-10 sm:py-8">
+            <div
+              className={cn(
+                "px-4 py-6 sm:px-10 sm:py-8",
+                edgeToEdgeScroll ? "min-h-0" : "h-full overflow-y-auto",
+              )}
+            >
               <textarea
                 key={docId}
                 value={value}

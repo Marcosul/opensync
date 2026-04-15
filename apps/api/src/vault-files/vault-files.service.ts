@@ -10,6 +10,7 @@ import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import {
   normalizeVaultRelativePath,
   validateVaultSyncFiles,
+  vaultPathLookupCandidates,
   VAULT_MIRROR_DB_PAGE_SIZE,
   VAULT_READ_MAX_BLOB_BYTES,
   VAULT_READ_MAX_TREE_ENTRIES,
@@ -91,14 +92,26 @@ export class VaultFilesService {
   }
 
   async getContent(vaultId: string, rawPath: string): Promise<{ path: string; content: string; version: string }> {
-    const path = normalizeVaultRelativePath(rawPath);
-    if (!path) {
+    const candidates = vaultPathLookupCandidates(rawPath);
+    if (candidates.length === 0) {
       throw new BadRequestException('path invalido');
     }
-    const row = await this.prisma.vaultFile.findUnique({
-      where: { vaultId_path: { vaultId, path } },
-    });
-    if (!row || row.deletedAt) {
+    let row: {
+      path: string;
+      content: string | null;
+      version: number;
+      deletedAt: Date | null;
+    } | null = null;
+    for (const path of candidates) {
+      const found = await this.prisma.vaultFile.findUnique({
+        where: { vaultId_path: { vaultId, path } },
+      });
+      if (found && !found.deletedAt) {
+        row = found;
+        break;
+      }
+    }
+    if (!row) {
       throw new NotFoundException('Ficheiro nao encontrado');
     }
     const content = row.content ?? '';
@@ -106,7 +119,7 @@ export class VaultFilesService {
     if (bytes > VAULT_READ_MAX_BLOB_BYTES) {
       throw new BadRequestException(`Ficheiro excede ${VAULT_READ_MAX_BLOB_BYTES} bytes`);
     }
-    return { path, content, version: String(row.version) };
+    return { path: row.path, content, version: String(row.version) };
   }
 
   async getChanges(

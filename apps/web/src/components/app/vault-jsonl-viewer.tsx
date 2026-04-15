@@ -11,6 +11,7 @@ export type VaultJsonlViewerProps = {
   value: string;
   onChange: (next: string) => void;
   className?: string;
+  codeEditorPaddingRight?: number;
 };
 
 type ParsedLine = {
@@ -84,7 +85,13 @@ function borderClassForLabel(label: string): string {
   return "border-l-border";
 }
 
-export function VaultJsonlViewer({ docId, value, onChange, className }: VaultJsonlViewerProps) {
+export function VaultJsonlViewer({
+  docId,
+  value,
+  onChange,
+  className,
+  codeEditorPaddingRight = 0,
+}: VaultJsonlViewerProps) {
   const [mode, setMode] = useState<"structured" | "raw">("structured");
 
   const rows = useMemo(() => parseJsonlLines(value), [value]);
@@ -129,6 +136,7 @@ export function VaultJsonlViewer({ docId, value, onChange, className }: VaultJso
           docId={docId}
           value={value}
           onChange={onChange}
+          paddingRight={codeEditorPaddingRight}
           className="mx-auto min-h-0 w-full max-w-[min(100%,56rem)] flex-1"
         />
       </div>

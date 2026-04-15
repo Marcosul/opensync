@@ -7,12 +7,10 @@
 
 import { Menu } from "@base-ui/react/menu";
 import {
-  BookOpen,
   Check,
   ChevronDown,
-  Columns,
   FileCode2,
-  GitBranch,
+  ListX,
   Loader2,
   MoreVertical,
   PanelLeft,
@@ -20,6 +18,7 @@ import {
   Share2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -59,6 +58,7 @@ import {
   findAncestorDirPathsForDoc,
   findDir,
   findFileNameForDocId,
+  getParentTreePathForDoc,
   moveDirectory,
   moveExplorerItemsToParent,
   moveFile,
@@ -124,7 +124,6 @@ import { VaultExplorerSidebarResizeHandle } from "./vault-explorer-sidebar-resiz
 import { FileTree } from "./vault-file-tree";
 import { FullGraph } from "./vault-full-graph";
 import { TagsPanel } from "./vault-tags-panel";
-import { TabButton } from "./vault-tab-button";
 import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-reducer";
 import type { SidebarMode, TreeSortOrder } from "./explorer-tree-utils";
 import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
@@ -148,6 +147,8 @@ export function VaultOpenWorkspace({
   onActiveVaultIdChange,
   removeVault,
 }: VaultOpenWorkspaceProps) {
+  const router = useRouter();
+
   type PendingPrefixMigration = { from: string; to: string };
   const applyPrefixMigrationsToContents = useCallback(
     (
@@ -435,11 +436,16 @@ export function VaultOpenWorkspace({
           const short = data.commitHash.trim().slice(0, 12);
           setLastGiteaCommitHash(short);
           const remotePaths = data.entries.map((e) => e.path);
+          const remoteSet = new Set(remotePaths);
           const prevRoot = treeRootRef.current;
           const localPaths = isGitLazyVaultTree(prevRoot)
             ? collectLazyGitRepoRelativePaths(prevRoot)
             : [];
-          const unionPaths = [...new Set([...remotePaths, ...localPaths])];
+          /** Paths só na árvore local (ex.: snapshot em LS) não existem no Postgres → blob 404. Manter só extra local com alterações por sincronizar. */
+          const extraLocalDirtyOnly = localPaths.filter(
+            (p) => !remoteSet.has(p) && lazyGitDirtyDocIdsRef.current.has(p),
+          );
+          const unionPaths = [...new Set([...remotePaths, ...extraLocalDirtyOnly])];
           const pathsForSnapshot =
             unionPaths.length > 0 ? unionPaths : remotePaths.length > 0 ? remotePaths : [];
           const next = gitTreePathsToVaultSnapshot(pathsForSnapshot);
@@ -752,6 +758,12 @@ export function VaultOpenWorkspace({
     gcTime: LAZY_GIT_BLOB_GC_MS,
     /** Evita o ecrã "A carregar…" em ficheiros vazios: o editor mostra-se já com texto vazio até o blob chegar. */
     placeholderData: "",
+    retry: (failureCount, err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/404|Ficheiro nao encontrado|not found|NotFound/i.test(msg)) return false;
+      return failureCount < 3;
+    },
+    retryDelay: (i) => Math.min(800 * 2 ** i, 5000),
   });
 
   useEffect(() => {
@@ -929,7 +941,11 @@ export function VaultOpenWorkspace({
 
     if (viewGraph && !file && !folder) {
       appliedUrlTargetRef.current = urlTargetKey;
-      dispatchUi({ type: "showGraph" });
+      if (isBackendSyncVaultId(vaultId)) {
+        router.replace(`/vault/${encodeURIComponent(vaultId)}/graph`);
+      } else {
+        dispatchUi({ type: "showGraph" });
+      }
       setUrlSyncReady(true);
       return;
     }
@@ -975,7 +991,7 @@ export function VaultOpenWorkspace({
         setUrlSyncReady(true);
       }
     }
-  }, [urlTargetKey, treeDocIdsKey, dispatchUi]);
+  }, [urlTargetKey, treeDocIdsKey, dispatchUi, vaultId, router]);
 
   useEffect(() => {
     if (urlSyncReady) return;
@@ -1324,13 +1340,26 @@ export function VaultOpenWorkspace({
     dispatchUi({ type: "close", id });
   }, []);
 
+  const closeAllTabs = useCallback(() => {
+    if (openTabs.length === 0) return;
+    skipVaultUrlOpenEffectRef.current = true;
+    window.setTimeout(() => {
+      skipVaultUrlOpenEffectRef.current = false;
+    }, 0);
+    dispatchUi({ type: "closeMany", ids: [...openTabs] });
+  }, [openTabs]);
+
   const activateTab = useCallback((id: string) => {
     dispatchUi({ type: "activate", id });
   }, []);
 
   const openGraph = useCallback(() => {
-    dispatchUi({ type: "showGraph" });
-  }, []);
+    if (isBackendSyncVaultId(vaultId)) {
+      router.push(`/vault/${encodeURIComponent(vaultId)}/graph`);
+    } else {
+      dispatchUi({ type: "showGraph" });
+    }
+  }, [vaultId, router]);
 
   const graphHighlightId = activeTabId || null;
 
@@ -1592,6 +1621,23 @@ export function VaultOpenWorkspace({
     ]
   );
 
+  const renameTabFromChrome = useCallback(
+    (docId: string) => {
+      if (!vaultId || treeRoot.type !== "dir") return;
+      const parentTreePath = getParentTreePathForDoc(treeRoot, docId);
+      const name = findFileNameForDocId(treeChildren, docId) ?? docId.split("/").pop() ?? docId;
+      if (!parentTreePath) {
+        window.alert("Não foi possível localizar o ficheiro na árvore.");
+        return;
+      }
+      handleExplorerCommand({
+        type: "rename",
+        target: { kind: "file", docId, name, parentTreePath },
+      });
+    },
+    [vaultId, treeRoot, treeChildren, handleExplorerCommand],
+  );
+
   const clearRevealTarget = useCallback(() => setRevealTarget(null), []);
 
   const quickNewNoteFromToolbar = useCallback(() => {
@@ -1740,17 +1786,16 @@ export function VaultOpenWorkspace({
             </div>
         )}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
-          <TabButton active={viewMode === "graph"} onClick={openGraph}>
-            <GitBranch className="size-3.5" />
-            Grafo
-          </TabButton>
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1 pr-[200px]">
           {isBackendSyncVaultId(vaultId) && (
             <Link
               href={`/vault/${encodeURIComponent(vaultId)}/graph`}
-              title="Ver grafo completo do vault (via API)"
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+              title="Grafo do vault (API)"
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs transition-colors",
+                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+              )}
             >
               <Share2 className="size-3.5" />
               Grafo API
@@ -1764,6 +1809,8 @@ export function VaultOpenWorkspace({
                 active={viewMode === "editor" && activeTabId === id}
                 onSelect={() => activateTab(id)}
                 onClose={() => closeTab(id)}
+                onRename={() => renameTabFromChrome(id)}
+                onCloseAllTabs={closeAllTabs}
               />
             ))}
           </div>
@@ -1808,24 +1855,16 @@ export function VaultOpenWorkspace({
           </Menu.Root>
           <button
             type="button"
-            disabled
-            title="Dividir editor (em breve)"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
-            aria-label="Dividir editor"
+            title="Fechar todas as abas"
+            onClick={closeAllTabs}
+            disabled={openTabs.length === 0}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            aria-label="Fechar todas as abas"
           >
-            <Columns className="size-4" />
+            <ListX className="size-4" />
           </button>
           {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
             <div className="ml-0.5 flex shrink-0 items-center gap-0.5 border-l border-border/60 pl-1.5">
-              <button
-                type="button"
-                disabled
-                title="Modo leitura (em breve)"
-                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
-                aria-label="Modo leitura"
-              >
-                <BookOpen className="size-4" />
-              </button>
               <Menu.Root>
                 <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
                   <MoreVertical className="size-4" aria-label="Mais opções" />
@@ -1867,20 +1906,24 @@ export function VaultOpenWorkspace({
         </div>
 
         {viewMode === "graph" ? (
-          <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 pr-[200px]">
+              <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
+            </div>
+          </div>
         ) : openTabs.length === 0 || !activeTabId ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center px-6 pr-[200px] text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
-          <div className="min-h-0 flex-1 bg-background" aria-busy="true" />
+          <div className="min-h-0 flex-1 bg-background pr-[200px]" aria-busy="true" />
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
           blobLoadError &&
           noteContents[activeTabId] === undefined ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
+          <div className="flex flex-1 items-center justify-center px-6 pr-[200px] text-center text-sm text-destructive">
             {blobLoadError}
           </div>
-        ) : (
+        ) : isVaultPlainTextDocId(activeTabId) ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <VaultNoteEditor
               key={activeTabId}
@@ -1913,29 +1956,74 @@ export function VaultOpenWorkspace({
               hideTopChrome
               sourceMode={editorSourceMode}
               onSourceModeChange={setEditorSourceMode}
-              plainTextDocument={isVaultPlainTextDocId(activeTabId)}
+              plainTextDocument
+              codeEditorPaddingRight={200}
             />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="pr-[200px]">
+              <VaultNoteEditor
+                key={activeTabId}
+                vaultId={vaultId}
+                docId={activeTabId}
+                plateEditorMountKey={
+                  lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
+                    ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
+                    : undefined
+                }
+                value={
+                  noteContents[activeTabId] ??
+                  (lazyActiveBlobQueryEnabled
+                    ? lazyBlobQuery.data
+                    : undefined) ??
+                  (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
+                    ? mockDocToMarkdown(activeDoc)
+                    : `# ${activeTabId}\n\n`)
+                }
+                onChange={(next) => {
+                  if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+                    markLazyGitDirtyDoc(activeTabId);
+                  } else if (isBackendSyncVaultId(vaultId)) {
+                    bumpFullSnapshotDirtyForPush();
+                  }
+                  setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
+                }}
+                breadcrumb={editorBreadcrumb}
+                onSelectFile={browseSelectFile}
+                hideTopChrome
+                sourceMode={editorSourceMode}
+                onSourceModeChange={setEditorSourceMode}
+                plainTextDocument={false}
+                edgeToEdgeScroll
+              />
+            </div>
           </div>
         )}
       </div>
+      </div>
 
-      <div className="flex w-[200px] shrink-0 flex-col border-l border-border bg-sidebar/30">
-          {viewMode === "graph" ? (
-            <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
-          ) : openTabs.length === 0 || !activeTabId ? (
-            <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
-              Abra um arquivo para ver backlinks.
-            </div>
-          ) : (
-            <BacklinksPanel
-              docId={activeTabId}
-              treeChildren={treeChildren}
-              noteContents={noteContents}
-              onSelect={browseSelectFile}
-            />
-          )}
-        </div>
-    </div>
+      <div
+        className="fixed z-30 flex w-[200px] flex-col border-l border-border bg-sidebar/30"
+        style={{ top: "2.25rem", bottom: 0, right: 0 }}
+        role="complementary"
+        aria-label="Painel lateral"
+      >
+        {viewMode === "graph" ? (
+          <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
+        ) : openTabs.length === 0 || !activeTabId ? (
+          <div className="flex flex-1 items-center px-3 py-4 font-mono text-[10px] text-muted-foreground/70">
+            Abra um arquivo para ver backlinks.
+          </div>
+        ) : (
+          <BacklinksPanel
+            docId={activeTabId}
+            treeChildren={treeChildren}
+            noteContents={noteContents}
+            onSelect={browseSelectFile}
+          />
+        )}
+      </div>
 
       <VaultManageDialog
         open={manageVaultsOpen}

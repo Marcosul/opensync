@@ -6,6 +6,7 @@
  * Se o chunk falhar, usa `<textarea>` sem borda como fallback.
  */
 import type { EditorProps } from "@monaco-editor/react";
+import type { editor as MonacoEditorNS } from "monaco-editor";
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 
 import { monacoLanguageFromDocPath } from "@/lib/vault-file-visual";
@@ -16,6 +17,8 @@ export type VaultCodeEditorProps = {
   value: string;
   onChange: (next: string) => void;
   className?: string;
+  /** Espaço à direita do conteúdo (ex.: painel fixo) sem encolher o widget — a barra de scroll mantém-se na borda. */
+  paddingRight?: number;
 };
 
 function useDocumentDarkClass(): boolean {
@@ -37,6 +40,7 @@ export function VaultCodeEditorFallback({
   value,
   onChange,
   className,
+  paddingRight = 0,
 }: VaultCodeEditorProps) {
   return (
     <textarea
@@ -44,6 +48,7 @@ export function VaultCodeEditorFallback({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       spellCheck={false}
+      style={paddingRight > 0 ? { paddingRight } : undefined}
       className={cn(
         "box-border h-full min-h-0 w-full flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 font-mono text-[13px] leading-relaxed text-foreground sm:px-2",
         "border-0 shadow-none outline-none ring-0 focus-visible:ring-0",
@@ -54,7 +59,7 @@ export function VaultCodeEditorFallback({
   );
 }
 
-export function VaultCodeEditor({ docId, value, onChange, className }: VaultCodeEditorProps) {
+export function VaultCodeEditor({ docId, value, onChange, className, paddingRight = 0 }: VaultCodeEditorProps) {
   const dark = useDocumentDarkClass();
   const language = useMemo(() => monacoLanguageFromDocPath(docId), [docId]);
   const [Editor, setEditor] = useState<ComponentType<EditorProps> | null>(null);
@@ -82,7 +87,12 @@ export function VaultCodeEditor({ docId, value, onChange, className }: VaultCode
   if (monacoFailed) {
     return (
       <div className={shellClass}>
-        <VaultCodeEditorFallback docId={docId} value={value} onChange={onChange} />
+        <VaultCodeEditorFallback
+          docId={docId}
+          value={value}
+          onChange={onChange}
+          paddingRight={paddingRight}
+        />
       </div>
     );
   }
@@ -90,7 +100,12 @@ export function VaultCodeEditor({ docId, value, onChange, className }: VaultCode
   if (!Editor) {
     return (
       <div className={shellClass}>
-        <VaultCodeEditorFallback docId={docId} value={value} onChange={onChange} />
+        <VaultCodeEditorFallback
+          docId={docId}
+          value={value}
+          onChange={onChange}
+          paddingRight={paddingRight}
+        />
       </div>
     );
   }
@@ -117,7 +132,11 @@ export function VaultCodeEditor({ docId, value, onChange, className }: VaultCode
             lineNumbers: "on",
             wordWrap: "on",
             scrollBeyondLastLine: false,
-            padding: { top: 8, bottom: 8 },
+            padding: {
+              top: 8,
+              bottom: 8,
+              ...(paddingRight > 0 ? { right: paddingRight } : {}),
+            } as MonacoEditorNS.IEditorPaddingOptions,
             automaticLayout: true,
             tabSize: 2,
             insertSpaces: true,

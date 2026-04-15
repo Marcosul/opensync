@@ -1,9 +1,11 @@
 import type { AutoformatRule } from "@platejs/autoformat";
 import { AutoformatPlugin } from "@platejs/autoformat";
 import {
-  BasicBlocksPlugin,
   BasicMarksPlugin,
+  BlockquotePlugin,
+  HeadingPlugin,
   HighlightPlugin,
+  HorizontalRulePlugin,
   KbdPlugin,
 } from "@platejs/basic-nodes/react";
 import {
@@ -25,9 +27,23 @@ import { createLowlight, common } from "lowlight";
 import type { TElement, Value } from "platejs";
 import { KEYS, NodeIdPlugin, TrailingBlockPlugin } from "platejs";
 import type { PlateEditor } from "platejs/react";
+import { createPlatePlugin } from "platejs/react";
 import { Editor } from "slate";
 
 import { VaultPlateDndPlugin } from "@/components/app/vault-plate-dnd-plugin";
+import { VaultPlateHrElement } from "@/components/app/vault-plate-hr-element";
+
+/** Blocos base: o plugin base usa `render.as: "hr"` — o React 19 não permite `children` em `<hr>`. Forçamos wrapper `div` e o visual continua no {@link VaultPlateHrElement}. */
+const VaultHorizontalRulePlugin = HorizontalRulePlugin.extend({
+  render: {
+    as: "div",
+    node: VaultPlateHrElement,
+  },
+});
+
+const VaultBasicBlocksPlugin = createPlatePlugin({
+  plugins: [BlockquotePlugin, HeadingPlugin, VaultHorizontalRulePlugin],
+});
 
 const vaultLowlight = createLowlight(common);
 
@@ -98,7 +114,7 @@ const ALIGN_TARGET_BLOCKS = [
 export function buildVaultPlateEditorPlugins() {
   return [
     NodeIdPlugin,
-    BasicBlocksPlugin,
+    VaultBasicBlocksPlugin,
     CodeBlockPlugin.configure({
       options: {
         lowlight: vaultLowlight,
