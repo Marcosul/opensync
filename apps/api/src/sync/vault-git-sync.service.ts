@@ -7,9 +7,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { promises as fs } from 'fs';
+import { createWriteStream, promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { finished } from 'stream/promises';
 import simpleGit, { type SimpleGit } from 'simple-git';
 
 import { GiteaService } from './gitea.service';
@@ -23,13 +24,50 @@ const colors = {
 };
 
 /** Limite total aproximado do payload UTF-8 (soma dos conteúdos). */
-export const VAULT_SYNC_MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
+export const VAULT_SYNC_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
 
 /** Limite por ficheiro na leitura `git/blob` (UTF-8). */
 export const VAULT_READ_MAX_BLOB_BYTES = 1024 * 1024;
 
 /** Máximo de entradas devolvidas por `git/tree`. */
 export const VAULT_READ_MAX_TREE_ENTRIES = 5000;
+
+/** Tamanho máximo de cada `write()` ao gravar um ficheiro no clone do mirror (UTF-8 em Buffer). */
+export const VAULT_MIRROR_DISK_WRITE_CHUNK_BYTES = 512 * 1024;
+
+/** Linhas `vault_files` por query ao espelhar (evita mapa path→conteúdo gigante em RAM). */
+export const VAULT_MIRROR_DB_PAGE_SIZE = 64;
+
+/** Push pode falhar se outro processo actualizou `main` entre o clone e o push (Gitea: remote rejected / cannot lock ref). */
+const GIT_PUSH_MAX_ATTEMPTS = 5;
+
+/**
+ * Grava texto UTF-8 em disco: ficheiros grandes são escritos em subarrays para não depender de um único write gigante.
+ */
+export async function writeUtf8FileInChunks(absFilePath: string, utf8: string): Promise<void> {
+  await fs.mkdir(path.dirname(absFilePath), { recursive: true });
+  const buf = Buffer.from(utf8, 'utf8');
+  if (buf.length <= VAULT_MIRROR_DISK_WRITE_CHUNK_BYTES) {
+    await fs.writeFile(absFilePath, buf);
+    return;
+  }
+  const ws = createWriteStream(absFilePath, { flags: 'w' });
+  try {
+    const step = VAULT_MIRROR_DISK_WRITE_CHUNK_BYTES;
+    for (let i = 0; i < buf.length; i += step) {
+      const slice = buf.subarray(i, Math.min(i + step, buf.length));
+      if (!ws.write(slice)) {
+        await new Promise<void>((resolve, reject) => {
+          ws.once('drain', resolve);
+          ws.once('error', reject);
+        });
+      }
+    }
+  } finally {
+    ws.end();
+    await finished(ws);
+  }
+}
 
 export type VaultGitTreeEntry = {
   path: string;
@@ -107,134 +145,216 @@ export class VaultGitSyncService {
 
   constructor(private readonly gitea: GiteaService) {}
 
+  /** Erros de corrida no remoto (outro push / mirror) onde um novo clone costuma resolver. */
+  private isRetryableGitPushError(err: unknown): boolean {
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    return (
+      msg.includes('non-fast-forward') ||
+      msg.includes('failed to push') ||
+      msg.includes('remote rejected') ||
+      msg.includes('cannot lock ref') ||
+      msg.includes('! [remote rejected]') ||
+      msg.includes('failed to update ref') ||
+      msg.includes('could not read ref')
+    );
+  }
+
   async pushTextFiles(
     repoFullName: string,
     files: Record<string, string>,
   ): Promise<{ commitHash: string }> {
     const wanted = validateVaultSyncFiles(files);
     const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
-    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-sync-'));
 
-    try {
-      const git = simpleGit({ baseDir: tmpRoot });
-      this.logger.log(
-        `${colors.cyan}📥 Clone shallow do repo:${colors.reset} ${repoFullName}`,
-      );
-      await git.clone(cloneUrl, '.', ['--depth', '1']);
-
-      await git.addConfig('user.email', 'opensync@opensync.local');
-      await git.addConfig('user.name', 'OpenSync');
-
-      const tracked = await this.listTrackedFiles(git);
-      const wantedPaths = new Set(wanted.keys());
-
-      for (const rel of tracked) {
-        if (!wantedPaths.has(rel)) {
-          await git.raw(['rm', '-f', '--ignore-unmatch', rel]);
-        }
-      }
-
-      for (const [rel, body] of wanted) {
-        const abs = path.join(tmpRoot, rel);
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, body, 'utf8');
-      }
-
-      await git.add(['-A']);
-      const stagedNames = (await git.raw(['diff', '--cached', '--name-only'])).trim();
-      if (!stagedNames) {
-        const commitHash = (await git.revparse(['HEAD'])).trim();
+    pushAttempt: for (let attempt = 1; attempt <= GIT_PUSH_MAX_ATTEMPTS; attempt++) {
+      const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-sync-'));
+      try {
+        const git = simpleGit({ baseDir: tmpRoot });
         this.logger.log(
-          `${colors.yellow}ℹ️ Nada a commitar (ja sincronizado):${colors.reset} ${commitHash.slice(0, 7)}`,
+          `${colors.cyan}📥 Clone shallow do repo:${colors.reset} ${repoFullName} (tentativa ${attempt}/${GIT_PUSH_MAX_ATTEMPTS})`,
+        );
+        await git.clone(cloneUrl, '.', ['--depth', '1']);
+
+        await git.addConfig('user.email', 'opensync@opensync.local');
+        await git.addConfig('user.name', 'OpenSync');
+
+        const tracked = await this.listTrackedFiles(git);
+        const wantedPaths = new Set(wanted.keys());
+
+        for (const rel of tracked) {
+          if (!wantedPaths.has(rel)) {
+            await git.raw(['rm', '-f', '--ignore-unmatch', rel]);
+          }
+        }
+
+        for (const [rel, body] of wanted) {
+          const abs = path.join(tmpRoot, rel);
+          await writeUtf8FileInChunks(abs, body);
+        }
+
+        await git.add(['-A']);
+        const stagedNames = (await git.raw(['diff', '--cached', '--name-only'])).trim();
+        if (!stagedNames) {
+          const commitHash = (await git.revparse(['HEAD'])).trim();
+          this.logger.log(
+            `${colors.yellow}ℹ️ Nada a commitar (ja sincronizado):${colors.reset} ${commitHash.slice(0, 7)}`,
+          );
+          return { commitHash };
+        }
+
+        await git.commit('chore(vault): sync snapshot');
+        const commitHash = (await git.revparse(['HEAD'])).trim();
+
+        this.logger.log(
+          `${colors.cyan}📤 Push para Gitea:${colors.reset} ${repoFullName} ${commitHash.slice(0, 7)}`,
+        );
+        try {
+          await git.push('origin', 'HEAD');
+        } catch (pushErr) {
+          if (
+            attempt < GIT_PUSH_MAX_ATTEMPTS &&
+            this.isRetryableGitPushError(pushErr)
+          ) {
+            this.logger.warn(
+              `${colors.yellow}🔁 Push recusado (corrida no remote); novo clone e retry…${colors.reset} ${repoFullName}`,
+            );
+            await new Promise((r) => setTimeout(r, 120 * attempt));
+            continue pushAttempt;
+          }
+          throw pushErr;
+        }
+
+        this.logger.log(
+          `${colors.green}✅ Sync vault concluido:${colors.reset} ${commitHash}`,
         );
         return { commitHash };
+      } catch (err) {
+        const hint = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `${colors.red}❌ Falha no sync git:${colors.reset} ${hint}`,
+        );
+        throw new BadGatewayException(`Falha ao sincronizar com Gitea: ${hint}`);
+      } finally {
+        await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+          /* ignore */
+        });
       }
-
-      await git.commit('chore(vault): sync snapshot');
-      const commitHash = (await git.revparse(['HEAD'])).trim();
-
-      this.logger.log(
-        `${colors.cyan}📤 Push para Gitea:${colors.reset} ${repoFullName} ${commitHash.slice(0, 7)}`,
-      );
-      await git.push('origin', 'HEAD');
-
-      this.logger.log(
-        `${colors.green}✅ Sync vault concluido:${colors.reset} ${commitHash}`,
-      );
-      return { commitHash };
-    } catch (err) {
-      const hint = err instanceof Error ? err.message : String(err);
-      this.logger.error(
-        `${colors.red}❌ Falha no sync git:${colors.reset} ${hint}`,
-      );
-      throw new BadGatewayException(`Falha ao sincronizar com Gitea: ${hint}`);
-    } finally {
-      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
-        /* ignore */
-      });
     }
+
+    throw new BadGatewayException(
+      `Falha ao sincronizar com Gitea após ${GIT_PUSH_MAX_ATTEMPTS} tentativas`,
+    );
   }
 
-  /** Espelho assíncrono Postgres → Gitea; permite vault sem ficheiros. */
+  /**
+   * Espelho Postgres → Gitea: consome um async iterable (paginação na BD), grava cada ficheiro em chunks,
+   * e remove do git tudo o que não foi escrito neste ciclo. Sem limite de “payload total” em RAM.
+   *
+   * `fileBodies` é uma fábrica para permitir várias tentativas de push (corrida com outro clone/push).
+   */
+  async pushMirrorTextFilesStreamed(
+    repoFullName: string,
+    fileBodies: () => AsyncIterable<{ rel: string; body: string }>,
+  ): Promise<{ commitHash: string }> {
+    const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
+
+    mirrorAttempt: for (let attempt = 1; attempt <= GIT_PUSH_MAX_ATTEMPTS; attempt++) {
+      const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-mirror-'));
+
+      try {
+        const git = simpleGit({ baseDir: tmpRoot });
+        this.logger.log(
+          `${colors.cyan}🪞 Mirror clone (stream+buffer):${colors.reset} ${repoFullName} (tentativa ${attempt}/${GIT_PUSH_MAX_ATTEMPTS})`,
+        );
+        await git.clone(cloneUrl, '.', ['--depth', '1']);
+
+        await git.addConfig('user.email', 'opensync@opensync.local');
+        await git.addConfig('user.name', 'OpenSync');
+
+        const tracked = await this.listTrackedFiles(git);
+        const written = new Set<string>();
+
+        for await (const { rel, body } of fileBodies()) {
+          const norm = normalizeVaultRelativePath(rel);
+          if (!norm) {
+            throw new BadRequestException(`Path invalido no stream de mirror: ${rel}`);
+          }
+          if (typeof body !== 'string') {
+            throw new BadRequestException('Cada ficheiro deve ter conteudo string');
+          }
+          const abs = path.join(tmpRoot, norm);
+          await writeUtf8FileInChunks(abs, body);
+          written.add(norm);
+        }
+
+        for (const tr of tracked) {
+          if (!written.has(tr)) {
+            await git.raw(['rm', '-f', '--ignore-unmatch', tr]);
+          }
+        }
+
+        await git.add(['-A']);
+        const stagedNames = (await git.raw(['diff', '--cached', '--name-only'])).trim();
+        if (!stagedNames) {
+          const commitHash = (await git.revparse(['HEAD'])).trim();
+          return { commitHash };
+        }
+
+        await git.commit('chore(vault): mirror from postgres');
+        const commitHash = (await git.revparse(['HEAD'])).trim();
+
+        try {
+          await git.push('origin', 'HEAD');
+        } catch (pushErr) {
+          if (
+            attempt < GIT_PUSH_MAX_ATTEMPTS &&
+            this.isRetryableGitPushError(pushErr)
+          ) {
+            this.logger.warn(
+              `${colors.yellow}🔁 Mirror: push recusado (corrida no remote); novo clone…${colors.reset} ${repoFullName}`,
+            );
+            await new Promise((r) => setTimeout(r, 120 * attempt));
+            continue mirrorAttempt;
+          }
+          throw pushErr;
+        }
+
+        this.logger.log(
+          `${colors.green}✅ Mirror Gitea ok:${colors.reset} ${repoFullName} ${commitHash.slice(0, 7)} files=${written.size}`,
+        );
+        return { commitHash };
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+        const hint = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `${colors.red}❌ Falha no mirror Gitea:${colors.reset} ${hint}`,
+        );
+        throw new BadGatewayException(`Falha no mirror Gitea: ${hint}`);
+      } finally {
+        await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+          /* ignore */
+        });
+      }
+    }
+
+    throw new BadGatewayException(
+      `Falha no mirror Gitea após ${GIT_PUSH_MAX_ATTEMPTS} tentativas`,
+    );
+  }
+
+  /** Espelho assíncrono Postgres → Gitea; mapa completo (valida tamanho total do payload). */
   async pushMirrorTextFiles(
     repoFullName: string,
     files: Record<string, string>,
   ): Promise<{ commitHash: string }> {
     const wanted = validateVaultMirrorFiles(files);
-    const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
-    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-mirror-'));
-
-    try {
-      const git = simpleGit({ baseDir: tmpRoot });
-      this.logger.log(
-        `${colors.cyan}🪞 Mirror clone:${colors.reset} ${repoFullName} files=${wanted.size}`,
-      );
-      await git.clone(cloneUrl, '.', ['--depth', '1']);
-
-      await git.addConfig('user.email', 'opensync@opensync.local');
-      await git.addConfig('user.name', 'OpenSync');
-
-      const tracked = await this.listTrackedFiles(git);
-      const wantedPaths = new Set(wanted.keys());
-
-      for (const rel of tracked) {
-        if (!wantedPaths.has(rel)) {
-          await git.raw(['rm', '-f', '--ignore-unmatch', rel]);
+    return this.pushMirrorTextFilesStreamed(repoFullName, () =>
+      (async function* () {
+        for (const [rel, body] of wanted) {
+          yield { rel, body };
         }
-      }
-
-      for (const [rel, body] of wanted) {
-        const abs = path.join(tmpRoot, rel);
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, body, 'utf8');
-      }
-
-      await git.add(['-A']);
-      const stagedNames = (await git.raw(['diff', '--cached', '--name-only'])).trim();
-      if (!stagedNames) {
-        const commitHash = (await git.revparse(['HEAD'])).trim();
-        return { commitHash };
-      }
-
-      await git.commit('chore(vault): mirror from postgres');
-      const commitHash = (await git.revparse(['HEAD'])).trim();
-      await git.push('origin', 'HEAD');
-
-      this.logger.log(
-        `${colors.green}✅ Mirror Gitea ok:${colors.reset} ${repoFullName} ${commitHash.slice(0, 7)}`,
-      );
-      return { commitHash };
-    } catch (err) {
-      const hint = err instanceof Error ? err.message : String(err);
-      this.logger.error(
-        `${colors.red}❌ Falha no mirror Gitea:${colors.reset} ${hint}`,
-      );
-      throw new BadGatewayException(`Falha no mirror Gitea: ${hint}`);
-    } finally {
-      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
-        /* ignore */
-      });
-    }
+      })(),
+    );
   }
 
   /**

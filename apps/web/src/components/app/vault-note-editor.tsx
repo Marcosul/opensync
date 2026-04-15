@@ -2,15 +2,12 @@
 
 import { FileCode2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { WebsocketProvider } from "y-websocket";
-import { Doc } from "yjs";
-
 import { apiRequest } from "@/api/rest/generic";
 import { VaultCodeEditor } from "@/components/app/vault-code-editor";
 import {
-  VaultLexicalMarkdownEditor,
-  type VaultLexicalMarkdownEditorProps,
-} from "@/components/app/vault-lexical-markdown-editor";
+  VaultPlateMarkdownEditor,
+  type VaultPlateMarkdownEditorProps,
+} from "@/components/app/vault-plate-markdown-editor";
 import { cn } from "@/lib/utils";
 
 function countWords(text: string): number {
@@ -26,6 +23,11 @@ export type VaultNoteEditorProps = {
   onChange: (next: string) => void;
   breadcrumb: string[];
   onSelectFile: (id: string) => void;
+  /**
+   * Chave opcional para remontar o editor Plate quando o conteúdo deixa de ser provisório
+   * (ex.: blob Git lazy após `isFetching` false).
+   */
+  plateEditorMountKey?: string;
   /** Esconde a faixa superior (breadcrumb + alternância de modo); use a barra externa no layout Obsidian. */
   hideTopChrome?: boolean;
   /** Modo fonte controlado pelo pai (com `onSourceModeChange`). */
@@ -67,6 +69,18 @@ function resolveCollabWsUrl(): string | null {
   }
 }
 
+/** Origem + caminho do WS (sem `?room=` / `?token=`); o cliente acrescenta na conexão. */
+function resolveCollabWsBaseUrl(): string | null {
+  const full = resolveCollabWsUrl();
+  if (!full) return null;
+  try {
+    const url = new URL(full);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
 export function VaultNoteEditor({
   vaultId,
   docId,
@@ -74,15 +88,12 @@ export function VaultNoteEditor({
   onChange,
   breadcrumb,
   onSelectFile,
+  plateEditorMountKey,
   hideTopChrome = false,
   sourceMode: sourceModeProp,
   onSourceModeChange,
   plainTextDocument = false,
 }: VaultNoteEditorProps) {
-  type CollaborationProviderFactory = NonNullable<
-    VaultLexicalMarkdownEditorProps["collaboration"]
-  >["providerFactory"];
-
   const [internalSourceMode, setInternalSourceMode] = useState(false);
   const sourceMode = sourceModeProp ?? internalSourceMode;
   const setSourceMode = onSourceModeChange ?? setInternalSourceMode;
@@ -95,34 +106,37 @@ export function VaultNoteEditor({
 
   useEffect(() => {
     const storageKey = "opensync-collab-profile";
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as CollabProfile;
-        if (parsed.userId && parsed.name && parsed.color) {
-          setCollabProfile(parsed);
-          return;
+    const apply = () => {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as CollabProfile;
+          if (parsed.userId && parsed.name && parsed.color) {
+            setCollabProfile(parsed);
+            return;
+          }
         }
+      } catch {
+        /* ignore malformed local data */
       }
-    } catch {
-      /* ignore malformed local data */
-    }
-    const profile: CollabProfile = {
-      userId: `u_${Math.random().toString(36).slice(2, 10)}`,
-      name: `User-${Math.random().toString(36).slice(2, 6)}`,
-      color: randomColor(),
+      const profile: CollabProfile = {
+        userId: `u_${Math.random().toString(36).slice(2, 10)}`,
+        name: `User-${Math.random().toString(36).slice(2, 6)}`,
+        color: randomColor(),
+      };
+      setCollabProfile(profile);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(profile));
+      } catch {
+        /* ignore */
+      }
     };
-    setCollabProfile(profile);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(profile));
-    } catch {
-      /* ignore */
-    }
+    queueMicrotask(apply);
   }, []);
 
   useEffect(() => {
     if (!collabEnabled || plainTextDocument) {
-      setCollabToken(null);
+      queueMicrotask(() => setCollabToken(null));
       return;
     }
     let cancelled = false;
@@ -159,6 +173,22 @@ export function VaultNoteEditor({
   const chars = value.length;
   const breadcrumbLabel = breadcrumb.join(" / ");
 
+  const plateCollaboration = useMemo((): VaultPlateMarkdownEditorProps["collaboration"] => {
+    if (!collabEnabled || !collabProfile || !collabToken) return undefined;
+    const wsBaseUrl = resolveCollabWsBaseUrl();
+    if (!wsBaseUrl) return undefined;
+    return {
+      enabled: true,
+      roomId: `note:${vaultId}:${docId}`,
+      wsBaseUrl,
+      token: collabToken,
+      username: collabProfile.name,
+      cursorColor: collabProfile.color,
+      onConnectionChange: setCollabConnected,
+      onActiveUsersChange: setActiveUsers,
+    };
+  }, [collabEnabled, collabToken, collabProfile, docId, vaultId]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {!hideTopChrome && (
@@ -190,7 +220,7 @@ export function VaultNoteEditor({
                   "rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
                   sourceMode && "bg-muted text-foreground",
                 )}
-                title={sourceMode ? "Modo rich text (Lexical)" : "Modo fonte (Markdown completo)"}
+                title={sourceMode ? "Modo rich text (Plate)" : "Modo fonte (Markdown completo)"}
                 aria-pressed={sourceMode}
               >
                 <FileCode2 className="size-4" />
@@ -223,53 +253,13 @@ export function VaultNoteEditor({
             </div>
           )
         ) : (
-          <VaultLexicalMarkdownEditor
-            key={docId}
+          <VaultPlateMarkdownEditor
+            key={plateEditorMountKey ?? docId}
             docId={docId}
             value={value}
             onChange={onChange}
             onSelectFile={onSelectFile}
-            collaboration={
-              collabEnabled && collabProfile && collabToken
-                ? {
-                    enabled: true,
-                    roomId: `lexical:${vaultId}:${docId}`,
-                    username: collabProfile.name,
-                    cursorColor: collabProfile.color,
-                    providerFactory: ((roomId: string) => {
-                      const baseUrl = resolveCollabWsUrl();
-                      if (!baseUrl) {
-                        throw new Error(
-                          "NEXT_PUBLIC_API_URL não configurado para colaboração em tempo real.",
-                        );
-                      }
-                      const wsUrl = new URL(baseUrl);
-                      wsUrl.searchParams.set("room", roomId);
-                      wsUrl.searchParams.set("token", collabToken);
-                      const provider = new WebsocketProvider(
-                        wsUrl.origin + wsUrl.pathname,
-                        roomId,
-                        new Doc(),
-                        {
-                          params: {
-                            room: roomId,
-                            token: collabToken,
-                          },
-                        },
-                      );
-                      provider.awareness.setLocalStateField("name", collabProfile.name);
-                      provider.awareness.setLocalStateField("color", collabProfile.color);
-                      provider.on("status", (event: { status: string }) => {
-                        setCollabConnected(event.status === "connected");
-                      });
-                      provider.awareness.on("update", () => {
-                        setActiveUsers(provider.awareness.getStates().size);
-                      });
-                      return provider;
-                    }) as unknown as CollaborationProviderFactory,
-                  }
-                : undefined
-            }
+            collaboration={plateCollaboration}
           />
         )}
       </div>

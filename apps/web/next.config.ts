@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /** Permite importar exemplos do clone `refs/plate` (fora de `apps/web`). */
+  experimental: {
+    externalDir: true,
+  },
   async redirects() {
     return [
       {

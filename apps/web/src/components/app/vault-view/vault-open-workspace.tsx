@@ -10,9 +10,6 @@ import {
   BookOpen,
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  CloudUpload,
   Columns,
   FileCode2,
   GitBranch,
@@ -211,6 +208,8 @@ export function VaultOpenWorkspace({
   >("idle");
   const [blobLoadError, setBlobLoadError] = useState<string | null>(null);
   const [lazyGitQueryEpoch, setLazyGitQueryEpoch] = useState(0);
+  /** Cofre Nest+snapshot local (SSH): incrementa só com edições / mutações locais — agenda sync Gitea. */
+  const [fullSnapshotDirtyEpoch, setFullSnapshotDirtyEpoch] = useState(0);
   const queryClient = useQueryClient();
   const [lastGiteaCommitHash, setLastGiteaCommitHash] = useState<string | null>(null);
   const [giteaSyncError, setGiteaSyncError] = useState<string | null>(null);
@@ -225,14 +224,20 @@ export function VaultOpenWorkspace({
   const gitTreeAbortRef = useRef<AbortController | null>(null);
   /** IDs de timer do browser (compatível com tipos DOM vs Node). */
   const giteaSyncDebounceRef = useRef<number | null>(null);
+  /** Marca o início do ciclo dirty para forçar sync mesmo durante digitação contínua. */
+  const syncDirtyStartAtRef = useRef<number | null>(null);
   /** Apenas para vault Git lazy: notas gravadas em localStorage (reduz quota). */
   const lazyGitDirtyDocIdsRef = useRef<Set<string>>(new Set());
+  /** Último `noteContents` fundido gravado em LS (lazy); evita ler o snapshot a cada tecla e preserva chaves não-dirty. */
+  const lazyPersistedNoteContentsRef = useRef<Record<string, string>>({ ...bootSnap.noteContents });
   const lastBlobFetchRef = useRef<{ tab: string; commit: string | null } | null>(null);
   /** Commit (12 chars) dos blobs lazy já alinhados com `noteContents` — evita refetch ao trocar de separador. */
   const lazyGitBlobsSnapshotCommitRef = useRef<string | null>(null);
   /** Último commit com o qual `mergeLazyGitNoteContentsAfterRemoteTree` foi aplicado (evict só quando muda). */
   const lastLazyGitTreeCommitShortRef = useRef<string | null>(null);
   const pendingPrefixMigrationsRef = useRef<PendingPrefixMigration[]>([]);
+  /** Git lazy: mudanças na árvore sem `docId` em `lazyGitDirtyDocIdsRef` (ex.: pasta nova vazia). */
+  const lazyGitTreeDirtyRef = useRef(false);
 
   const activeVaultMetaRef = useRef(activeVaultMeta);
   activeVaultMetaRef.current = activeVaultMeta;
@@ -246,6 +251,29 @@ export function VaultOpenWorkspace({
       setLazyGitQueryEpoch((n) => n + 1);
     }
   }, []);
+
+  const bumpLazyGitTreeDirtyForPush = useCallback(() => {
+    if (!usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) return;
+    lazyGitTreeDirtyRef.current = true;
+    setLazyGitQueryEpoch((n) => n + 1);
+  }, []);
+
+  const bumpFullSnapshotDirtyForPush = useCallback(() => {
+    if (!isBackendSyncVaultId(vaultIdRef.current)) return;
+    if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) return;
+    setFullSnapshotDirtyEpoch((e) => e + 1);
+  }, []);
+
+  const hasPendingRemoteSync = useCallback(
+    (targetVaultId: string, targetMeta: VaultMeta | undefined) => {
+      if (!isBackendSyncVaultId(targetVaultId)) return false;
+      if (usesLazyGitRemote(targetVaultId, targetMeta)) {
+        return lazyGitDirtyDocIdsRef.current.size > 0 || lazyGitTreeDirtyRef.current;
+      }
+      return fullSnapshotDirtyEpoch > 0;
+    },
+    [fullSnapshotDirtyEpoch],
+  );
 
   const refreshGitTreeAfterSync = useCallback((vaultId: string) => {
     gitTreeAbortRef.current?.abort();
@@ -287,6 +315,7 @@ export function VaultOpenWorkspace({
             evictRemoteCachedBodies,
           );
           noteContentsRef.current = merged;
+          lazyPersistedNoteContentsRef.current = merged;
           return merged;
         });
         lastLazyGitTreeCommitShortRef.current = short;
@@ -368,6 +397,11 @@ export function VaultOpenWorkspace({
         setLastGiteaCommitHash(short);
         pendingPrefixMigrationsRef.current = [];
         lazyGitDirtyDocIdsRef.current.clear();
+        lazyGitTreeDirtyRef.current = false;
+        syncDirtyStartAtRef.current = null;
+        if (!usesLazyGitRemote(vaultId, activeVaultMetaRef.current)) {
+          setFullSnapshotDirtyEpoch(0);
+        }
         if (isGitLazyVaultTree(treeRootRef.current)) {
           refreshGitTreeAfterSync(vaultId);
         }
@@ -376,6 +410,7 @@ export function VaultOpenWorkspace({
         if (err instanceof DOMException && err.name === "AbortError") return;
         setGiteaSyncStatus("error");
         setGiteaSyncError(err instanceof Error ? err.message : "Falha ao sincronizar");
+        syncDirtyStartAtRef.current = null;
       }
     },
     [refreshGitTreeAfterSync, applyPrefixMigrationsToContents],
@@ -422,6 +457,7 @@ export function VaultOpenWorkspace({
               evictRemoteCachedBodies,
             );
             noteContentsRef.current = merged;
+            lazyPersistedNoteContentsRef.current = merged;
             return merged;
           });
           lastLazyGitTreeCommitShortRef.current = short;
@@ -471,7 +507,14 @@ export function VaultOpenWorkspace({
       }
       return n;
     });
-  }, [vaultId, activeVaultMeta]);
+    if (isBackendSyncVaultId(vaultId)) {
+      if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+        bumpLazyGitTreeDirtyForPush();
+      } else {
+        bumpFullSnapshotDirtyForPush();
+      }
+    }
+  }, [vaultId, activeVaultMeta, bumpLazyGitTreeDirtyForPush, bumpFullSnapshotDirtyForPush]);
 
   useEffect(() => {
     scheduleGitTreeRefresh(vaultId, activeVaultMeta);
@@ -485,11 +528,17 @@ export function VaultOpenWorkspace({
     const dirty = lazyGitDirtyDocIdsRef.current;
     let noteContentsToPersist = noteContents;
     if (lazy) {
-      noteContentsToPersist = Object.fromEntries(
+      const dirtyMap = Object.fromEntries(
         [...dirty]
           .filter((id) => noteContents[id] !== undefined)
           .map((id) => [id, noteContents[id] as string]),
       );
+      /**
+       * Com alterações pendentes: fundir dirty no último LS. Sem dirty (ex.: após sync): gravar o estado em memória
+       * para não ficar um snapshot desatualizado em relação a `noteContents`.
+       */
+      noteContentsToPersist =
+        dirty.size > 0 ? { ...lazyPersistedNoteContentsRef.current, ...dirtyMap } : noteContents;
     }
     const snap: VaultSnapshotV1 = {
       v: 1,
@@ -500,6 +549,7 @@ export function VaultOpenWorkspace({
       ui,
     };
     saveSnapshot(vaultId, snap);
+    lazyPersistedNoteContentsRef.current = noteContentsToPersist;
   }, [
     vaultId,
     activeVaultMeta,
@@ -518,13 +568,18 @@ export function VaultOpenWorkspace({
       });
       prevVaultIdForBlobQueriesRef.current = vaultId;
     }
+    lazyPersistedNoteContentsRef.current = {
+      ...loadSnapshotWithSshBridge(vaultId, activeVaultMeta).noteContents,
+    };
     lazyGitDirtyDocIdsRef.current.clear();
+    lazyGitTreeDirtyRef.current = false;
+    setFullSnapshotDirtyEpoch(0);
     lastBlobFetchRef.current = null;
     lazyGitBlobsSnapshotCommitRef.current = null;
     lastLazyGitTreeCommitShortRef.current = null;
     setLastGiteaCommitHash(null);
     setGiteaSyncError(null);
-  }, [vaultId, queryClient]);
+  }, [vaultId, activeVaultMeta, queryClient]);
 
   useEffect(() => {
     if (!isBackendSyncVaultId(vaultId)) {
@@ -532,11 +587,43 @@ export function VaultOpenWorkspace({
         window.clearTimeout(giteaSyncDebounceRef.current);
         giteaSyncDebounceRef.current = null;
       }
+      syncDirtyStartAtRef.current = null;
       syncAbortRef.current?.abort();
       setGiteaSyncStatus("idle");
       return;
     }
-    const delayMs = usesLazyGitRemote(vaultId, activeVaultMeta) ? 4500 : 3000;
+    const lazy = usesLazyGitRemote(vaultId, activeVaultMeta);
+    if (lazy) {
+      if (lazyGitDirtyDocIdsRef.current.size === 0 && !lazyGitTreeDirtyRef.current) {
+        if (giteaSyncDebounceRef.current) {
+          window.clearTimeout(giteaSyncDebounceRef.current);
+          giteaSyncDebounceRef.current = null;
+        }
+        syncDirtyStartAtRef.current = null;
+        return;
+      }
+    } else if (fullSnapshotDirtyEpoch === 0) {
+      if (giteaSyncDebounceRef.current) {
+        window.clearTimeout(giteaSyncDebounceRef.current);
+        giteaSyncDebounceRef.current = null;
+      }
+      syncDirtyStartAtRef.current = null;
+      return;
+    }
+    const now = Date.now();
+    if (syncDirtyStartAtRef.current === null) {
+      syncDirtyStartAtRef.current = now;
+    }
+    const elapsedMs = now - syncDirtyStartAtRef.current;
+    /**
+     * Sync suave:
+     * - curto quando há pausa na digitação;
+     * - com limite máximo para não adiar indefinidamente enquanto o utilizador continua a escrever.
+     */
+    const idleDelayMs = lazy ? 1600 : 1100;
+    const maxWaitMs = lazy ? 8000 : 5000;
+    const timeUntilForcedMs = Math.max(250, maxWaitMs - elapsedMs);
+    const delayMs = Math.min(idleDelayMs, timeUntilForcedMs);
     if (giteaSyncDebounceRef.current) {
       window.clearTimeout(giteaSyncDebounceRef.current);
     }
@@ -550,7 +637,33 @@ export function VaultOpenWorkspace({
         giteaSyncDebounceRef.current = null;
       }
     };
-  }, [treeRoot, noteContents, vaultId, activeVaultMeta, runVaultGiteaSync]);
+  }, [lazyGitQueryEpoch, fullSnapshotDirtyEpoch, vaultId, activeVaultMeta, runVaultGiteaSync]);
+
+  useEffect(() => {
+    const flushNow = () => {
+      if (!hasPendingRemoteSync(vaultIdRef.current, activeVaultMetaRef.current)) return;
+      if (giteaSyncDebounceRef.current) {
+        window.clearTimeout(giteaSyncDebounceRef.current);
+        giteaSyncDebounceRef.current = null;
+      }
+      void runVaultGiteaSync(vaultIdRef.current);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushNow();
+      }
+    };
+
+    window.addEventListener("pagehide", flushNow);
+    window.addEventListener("beforeunload", flushNow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushNow);
+      window.removeEventListener("beforeunload", flushNow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [hasPendingRemoteSync, runVaultGiteaSync]);
 
   useEffect(() => {
     return () => {
@@ -632,13 +745,23 @@ export function VaultOpenWorkspace({
   });
 
   useEffect(() => {
-    if (!activeTabId || lazyBlobQuery.data === undefined) return;
+    if (!activeTabId || !lazyActiveBlobQueryEnabled) return;
     if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
+    if (lazyBlobQuery.data === undefined) return;
+    /** Só consolidar após o fetch: com `placeholderData: ""`, `data` pode ser `""` antes do texto real. */
+    if (lazyBlobQuery.isFetching) return;
+    const data = lazyBlobQuery.data;
     setNoteContents((prev) => {
-      if (prev[activeTabId] !== undefined) return prev;
-      return { ...prev, [activeTabId]: lazyBlobQuery.data };
+      const cur = prev[activeTabId];
+      /** Só preencher quando ainda não há entrada em `noteContents`. `""` pode ser ficheiro vazio real ou edição do utilizador — nunca substituir por blob do servidor. */
+      if (cur === undefined) {
+        const next = { ...prev, [activeTabId]: data };
+        lazyPersistedNoteContentsRef.current = { ...lazyPersistedNoteContentsRef.current, [activeTabId]: data };
+        return next;
+      }
+      return prev;
     });
-  }, [activeTabId, lazyBlobQuery.data]);
+  }, [activeTabId, lazyActiveBlobQueryEnabled, lazyBlobQuery.data, lazyBlobQuery.isFetching]);
 
   useEffect(() => {
     if (
@@ -667,6 +790,7 @@ export function VaultOpenWorkspace({
     lazyGitQueryEpoch,
   ]);
 
+  /** Com `placeholderData: ""` o query deixa de estar `pending` mas o fetch ainda corre — mostrar a carregar em vez do editor vazio com placeholder. */
   const lazyBlobUiLoading =
     usesLazyGitRemote(vaultId, activeVaultMeta) &&
     Boolean(activeTabId) &&
@@ -675,21 +799,17 @@ export function VaultOpenWorkspace({
     activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
     !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
     noteContents[activeTabId] === undefined &&
-    lazyBlobQuery.isPending;
+    (lazyBlobQuery.isPending || lazyBlobQuery.isFetching);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
-  const [histPast, setHistPast] = useState<string[]>([]);
-  const [histFuture, setHistFuture] = useState<string[]>([]);
   const [editorSourceMode, setEditorSourceMode] = useState(false);
   const prevEditorTabRef = useRef<string | undefined>(undefined);
   const editorSourceModeRef = useRef(editorSourceMode);
   editorSourceModeRef.current = editorSourceMode;
 
   useEffect(() => {
-    setHistPast([]);
-    setHistFuture([]);
     prevEditorTabRef.current = undefined;
   }, [vaultId]);
 
@@ -735,10 +855,6 @@ export function VaultOpenWorkspace({
       window.setTimeout(() => {
         skipVaultUrlOpenEffectRef.current = false;
       }, 0);
-      if (id !== activeTabId && activeTabId) {
-        setHistPast((p) => [...p, activeTabId]);
-        setHistFuture([]);
-      }
       dispatchUi({ type: "open", id });
       void setVaultPageQuery({ file: id, folder: null, view: null });
     },
@@ -1004,6 +1120,11 @@ export function VaultOpenWorkspace({
           return next;
         });
         dispatchUi({ type: "replaceDoc", from: session.docId, to: r.newDocId });
+      } else {
+        markLazyGitDirtyDoc(session.docId);
+      }
+      if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+        bumpFullSnapshotDirtyForPush();
       }
     } else {
       const r = renameDirectory(treeRoot, session.treePath, trimmed);
@@ -1013,9 +1134,22 @@ export function VaultOpenWorkspace({
       }
       setTreeRoot(r.root);
       migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+      if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+        bumpLazyGitTreeDirtyForPush();
+      } else if (isBackendSyncVaultId(vaultId)) {
+        bumpFullSnapshotDirtyForPush();
+      }
     }
     setExplorerInlineRename(null);
-  }, [treeRoot, migrateDocPrefixes, markLazyGitDirtyDoc]);
+  }, [
+    treeRoot,
+    migrateDocPrefixes,
+    markLazyGitDirtyDoc,
+    vaultId,
+    activeVaultMeta,
+    bumpFullSnapshotDirtyForPush,
+    bumpLazyGitTreeDirtyForPush,
+  ]);
 
   const cancelExplorerInlineRename = useCallback(() => setExplorerInlineRename(null), []);
 
@@ -1087,8 +1221,22 @@ export function VaultOpenWorkspace({
         dispatchUi({ type: "replaceDoc", from, to });
       }
       bumpExplorerTree();
+      if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+        bumpLazyGitTreeDirtyForPush();
+      } else if (isBackendSyncVaultId(vaultId)) {
+        bumpFullSnapshotDirtyForPush();
+      }
     },
-    [treeRoot, migrateDocPrefixes, bumpExplorerTree, markLazyGitDirtyDoc]
+    [
+      treeRoot,
+      migrateDocPrefixes,
+      bumpExplorerTree,
+      markLazyGitDirtyDoc,
+      vaultId,
+      activeVaultMeta,
+      bumpLazyGitTreeDirtyForPush,
+      bumpFullSnapshotDirtyForPush,
+    ]
   );
 
   const confirmExplorerDeleteFromDialog = useCallback(() => {
@@ -1111,7 +1259,20 @@ export function VaultOpenWorkspace({
     });
     setExplorerDeleteItems(null);
     bumpExplorerTree();
-  }, [explorerDeleteItems, treeRoot, bumpExplorerTree]);
+    if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+      bumpLazyGitTreeDirtyForPush();
+    } else if (isBackendSyncVaultId(vaultId)) {
+      bumpFullSnapshotDirtyForPush();
+    }
+  }, [
+    explorerDeleteItems,
+    treeRoot,
+    bumpExplorerTree,
+    vaultId,
+    activeVaultMeta,
+    bumpLazyGitTreeDirtyForPush,
+    bumpFullSnapshotDirtyForPush,
+  ]);
 
   const explorerDeleteDialogCopy = useMemo(() => {
     if (!explorerDeleteItems?.length) return { title: "", body: "" };
@@ -1131,22 +1292,6 @@ export function VaultOpenWorkspace({
     const body = `${lines.join("\n")}\n\nEsta ação não pode ser desfeita.`;
     return { title, body };
   }, [explorerDeleteItems, treeChildren]);
-
-  const goNavBack = useCallback(() => {
-    if (histPast.length === 0) return;
-    const prev = histPast[histPast.length - 1];
-    setHistPast((p) => p.slice(0, -1));
-    if (activeTabId) setHistFuture((f) => [activeTabId, ...f]);
-    dispatchUi({ type: "open", id: prev });
-  }, [histPast, activeTabId]);
-
-  const goNavForward = useCallback(() => {
-    if (histFuture.length === 0) return;
-    const next = histFuture[0];
-    setHistFuture((f) => f.slice(1));
-    if (activeTabId) setHistPast((p) => [...p, activeTabId]);
-    dispatchUi({ type: "open", id: next });
-  }, [histFuture, activeTabId]);
 
   const cycleTreeSort = useCallback(() => {
     setTreeSortOrder((o: TreeSortOrder) =>
@@ -1176,9 +1321,8 @@ export function VaultOpenWorkspace({
     () => vaultDocBreadcrumb(treeChildren, activeTabId || ""),
     [treeChildren, activeTabId],
   );
-  const editorBreadcrumbLabel = editorBreadcrumb.join(" / ");
 
-  /** Evita mostrar breadcrumb / chrome do editor enquanto o blob lazy ainda não chegou (sem “flash” do path). */
+  /** Evita mostrar atalhos do editor na barra de abas enquanto o blob lazy ainda não chegou. */
   const editorSubChromeLoading =
     usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading;
 
@@ -1200,6 +1344,9 @@ export function VaultOpenWorkspace({
           setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
           browseSelectFile(r.docId);
           setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "new-folder": {
@@ -1210,6 +1357,11 @@ export function VaultOpenWorkspace({
           }
           setTreeRoot(r.root);
           setExpandedPaths((p) => new Set([...p, cmd.parentTreePath, r.path]));
+          if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpLazyGitTreeDirtyForPush();
+          } else if (isBackendSyncVaultId(vaultId)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "new-canvas": {
@@ -1224,6 +1376,9 @@ export function VaultOpenWorkspace({
           setNoteContents((prev) => ({ ...prev, [r.docId]: body }));
           browseSelectFile(r.docId);
           setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "new-base": {
@@ -1237,6 +1392,9 @@ export function VaultOpenWorkspace({
           setNoteContents((prev) => ({ ...prev, [r.docId]: "{}\n" }));
           browseSelectFile(r.docId);
           setExpandedPaths((p) => new Set([...p, cmd.parentTreePath]));
+          if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "duplicate": {
@@ -1252,6 +1410,9 @@ export function VaultOpenWorkspace({
           markLazyGitDirtyDoc(copyId);
           setNoteContents((prev) => ({ ...prev, [copyId]: src }));
           browseSelectFile(copyId);
+          if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "move-file": {
@@ -1288,6 +1449,13 @@ export function VaultOpenWorkspace({
             });
             dispatchUi({ type: "replaceDoc", from: cmd.docId, to: r.newDocId });
           }
+          if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            if (!r.newDocId || r.newDocId === cmd.docId) {
+              bumpLazyGitTreeDirtyForPush();
+            }
+          } else if (isBackendSyncVaultId(vaultId)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "move-folder": {
@@ -1312,6 +1480,11 @@ export function VaultOpenWorkspace({
           }
           setTreeRoot(r.root);
           migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+          if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+            bumpLazyGitTreeDirtyForPush();
+          } else if (isBackendSyncVaultId(vaultId)) {
+            bumpFullSnapshotDirtyForPush();
+          }
           break;
         }
         case "search-in-folder": {
@@ -1394,6 +1567,9 @@ export function VaultOpenWorkspace({
       browseSelectFile,
       migrateDocPrefixes,
       markLazyGitDirtyDoc,
+      bumpFullSnapshotDirtyForPush,
+      bumpLazyGitTreeDirtyForPush,
+      activeVaultMeta,
       openExplorerDeleteDialog,
       openExplorerInlineRename,
     ]
@@ -1524,6 +1700,11 @@ export function VaultOpenWorkspace({
                 });
               }
             }}
+            giteaSyncSpinningDocId={
+              isBackendSyncVaultId(vaultId) && giteaSyncStatus === "syncing"
+                ? (activeTabId ?? null)
+                : undefined
+            }
           />
         )}
 
@@ -1602,142 +1783,56 @@ export function VaultOpenWorkspace({
           >
             <Columns className="size-4" />
           </button>
-          {isBackendSyncVaultId(vaultId) ? (
-            <div className="ml-0.5 flex min-w-0 shrink-0 items-center gap-1 border-l border-border/60 pl-1.5">
+          {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
+            <div className="ml-0.5 flex shrink-0 items-center gap-0.5 border-l border-border/60 pl-1.5">
               <button
                 type="button"
-                title={
-                  giteaSyncError
-                    ? giteaSyncError
-                    : giteaSyncStatus === "syncing"
-                      ? "A sincronizar com o Gitea…"
-                      : giteaSyncStatus === "synced"
-                        ? lastGiteaCommitHash
-                          ? `Sincronizado (${lastGiteaCommitHash})`
-                          : "Sincronizado com o Gitea"
-                        : giteaSyncStatus === "error"
-                          ? "Erro ao sincronizar — clique para tentar de novo"
-                          : usesLazyGitRemote(vaultId, activeVaultMeta)
-                            ? `Sincronizar com o Gitea (Git lazy: descarrega ficheiros em falta antes do push)${activeVaultMeta?.pathLabel ? ` — ${activeVaultMeta.pathLabel}` : ""}`
-                            : `Sincronizar com o Gitea${activeVaultMeta?.pathLabel ? ` (${activeVaultMeta.pathLabel})` : ""}`
-                }
-                onClick={() => void runVaultGiteaSync(vaultId)}
-                disabled={giteaSyncStatus === "syncing"}
-                aria-label={
-                  giteaSyncStatus === "syncing"
-                    ? "A sincronizar com o Gitea"
-                    : giteaSyncStatus === "synced"
-                      ? "Sincronizado — clique para sincronizar de novo"
-                      : giteaSyncStatus === "error"
-                        ? "Erro na sincronização — clique para tentar de novo"
-                        : "Sincronizar agora com o Gitea"
-                }
-                className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-all duration-200",
-                  giteaSyncStatus === "idle" &&
-                    "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  giteaSyncStatus === "syncing" &&
-                    "cursor-wait text-sky-600 ring-2 ring-sky-500/45 motion-safe:animate-pulse dark:text-sky-400 dark:ring-sky-400/40 disabled:opacity-100",
-                  giteaSyncStatus === "synced" &&
-                    "text-emerald-600 shadow-[0_0_10px_-2px_rgba(16,185,129,0.55)] hover:bg-emerald-500/10 dark:text-emerald-400 dark:shadow-[0_0_12px_-2px_rgba(52,211,153,0.4)]",
-                  giteaSyncStatus === "error" &&
-                    "text-destructive ring-2 ring-destructive/40 hover:bg-destructive/10 motion-safe:animate-pulse",
-                )}
+                disabled
+                title="Modo leitura (em breve)"
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
+                aria-label="Modo leitura"
               >
-                <CloudUpload
-                  className={cn(
-                    "size-4",
-                    giteaSyncStatus === "syncing" && "motion-safe:scale-110",
-                  )}
-                />
+                <BookOpen className="size-4" />
               </button>
-              {lastGiteaCommitHash && giteaSyncStatus === "synced" ? (
-                <span
-                  className="hidden max-w-[4.5rem] truncate font-mono text-[9px] text-muted-foreground sm:inline"
-                  title={lastGiteaCommitHash}
+              <Menu.Root>
+                <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+                  <MoreVertical className="size-4" aria-label="Mais opções" />
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                    <Menu.Popup
+                      className={cn(
+                        "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                        "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                      )}
+                    >
+                      <Menu.Item className={vaultChromeMenuItemClass} onClick={() => quickNewNoteFromToolbar()}>
+                        Nova nota
+                      </Menu.Item>
+                      <Menu.Item className={vaultChromeMenuItemClass} onClick={() => openGraph()}>
+                        Abrir grafo
+                      </Menu.Item>
+                    </Menu.Popup>
+                  </Menu.Positioner>
+                </Menu.Portal>
+              </Menu.Root>
+              {!isVaultPlainTextDocId(activeTabId) ? (
+                <button
+                  type="button"
+                  onClick={() => setEditorSourceMode((v) => !v)}
+                  className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                    editorSourceMode && "bg-muted text-foreground",
+                  )}
+                  title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
+                  aria-pressed={editorSourceMode}
                 >
-                  {lastGiteaCommitHash}
-                </span>
+                  <FileCode2 className="size-4" />
+                </button>
               ) : null}
             </div>
           ) : null}
         </div>
-
-        {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
-          <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-card/20 px-1">
-            <button
-              type="button"
-              disabled={histPast.length === 0}
-              onClick={goNavBack}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              title="Voltar"
-              aria-label="Voltar"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <button
-              type="button"
-              disabled={histFuture.length === 0}
-              onClick={goNavForward}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              title="Avançar"
-              aria-label="Avançar"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-            <span
-              className="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground sm:text-[11px]"
-              title={editorBreadcrumbLabel}
-            >
-              {editorBreadcrumbLabel}
-            </span>
-            <button
-              type="button"
-              disabled
-              title="Modo leitura (em breve)"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-40"
-              aria-label="Modo leitura"
-            >
-              <BookOpen className="size-4" />
-            </button>
-            <Menu.Root>
-              <Menu.Trigger className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
-                <MoreVertical className="size-4" aria-label="Mais opções" />
-              </Menu.Trigger>
-              <Menu.Portal>
-                <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
-                  <Menu.Popup
-                    className={cn(
-                      "min-w-[180px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
-                      "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
-                    )}
-                  >
-                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => quickNewNoteFromToolbar()}>
-                      Nova nota
-                    </Menu.Item>
-                    <Menu.Item className={vaultChromeMenuItemClass} onClick={() => openGraph()}>
-                      Abrir grafo
-                    </Menu.Item>
-                  </Menu.Popup>
-                </Menu.Positioner>
-              </Menu.Portal>
-            </Menu.Root>
-            {!isVaultPlainTextDocId(activeTabId) ? (
-              <button
-                type="button"
-                onClick={() => setEditorSourceMode((v) => !v)}
-                className={cn(
-                  "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
-                  editorSourceMode && "bg-muted text-foreground",
-                )}
-                title={editorSourceMode ? "Modo blocos" : "Modo fonte (Markdown)"}
-                aria-pressed={editorSourceMode}
-              >
-                <FileCode2 className="size-4" />
-              </button>
-            ) : null}
-          </div>
-        ) : null}
 
         {viewMode === "graph" ? (
           <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
@@ -1760,6 +1855,11 @@ export function VaultOpenWorkspace({
             key={activeTabId}
             vaultId={vaultId}
             docId={activeTabId}
+            plateEditorMountKey={
+              lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
+                ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
+                : undefined
+            }
             value={
               noteContents[activeTabId] ??
               (lazyActiveBlobQueryEnabled
@@ -1770,6 +1870,8 @@ export function VaultOpenWorkspace({
             onChange={(next) => {
               if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
                 markLazyGitDirtyDoc(activeTabId);
+              } else if (isBackendSyncVaultId(vaultId)) {
+                bumpFullSnapshotDirtyForPush();
               }
               setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
             }}

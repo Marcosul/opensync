@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Folder } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, RefreshCw } from "lucide-react";
 import {
   type DragEvent,
   type FocusEvent,
@@ -95,6 +95,8 @@ export type VaultExplorerTreeViewProps = {
   onExplorerRenameRow: (row: ExplorerVisibleRow) => void;
   renameRowClass: string;
   renameInputClass: string;
+  /** Durante sync Gitea: substitui o ícone do ficheiro com este `docId` por `RefreshCw`. */
+  giteaSyncSpinningDocId?: string | null;
 };
 
 export function VaultExplorerTreeView({
@@ -122,6 +124,7 @@ export function VaultExplorerTreeView({
   onExplorerRenameRow,
   renameRowClass,
   renameInputClass,
+  giteaSyncSpinningDocId,
 }: VaultExplorerTreeViewProps) {
   const shared: Omit<VaultExplorerTreeViewProps, "entries" | "parentDirPath" | "depth"> = {
     expandedPaths,
@@ -145,6 +148,7 @@ export function VaultExplorerTreeView({
     onExplorerRenameRow,
     renameRowClass,
     renameInputClass,
+    giteaSyncSpinningDocId,
   };
 
   const focusRenameInputCaretStart = (e: FocusEvent<HTMLInputElement>) => {
@@ -425,7 +429,15 @@ export function VaultExplorerTreeView({
                     rowVisual(fileRow, active)
                   )}
                 >
-                  <VaultExplorerFileIcon fileName={entry.name} active={active} size={14} />
+                  {giteaSyncSpinningDocId && entry.docId === giteaSyncSpinningDocId ? (
+                    <RefreshCw
+                      className="size-3 shrink-0 animate-spin-slow text-muted-foreground motion-reduce:animate-none"
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                  ) : (
+                    <VaultExplorerFileIcon fileName={entry.name} active={active} size={14} />
+                  )}
                   <span className="min-w-0 truncate">{entry.name}</span>
                 </button>
               </VaultExplorerContextMenu>

@@ -10,9 +10,9 @@ import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import {
   normalizeVaultRelativePath,
   validateVaultSyncFiles,
+  VAULT_MIRROR_DB_PAGE_SIZE,
   VAULT_READ_MAX_BLOB_BYTES,
   VAULT_READ_MAX_TREE_ENTRIES,
-  VAULT_SYNC_MAX_PAYLOAD_BYTES,
 } from '../sync/vault-git-sync.service';
 
 const colors = {
@@ -23,6 +23,22 @@ const colors = {
 };
 
 const CHANGES_PAGE_SIZE = 500;
+
+/** Snapshots percorrem muitas linhas; o timeout default do Prisma (~5s) fecha a tx e gera P2028. */
+const SNAPSHOT_TX_MAX_WAIT_MS = 20_000;
+const SNAPSHOT_TX_TIMEOUT_MS = 300_000;
+
+/**
+ * Hosted Postgres (Neon, RDS, etc.) costuma impor `statement_timeout` baixo; o Prisma só controla
+ * o tempo da transacção interactiva — o PG ainda pode cancelar cada UPDATE com 57014.
+ * `SET LOCAL` aplica só a esta transacção.
+ */
+async function setLocalStatementTimeoutMs(
+  tx: { $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown> },
+  ms: number,
+): Promise<void> {
+  await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${ms}`);
+}
 
 function parseBaseVersion(raw: string | null | undefined): number | null {
   if (raw === null || raw === undefined) return null;
@@ -139,59 +155,103 @@ export class VaultFilesService {
     }
     const baseVersion = parseBaseVersion(baseVersionRaw ?? null);
 
-    return this.prisma.$transaction(async (tx) => {
-      const row = await tx.vaultFile.findUnique({
-        where: { vaultId_path: { vaultId, path } },
-      });
+    return this.prisma.$transaction(
+      async (tx) => {
+        await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);
 
-      if (!row) {
-        if (baseVersion !== null) {
-          throw new ConflictException({
-            message: 'Ficheiro nao existe; omita base_version para criar',
+        const row = await tx.vaultFile.findUnique({
+          where: { vaultId_path: { vaultId, path } },
+        });
+
+        if (!row) {
+          if (baseVersion !== null) {
+            throw new ConflictException({
+              message: 'Ficheiro nao existe; omita base_version para criar',
+              path,
+              currentVersion: null,
+            });
+          }
+          const version = 1;
+          const created = await tx.vaultFile.create({
+            data: {
+              vaultId,
+              path,
+              content,
+              version,
+              sizeBytes: bytes,
+              deletedAt: null,
+            },
+          });
+          await tx.vaultFileChange.create({
+            data: {
+              vaultId,
+              path,
+              version,
+              changeType: 'upsert',
+              content,
+            },
+          });
+          this.logger.log(
+            `${colors.green}📄 vault file criado${colors.reset} vault=${vaultId} path=${path} v=${version}`,
+          );
+          return {
             path,
-            currentVersion: null,
+            version: String(version),
+            updated_at: created.updatedAt.toISOString(),
+          };
+        }
+
+        if (row.deletedAt) {
+          const tomb = row.version;
+          if (baseVersion !== null && baseVersion !== tomb) {
+            throw new ConflictException({
+              message: 'Versao remota divergiu',
+              path,
+              currentVersion: String(tomb),
+            });
+          }
+          const version = tomb + 1;
+          const updated = await tx.vaultFile.update({
+            where: { vaultId_path: { vaultId, path } },
+            data: {
+              content,
+              version,
+              sizeBytes: bytes,
+              deletedAt: null,
+            },
+          });
+          await tx.vaultFileChange.create({
+            data: {
+              vaultId,
+              path,
+              version,
+              changeType: 'upsert',
+              content,
+            },
+          });
+          return {
+            path,
+            version: String(version),
+            updated_at: updated.updatedAt.toISOString(),
+          };
+        }
+
+        if (baseVersion === null) {
+          throw new ConflictException({
+            message: 'base_version obrigatorio para ficheiro existente',
+            path,
+            currentVersion: String(row.version),
           });
         }
-        const version = 1;
-        const created = await tx.vaultFile.create({
-          data: {
-            vaultId,
-            path,
-            content,
-            version,
-            sizeBytes: bytes,
-            deletedAt: null,
-          },
-        });
-        await tx.vaultFileChange.create({
-          data: {
-            vaultId,
-            path,
-            version,
-            changeType: 'upsert',
-            content,
-          },
-        });
-        this.logger.log(
-          `${colors.green}📄 vault file criado${colors.reset} vault=${vaultId} path=${path} v=${version}`,
-        );
-        return {
-          path,
-          version: String(version),
-          updated_at: created.updatedAt.toISOString(),
-        };
-      }
-
-      if (row.deletedAt) {
-        const tomb = row.version;
-        if (baseVersion !== null && baseVersion !== tomb) {
+        if (baseVersion !== row.version) {
           throw new ConflictException({
             message: 'Versao remota divergiu',
             path,
-            currentVersion: String(tomb),
+            currentVersion: String(row.version),
           });
         }
-        const version = tomb + 1;
+
+        const version = row.version + 1;
         const updated = await tx.vaultFile.update({
           where: { vaultId_path: { vaultId, path } },
           data: {
@@ -215,48 +275,12 @@ export class VaultFilesService {
           version: String(version),
           updated_at: updated.updatedAt.toISOString(),
         };
-      }
-
-      if (baseVersion === null) {
-        throw new ConflictException({
-          message: 'base_version obrigatorio para ficheiro existente',
-          path,
-          currentVersion: String(row.version),
-        });
-      }
-      if (baseVersion !== row.version) {
-        throw new ConflictException({
-          message: 'Versao remota divergiu',
-          path,
-          currentVersion: String(row.version),
-        });
-      }
-
-      const version = row.version + 1;
-      const updated = await tx.vaultFile.update({
-        where: { vaultId_path: { vaultId, path } },
-        data: {
-          content,
-          version,
-          sizeBytes: bytes,
-          deletedAt: null,
-        },
-      });
-      await tx.vaultFileChange.create({
-        data: {
-          vaultId,
-          path,
-          version,
-          changeType: 'upsert',
-          content,
-        },
-      });
-      return {
-        path,
-        version: String(version),
-        updated_at: updated.updatedAt.toISOString(),
-      };
-    });
+      },
+      {
+        maxWait: SNAPSHOT_TX_MAX_WAIT_MS,
+        timeout: SNAPSHOT_TX_TIMEOUT_MS,
+      },
+    );
   }
 
   async deleteWithBaseVersion(
@@ -273,45 +297,53 @@ export class VaultFilesService {
       throw new BadRequestException('base_version obrigatorio para delete');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const row = await tx.vaultFile.findUnique({
-        where: { vaultId_path: { vaultId, path } },
-      });
-      if (!row || row.deletedAt) {
-        throw new NotFoundException('Ficheiro nao encontrado ou ja removido');
-      }
-      if (baseVersion !== row.version) {
-        throw new ConflictException({
-          message: 'Versao remota divergiu',
-          path,
-          currentVersion: String(row.version),
+    return this.prisma.$transaction(
+      async (tx) => {
+        await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);
+
+        const row = await tx.vaultFile.findUnique({
+          where: { vaultId_path: { vaultId, path } },
         });
-      }
-      const version = row.version + 1;
-      const updated = await tx.vaultFile.update({
-        where: { vaultId_path: { vaultId, path } },
-        data: {
-          content: null,
-          version,
-          sizeBytes: null,
-          deletedAt: new Date(),
-        },
-      });
-      await tx.vaultFileChange.create({
-        data: {
-          vaultId,
+        if (!row || row.deletedAt) {
+          throw new NotFoundException('Ficheiro nao encontrado ou ja removido');
+        }
+        if (baseVersion !== row.version) {
+          throw new ConflictException({
+            message: 'Versao remota divergiu',
+            path,
+            currentVersion: String(row.version),
+          });
+        }
+        const version = row.version + 1;
+        const updated = await tx.vaultFile.update({
+          where: { vaultId_path: { vaultId, path } },
+          data: {
+            content: null,
+            version,
+            sizeBytes: null,
+            deletedAt: new Date(),
+          },
+        });
+        await tx.vaultFileChange.create({
+          data: {
+            vaultId,
+            path,
+            version,
+            changeType: 'delete',
+            content: null,
+          },
+        });
+        return {
           path,
-          version,
-          changeType: 'delete',
-          content: null,
-        },
-      });
-      return {
-        path,
-        version: String(version),
-        updated_at: updated.updatedAt.toISOString(),
-      };
-    });
+          version: String(version),
+          updated_at: updated.updatedAt.toISOString(),
+        };
+      },
+      {
+        maxWait: SNAPSHOT_TX_MAX_WAIT_MS,
+        timeout: SNAPSHOT_TX_TIMEOUT_MS,
+      },
+    );
   }
 
   /**
@@ -327,32 +359,127 @@ export class VaultFilesService {
       Array.isArray(files) ||
       Object.keys(files).length === 0;
 
-    const syntheticHash = await this.prisma.$transaction(async (tx) => {
-      if (isEmptyPayload) {
-        const active = await tx.vaultFile.findMany({
-          where: { vaultId, deletedAt: null },
-          select: { path: true, version: true },
-        });
-        for (const row of active) {
-          const version = row.version + 1;
-          await tx.vaultFile.update({
-            where: { vaultId_path: { vaultId, path: row.path } },
-            data: {
-              content: null,
-              version,
-              sizeBytes: null,
-              deletedAt: new Date(),
-            },
+    const syntheticHash = await this.prisma.$transaction(
+      async (tx) => {
+        await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);
+
+        let lastChangeId: bigint | null = null;
+        const appendChange = async (data: Parameters<typeof tx.vaultFileChange.create>[0]) => {
+          const created = await tx.vaultFileChange.create(data);
+          if (typeof created.id === 'bigint') {
+            lastChangeId = created.id;
+          }
+          return created;
+        };
+
+        if (isEmptyPayload) {
+          const active = await tx.vaultFile.findMany({
+            where: { vaultId, deletedAt: null },
+            select: { path: true, version: true },
           });
-          await tx.vaultFileChange.create({
-            data: {
-              vaultId,
-              path: row.path,
-              version,
-              changeType: 'delete',
-              content: null,
-            },
+          for (const row of active) {
+            const version = row.version + 1;
+            await tx.vaultFile.update({
+              where: { vaultId_path: { vaultId, path: row.path } },
+              data: {
+                content: null,
+                version,
+                sizeBytes: null,
+                deletedAt: new Date(),
+              },
+            });
+            await appendChange({
+              data: {
+                vaultId,
+                path: row.path,
+                version,
+                changeType: 'delete',
+                content: null,
+              },
+            });
+          }
+        } else {
+          const wanted = validateVaultSyncFiles(files);
+          const wantedPaths = new Set(wanted.keys());
+
+          for (const [path, content] of wanted) {
+            const bytes = Buffer.byteLength(content, 'utf8');
+            const prev = await tx.vaultFile.findUnique({
+              where: { vaultId_path: { vaultId, path } },
+            });
+            if (!prev) {
+              await tx.vaultFile.create({
+                data: {
+                  vaultId,
+                  path,
+                  content,
+                  version: 1,
+                  sizeBytes: bytes,
+                  deletedAt: null,
+                },
+              });
+              await appendChange({
+                data: {
+                  vaultId,
+                  path,
+                  version: 1,
+                  changeType: 'upsert',
+                  content,
+                },
+              });
+            } else {
+              const version = prev.version + 1;
+              await tx.vaultFile.update({
+                where: { vaultId_path: { vaultId, path } },
+                data: {
+                  content,
+                  version,
+                  sizeBytes: bytes,
+                  deletedAt: null,
+                },
+              });
+              await appendChange({
+                data: {
+                  vaultId,
+                  path,
+                  version,
+                  changeType: 'upsert',
+                  content,
+                },
+              });
+            }
+          }
+
+          const afterUpserts = await tx.vaultFile.findMany({
+            where: { vaultId, deletedAt: null },
+            select: { path: true, version: true },
           });
+          for (const row of afterUpserts) {
+            if (wantedPaths.has(row.path)) continue;
+            const version = row.version + 1;
+            await tx.vaultFile.update({
+              where: { vaultId_path: { vaultId, path: row.path } },
+              data: {
+                content: null,
+                version,
+                sizeBytes: null,
+                deletedAt: new Date(),
+              },
+            });
+            await appendChange({
+              data: {
+                vaultId,
+                path: row.path,
+                version,
+                changeType: 'delete',
+                content: null,
+              },
+            });
+          }
+        }
+
+        if (lastChangeId !== null) {
+          return String(lastChangeId);
         }
         const maxCh = await tx.vaultFileChange.findFirst({
           where: { vaultId },
@@ -360,93 +487,12 @@ export class VaultFilesService {
           select: { id: true },
         });
         return maxCh ? String(maxCh.id) : '0';
-      }
-
-      const wanted = validateVaultSyncFiles(files);
-      const wantedPaths = new Set(wanted.keys());
-
-      for (const [path, content] of wanted) {
-        const bytes = Buffer.byteLength(content, 'utf8');
-        const prev = await tx.vaultFile.findUnique({
-          where: { vaultId_path: { vaultId, path } },
-        });
-        if (!prev) {
-          await tx.vaultFile.create({
-            data: {
-              vaultId,
-              path,
-              content,
-              version: 1,
-              sizeBytes: bytes,
-              deletedAt: null,
-            },
-          });
-          await tx.vaultFileChange.create({
-            data: {
-              vaultId,
-              path,
-              version: 1,
-              changeType: 'upsert',
-              content,
-            },
-          });
-        } else {
-          const version = prev.version + 1;
-          await tx.vaultFile.update({
-            where: { vaultId_path: { vaultId, path } },
-            data: {
-              content,
-              version,
-              sizeBytes: bytes,
-              deletedAt: null,
-            },
-          });
-          await tx.vaultFileChange.create({
-            data: {
-              vaultId,
-              path,
-              version,
-              changeType: 'upsert',
-              content,
-            },
-          });
-        }
-      }
-
-      const afterUpserts = await tx.vaultFile.findMany({
-        where: { vaultId, deletedAt: null },
-        select: { path: true, version: true },
-      });
-      for (const row of afterUpserts) {
-        if (wantedPaths.has(row.path)) continue;
-        const version = row.version + 1;
-        await tx.vaultFile.update({
-          where: { vaultId_path: { vaultId, path: row.path } },
-          data: {
-            content: null,
-            version,
-            sizeBytes: null,
-            deletedAt: new Date(),
-          },
-        });
-        await tx.vaultFileChange.create({
-          data: {
-            vaultId,
-            path: row.path,
-            version,
-            changeType: 'delete',
-            content: null,
-          },
-        });
-      }
-
-      const maxCh = await tx.vaultFileChange.findFirst({
-        where: { vaultId },
-        orderBy: { id: 'desc' },
-        select: { id: true },
-      });
-      return maxCh ? String(maxCh.id) : '0';
-    });
+      },
+      {
+        maxWait: SNAPSHOT_TX_MAX_WAIT_MS,
+        timeout: SNAPSHOT_TX_TIMEOUT_MS,
+      },
+    );
 
     this.logger.log(
       `${colors.cyan}📦 Snapshot vault aplicado${colors.reset} vault=${vaultId} empty=${isEmptyPayload} tailChange=${syntheticHash}`,
@@ -463,25 +509,36 @@ export class VaultFilesService {
     return this.applyTrustedSnapshot(vaultId, files);
   }
 
-  /** Mapa path -> conteudo para espelho Gitea (ficheiros nao apagados). */
-  async buildFilesMapForMirror(vaultId: string): Promise<Record<string, string>> {
-    const rows = await this.prisma.vaultFile.findMany({
-      where: { vaultId, deletedAt: null },
-      select: { path: true, content: true },
-    });
-    const out: Record<string, string> = {};
-    let total = 0;
-    for (const r of rows) {
-      const c = r.content ?? '';
-      total += Buffer.byteLength(c, 'utf8');
-      if (total > VAULT_SYNC_MAX_PAYLOAD_BYTES) {
-        throw new BadRequestException(
-          `Espelho Gitea excede ${VAULT_SYNC_MAX_PAYLOAD_BYTES} bytes; reduza o vault`,
-        );
+  /**
+   * Ficheiros activos do vault para espelho Gitea, paginados por `path` (pouca RAM; conteúdos grandes ok).
+   */
+  async *streamActiveVaultFilesForMirror(
+    vaultId: string,
+    pageSize: number = VAULT_MIRROR_DB_PAGE_SIZE,
+  ): AsyncGenerator<{ rel: string; body: string }> {
+    const take = Math.max(1, Math.min(pageSize, 500));
+    let cursorPath: string | undefined;
+    for (;;) {
+      const rows = await this.prisma.vaultFile.findMany({
+        where: { vaultId, deletedAt: null },
+        orderBy: { path: 'asc' },
+        take,
+        ...(cursorPath
+          ? { skip: 1, cursor: { vaultId_path: { vaultId, path: cursorPath } } }
+          : {}),
+        select: { path: true, content: true },
+      });
+      if (rows.length === 0) {
+        return;
       }
-      out[r.path] = c;
+      for (const r of rows) {
+        yield { rel: r.path, body: r.content ?? '' };
+      }
+      if (rows.length < take) {
+        return;
+      }
+      cursorPath = rows[rows.length - 1]!.path;
     }
-    return out;
   }
 
   async maxChangeId(vaultId: string): Promise<bigint> {

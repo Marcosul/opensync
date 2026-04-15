@@ -72,19 +72,20 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
   return (
     <div
       className={cn(
-        "group relative z-0 flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all",
+        "group flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all",
         "hover:border-primary/40 hover:shadow-md",
       )}
     >
-      <Link
-        href={explorerHref}
-        className="absolute inset-0 z-0 rounded-xl outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Abrir explorador do cofre ${vault.name}`}
-      />
-
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col gap-3 pointer-events-none">
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <Link
+            href={explorerHref}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg outline-none ring-offset-background",
+              "focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+            aria-label={`Abrir explorador do cofre ${vault.name}`}
+          >
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50">
               <FolderOpen
                 className="size-4 text-muted-foreground transition-colors group-hover:text-primary"
@@ -97,9 +98,9 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
                 {vault.isEmpty ? "Sem agente" : `${vault.fileCount} arquivos`}
               </p>
             </div>
-          </div>
+          </Link>
 
-          <div className="flex shrink-0 items-start gap-1 pointer-events-auto">
+          <div className="flex shrink-0 items-start gap-1">
             <div
               className={cn(
                 "flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -147,16 +148,21 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5">
+        <Link
+          href={explorerHref}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 outline-none ring-offset-background",
+            "transition-colors hover:border-border hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+          aria-label={`Abrir explorador: ${vault.description}`}
+        >
           {vault.isEmpty ? (
             <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           ) : (
             <Cpu className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           )}
-          <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-            {vault.description}
-          </p>
-        </div>
+          <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{vault.description}</p>
+        </Link>
       </div>
     </div>
   );

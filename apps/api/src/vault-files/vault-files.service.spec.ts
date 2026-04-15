@@ -3,6 +3,7 @@ import { VaultFilesService } from './vault-files.service';
 
 function mockTx() {
   return {
+    $executeRawUnsafe: jest.fn().mockResolvedValue(undefined),
     vaultFile: {
       findMany: jest.fn(),
       findUnique: jest.fn(),

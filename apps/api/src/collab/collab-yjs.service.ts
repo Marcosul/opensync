@@ -62,7 +62,7 @@ export class CollabYjsService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
-    const expectedRoom = `lexical:${verified.vaultId}:${verified.docId}`;
+    const expectedRoom = `note:${verified.vaultId}:${verified.docId}`;
     if (room !== expectedRoom) {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();

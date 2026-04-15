@@ -10,6 +10,7 @@ import {
   ChevronsDownUp,
   Folder,
   FolderPlus,
+  RefreshCw,
   Search,
   SquarePen,
   X,
@@ -108,6 +109,8 @@ export function FileTree({
   onExplorerNewNote,
   onExplorerNewFolder,
   onExplorerRenameRow,
+  /** Doc cujo ícone na árvore mostra loading durante sync Gitea (`undefined` = cofre sem sync API). */
+  giteaSyncSpinningDocId,
 }: {
   treeRootLabel: string;
   /** Caminho da entrada raiz da árvore (`openclaw-root`, `vault-root`, …). */
@@ -152,6 +155,7 @@ export function FileTree({
   onExplorerNewNote: () => void;
   onExplorerNewFolder: () => void;
   onExplorerRenameRow: (row: ExplorerVisibleRow) => void;
+  giteaSyncSpinningDocId?: string | null;
 }) {
   const treeScrollRef = useRef<HTMLDivElement>(null);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
@@ -572,12 +576,6 @@ export function FileTree({
             onCommand={onExplorerCommand}
           >
             <div className="flex min-h-[min(40vh,14rem)] flex-col">
-              <p
-                className="mb-1 truncate px-1 font-mono text-[10px] text-muted-foreground/60"
-                title={treeRootLabel}
-              >
-                {treeRootLabel}
-              </p>
               <div
                 role="tree"
                 tabIndex={0}
@@ -613,6 +611,7 @@ export function FileTree({
                     onExplorerRenameRow={onExplorerRenameRow}
                     renameRowClass={EXPLORER_INLINE_RENAME_ROW_CLASS}
                     renameInputClass={EXPLORER_INLINE_RENAME_INPUT_CLASS}
+                    giteaSyncSpinningDocId={giteaSyncSpinningDocId ?? null}
                   />
                 </nav>
               </div>
@@ -643,12 +642,20 @@ export function FileTree({
                           : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
                       )}
                     >
-                      <VaultExplorerFileIcon
-                        fileName={shortName}
-                        active={selectedId === f.docId}
-                        size={13}
-                        className="shrink-0"
-                      />
+                      {giteaSyncSpinningDocId && giteaSyncSpinningDocId === f.docId ? (
+                        <RefreshCw
+                          className="size-3 shrink-0 animate-spin-slow text-muted-foreground motion-reduce:animate-none"
+                          strokeWidth={2}
+                          aria-hidden
+                        />
+                      ) : (
+                        <VaultExplorerFileIcon
+                          fileName={shortName}
+                          active={selectedId === f.docId}
+                          size={13}
+                          className="shrink-0"
+                        />
+                      )}
                       <span className="min-w-0 truncate">{f.label}</span>
                     </button>
                   </li>

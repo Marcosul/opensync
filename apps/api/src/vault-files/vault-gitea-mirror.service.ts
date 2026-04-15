@@ -56,8 +56,9 @@ export class VaultGiteaMirrorService implements OnModuleInit, OnModuleDestroy {
       if (maxId <= last) continue;
 
       try {
-        const files = await this.vaultFiles.buildFilesMapForMirror(v.id);
-        await this.vaultGitSync.pushMirrorTextFiles(v.giteaRepo, files);
+        await this.vaultGitSync.pushMirrorTextFilesStreamed(v.giteaRepo, () =>
+          this.vaultFiles.streamActiveVaultFilesForMirror(v.id),
+        );
         await this.prisma.vaultGiteaMirrorState.upsert({
           where: { vaultId: v.id },
           create: { vaultId: v.id, lastMirroredChangeId: maxId },
