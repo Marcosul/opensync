@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-export type AgentConfig = {
+export type SyncConfig = {
   apiUrl: string;
   vaultId: string;
   syncDir: string;
@@ -43,12 +43,12 @@ export function resolveUserPath(inputPath: string): string {
   return path.resolve(trimmed);
 }
 
-export function loadConfig(): AgentConfig {
+export function loadConfig(): SyncConfig {
   const p = configPath();
   if (!existsSync(p)) {
     throw new Error(`Config nao encontrada. Execute: opensync init (${p})`);
   }
-  const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<AgentConfig>;
+  const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<SyncConfig>;
   if (!raw.apiUrl?.trim() || !raw.vaultId?.trim() || !raw.syncDir?.trim()) {
     throw new Error("config.json precisa de apiUrl, vaultId e syncDir");
   }
@@ -62,7 +62,7 @@ export function loadConfig(): AgentConfig {
   };
 }
 
-export function saveConfig(cfg: AgentConfig): void {
+export function saveConfig(cfg: SyncConfig): void {
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
   writeFileSync(configPath(), JSON.stringify(cfg, null, 2), { mode: 0o600 });
 }
@@ -70,7 +70,7 @@ export function saveConfig(cfg: AgentConfig): void {
 export function normalizeAndPersistConfigPathsIfNeeded(): boolean {
   const p = configPath();
   if (!existsSync(p)) return false;
-  const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<AgentConfig>;
+  const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<SyncConfig>;
   const original = raw.syncDir?.trim() ?? "";
   const normalized = resolveUserPath(original);
   if (!original || original === normalized) return false;

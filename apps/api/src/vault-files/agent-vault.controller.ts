@@ -7,12 +7,16 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { FastifyReply } from 'fastify';
 import { PrismaService } from '../common/prisma.service';
 import { resolveVaultWithAgentBearer } from '../common/agent-vault.resolve';
 import { VaultFilesService } from './vault-files.service';
+import { VaultSseService } from './vault-sse.service';
+import type { VaultSseEvent } from '@opensync/sync';
 
 @Controller('agent/vaults')
 @UseGuards(ThrottlerGuard)
@@ -20,7 +24,67 @@ export class AgentVaultController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vaultFiles: VaultFilesService,
+    private readonly vaultSse: VaultSseService,
   ) {}
+
+  /**
+   * Stream SSE: notifica o cliente local quando há mudanças no vault.
+   * O cliente usa esta notificação para acionar imediatamente o poll de /changes,
+   * eliminando a necessidade de polling cego periódico.
+   * Emite heartbeat a cada 30s para manter a conexão viva através de proxies.
+   */
+  @Get(':vaultId/events')
+  @SkipThrottle()
+  async events(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+
+    const vid = vaultId.trim();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const send = (event: VaultSseEvent): void => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    const heartbeat = setInterval(
+      () => send({ type: 'heartbeat', vaultId: vid, ts: Date.now() }),
+      30_000,
+    );
+
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = this.vaultSse.subscribe(vid, (cursor) =>
+        send({ type: 'change', vaultId: vid, changeId: cursor, cursor }),
+      );
+    } catch {
+      // Limite de conexões atingido — retorna 429 e fecha
+      clearInterval(heartbeat);
+      reply.raw.writeHead(429, { 'Content-Type': 'application/json' });
+      reply.raw.end(JSON.stringify({ message: 'Too Many SSE connections for this vault' }));
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      reply.raw.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe?.();
+        resolve();
+      });
+      reply.raw.on('error', () => {
+        clearInterval(heartbeat);
+        unsubscribe?.();
+        resolve();
+      });
+    });
+  }
 
   @Get(':vaultId/changes')
   @Throttle({ default: { limit: 120, ttl: 60_000 } })

@@ -1,9 +1,11 @@
 import Database from "better-sqlite3";
-import * as crypto from "node:crypto";
-import type { AgentConfig } from "./config";
+import type { SyncConfig } from "./config";
 import { sqlitePath } from "./config";
+import { hashContent } from "@opensync/sync";
 
-export function openDb(cfg: AgentConfig): Database.Database {
+export { hashContent };
+
+export function openDb(cfg: SyncConfig): Database.Database {
   const db = new Database(sqlitePath(cfg.vaultId));
   db.exec(`
     CREATE TABLE IF NOT EXISTS files_state (
@@ -159,6 +161,3 @@ export function removePendingMergePush(db: Database.Database, filePath: string):
   }
 }
 
-export function hashContent(s: string): string {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}

@@ -1,6 +1,9 @@
-import type { AgentConfig } from "./config";
+import type { SyncConfig } from "./config";
+import type { ChangeRow, ManifestEntry } from "@opensync/sync";
 
-function apiBase(cfg: AgentConfig): string {
+export type { ChangeRow, ManifestEntry };
+
+function apiBase(cfg: SyncConfig): string {
   const raw = cfg.apiUrl.replace(/\/+$/, "");
   return raw.endsWith("/api") ? raw : `${raw}/api`;
 }
@@ -99,19 +102,10 @@ export async function createSyncToken(
   return JSON.parse(text) as { token: string };
 }
 
-// ─── Agent API (autenticado via osk_...) ─────────────────────────────────────
-
-export type ChangeRow = {
-  change_id: string;
-  path: string;
-  version: string;
-  deleted: boolean;
-  content: string | null;
-  updated_at: string;
-};
+// ─── App local API (autenticado via osk_...) ─────────────────────────────────
 
 export async function fetchChanges(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   cursor: string,
 ): Promise<{ changes: ChangeRow[]; next_cursor: string }> {
@@ -125,10 +119,8 @@ export async function fetchChanges(
   return JSON.parse(text) as { changes: ChangeRow[]; next_cursor: string };
 }
 
-export type ManifestEntry = { path: string; size: number; version: string };
-
 export async function fetchVaultManifest(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
 ): Promise<{ commitHash: string; entries: ManifestEntry[] }> {
   const base = apiBase(cfg);
@@ -142,7 +134,7 @@ export async function fetchVaultManifest(
 }
 
 export async function upsertFile(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   path: string,
   content: string,
@@ -178,7 +170,7 @@ export async function upsertFile(
 }
 
 export async function getFileContent(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   filePath: string,
 ): Promise<{ content: string; version: string }> {
@@ -193,7 +185,7 @@ export async function getFileContent(
 }
 
 export async function deleteFile(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   filePath: string,
   baseVersion: string,

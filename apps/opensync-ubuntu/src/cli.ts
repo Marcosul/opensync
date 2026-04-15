@@ -11,7 +11,7 @@ import {
   loadToken,
   saveConfig,
   saveToken,
-  type AgentConfig,
+  type SyncConfig,
   defaultConfigPath,
   tokenPath,
   sqlitePath,
@@ -19,7 +19,7 @@ import {
   normalizeAndPersistConfigPathsIfNeeded,
   resolveUserPath,
 } from "./config";
-import { runAgent } from "./engine";
+import { runSync } from "./engine";
 import * as api from "./api";
 import * as db from "./db";
 
@@ -371,7 +371,7 @@ async function cmdInit(): Promise<void> {
     }
 
     // ── Passo 5: Salvar config ────────────────────────────────────────────────
-    const cfg: AgentConfig = {
+    const cfg: SyncConfig = {
       apiUrl: API_URL,
       vaultId,
       syncDir: resolvedSyncDir,
@@ -425,7 +425,7 @@ async function cmdRun(): Promise<void> {
   }
   const cfg = loadConfig();
   const token = loadToken();
-  await runAgent(cfg, token);
+  await runSync(cfg, token);
 }
 
 async function cmdStatus(): Promise<void> {

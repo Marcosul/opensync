@@ -11,12 +11,16 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { FastifyReply } from 'fastify';
+import type { VaultSseEvent } from '@opensync/sync';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import { VaultFilesService } from '../vault-files/vault-files.service';
+import { VaultSseService } from '../vault-files/vault-sse.service';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { SyncVaultDto } from './dto/sync-vault.dto';
 import { GraphService } from './graph.service';
@@ -29,6 +33,7 @@ export class VaultsController {
     private readonly vaultGitSync: VaultGitSyncService,
     private readonly vaultFiles: VaultFilesService,
     private readonly graphService: GraphService,
+    private readonly vaultSse: VaultSseService,
   ) {}
 
   private requireUserId(userId: string | undefined): string {
@@ -161,5 +166,108 @@ export class VaultsController {
     const uid = this.requireUserId(userId);
     const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
     return this.vaultFiles.applyTrustedSnapshot(vault.id, body.files);
+  }
+
+  /**
+   * Upsert incremental de um único arquivo (usuário autenticado via web).
+   * Usa versionamento otimista: passa base_version para detectar conflitos (409).
+   * O cliente web deve ter lógica de merge em caso de 409 (igual ao app local).
+   */
+  @Post(':id/files/upsert')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
+  async upsertFile(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body() body: { path?: string; content?: string; base_version?: string | null },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const filePath = body?.path;
+    const content = body?.content;
+    if (!filePath?.trim() || typeof content !== 'string') {
+      throw new BadRequestException('path e content obrigatorios');
+    }
+    return this.vaultFiles.upsertWithBaseVersion(vault.id, filePath, content, body.base_version);
+  }
+
+  /**
+   * Delete incremental de um arquivo (usuário autenticado via web).
+   */
+  @Post(':id/files/delete')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async deleteFile(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body() body: { path?: string; base_version?: string },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const filePath = body?.path;
+    if (!filePath?.trim() || body.base_version === undefined) {
+      throw new BadRequestException('path e base_version obrigatorios');
+    }
+    return this.vaultFiles.deleteWithBaseVersion(vault.id, filePath, body.base_version);
+  }
+
+  /**
+   * Stream SSE para o browser: notifica quando há mudanças no vault.
+   * O browser usa esta notificação para invalidar o cache de árvore sem polling cego.
+   */
+  @Get(':id/events')
+  @SkipThrottle()
+  async vaultEvents(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+
+    const vid = vault.id;
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const send = (event: VaultSseEvent): void => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    const heartbeat = setInterval(
+      () => send({ type: 'heartbeat', vaultId: vid, ts: Date.now() }),
+      30_000,
+    );
+
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = this.vaultSse.subscribe(vid, (cursor) =>
+        send({ type: 'change', vaultId: vid, changeId: cursor, cursor }),
+      );
+    } catch {
+      clearInterval(heartbeat);
+      reply.raw.writeHead(429, { 'Content-Type': 'application/json' });
+      reply.raw.end(JSON.stringify({ message: 'Too many SSE connections for this vault' }));
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      reply.raw.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe?.();
+        resolve();
+      });
+      reply.raw.on('error', () => {
+        clearInterval(heartbeat);
+        unsubscribe?.();
+        resolve();
+      });
+    });
   }
 }

@@ -2,15 +2,20 @@ import chokidar from "chokidar";
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { AgentConfig } from "./config";
+import type { SyncConfig } from "./config";
 import * as api from "./api";
 import * as db from "./db";
 import type Database from "better-sqlite3";
+import { mergeTextPreserveBoth, shouldIgnore as syncShouldIgnore, type VaultSseEvent } from "@opensync/sync";
 
 const LOG = "[opensync]";
 const DEBOUNCE_MS = 3000;
 /** Após upload local, manter o path em `pendingLocalUpload` mais este tempo para o poll não reaplicar revisão antiga do servidor por cima do ficheiro no disco. */
 const POST_UPLOAD_POLL_GUARD_MS = 6000;
+/** Quando SSE está ativo, o fallback poll de segurança usa este intervalo mais longo. */
+const SSE_FALLBACK_POLL_MS = 60_000;
+const SSE_RECONNECT_DELAY_BASE_MS = 1_000;
+const SSE_RECONNECT_DELAY_MAX_MS = 30_000;
 
 function versionRank(v: string | null | undefined): bigint {
   if (v == null) return -1n;
@@ -21,14 +26,6 @@ function versionRank(v: string | null | undefined): bigint {
   } catch {
     return -1n;
   }
-}
-
-/** Marcadores estilo Git: nenhuma das partes é descartada silenciosamente. */
-function mergeTextPreserveBoth(local: string, remote: string): string {
-  const L = local.replace(/\r\n/g, "\n");
-  const R = remote.replace(/\r\n/g, "\n");
-  if (L === R) return L;
-  return `<<<<<<< OPENSYNC_LOCAL\n${L}\n=======\n${R}\n>>>>>>> OPENSYNC_REMOTE\n`;
 }
 
 /** ANSI — visível em journalctl e terminal */
@@ -42,13 +39,8 @@ const C = {
 
 const HEARTBEAT_MS = 60_000;
 
-function shouldIgnore(cfg: AgentConfig, rel: string): boolean {
-  const parts = rel.split("/");
-  for (const p of parts) {
-    if (cfg.ignore.includes(p)) return true;
-    if (p.endsWith(".tmp") || p.endsWith(".swp")) return true;
-  }
-  return false;
+function shouldIgnore(cfg: SyncConfig, rel: string): boolean {
+  return syncShouldIgnore(cfg.ignore, rel);
 }
 
 async function readLocalFile(abs: string, maxBytes: number): Promise<string | null> {
@@ -80,7 +72,7 @@ function sleepMs(ms: number): Promise<void> {
  * Upsert do texto fusionado com backoff e re-merge em 409 (tip do servidor mudou).
  */
 async function upsertMergedBodyWithRetry(
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   filePath: string,
   initialBody: string,
@@ -130,7 +122,7 @@ async function upsertMergedBodyWithRetry(
 
 async function reconcileDeletedLocalFiles(
   database: Database.Database,
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   remoteWriting: Set<string>,
 ): Promise<void> {
   const deletedPaths = db.listDeletedPaths(database);
@@ -153,7 +145,7 @@ async function reconcileDeletedLocalFiles(
  *  sejam enviados ao vault (FULL_RECONCILE do PRD sec. 5.1). */
 async function fullReconcile(
   database: Database.Database,
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   remoteWriting: Set<string>,
 ): Promise<void> {
@@ -190,7 +182,81 @@ async function fullReconcile(
   console.log(LOG, `full reconcile concluido: ${uploaded} enviados, ${skipped} ignorados`);
 }
 
-export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
+/**
+ * Conecta ao endpoint SSE do servidor e chama `onEvent` a cada notificação de mudança.
+ * Chama `onDisconnect` sempre que a ligação cai (antes de reconectar).
+ * Faz reconexão automática com exponential backoff.
+ * Retorna função de cleanup para encerrar a conexão.
+ */
+function connectSse(
+  cfg: SyncConfig,
+  token: string,
+  onEvent: () => Promise<void>,
+  onDisconnect?: () => void,
+): () => void {
+  let stopped = false;
+  let delay = SSE_RECONNECT_DELAY_BASE_MS;
+
+  void (async () => {
+    while (!stopped) {
+      try {
+        const base = cfg.apiUrl.replace(/\/+$/, "").endsWith("/api")
+          ? cfg.apiUrl.replace(/\/+$/, "")
+          : `${cfg.apiUrl.replace(/\/+$/, "")}/api`;
+        const url = `${base}/agent/vaults/${encodeURIComponent(cfg.vaultId)}/events`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok || !res.body) {
+          const err = new Error(`SSE ${res.status}`) as Error & { status: number };
+          err.status = res.status;
+          throw err;
+        }
+        delay = SSE_RECONNECT_DELAY_BASE_MS; // reset backoff após conexão bem-sucedida
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!stopped) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6)) as VaultSseEvent;
+              if (event.type === "change") {
+                void onEvent();
+              }
+            } catch {
+              /* linha malformada: ignorar */
+            }
+          }
+        }
+      } catch (e: unknown) {
+        if (stopped) break;
+        onDisconnect?.();
+        const err = e as { status?: number };
+        if (err?.status === 401 || err?.status === 403) {
+          console.error(LOG, "ERRO DE AUTENTICACAO no SSE — token invalido ou revogado");
+          process.exit(1);
+        }
+        if (process.env.OPENSYNC_VERBOSE === "1") {
+          console.warn(`${C.yellow}${LOG}${C.reset} SSE desconectado, retry em ${delay}ms`);
+        }
+        await sleepMs(delay);
+        delay = Math.min(delay * 2, SSE_RECONNECT_DELAY_MAX_MS);
+      }
+    }
+  })();
+
+  return () => {
+    stopped = true;
+  };
+}
+
+export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
   const database = db.openDb(cfg);
   db.ensureDeviceId(database);
   const syncRoot = cfg.syncDir;
@@ -427,38 +493,57 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     schedule(rel);
   });
 
-  const intervalMs = cfg.pollIntervalSeconds * 1000;
-  let pollTimeout: ReturnType<typeof setTimeout> | undefined;
-  let pollLoopStopped = false;
+  // SSE + fallback poll híbrido
+  let sseConnected = false;
+  let fallbackPollTimeout: ReturnType<typeof setTimeout> | undefined;
+  let loopStopped = false;
 
-  function scheduleNextPoll(): void {
-    pollTimeout = setTimeout(() => {
+  /** Poll de segurança: quando SSE está ativo usa 60s, senão o intervalo configurado */
+  function scheduleFallbackPoll(): void {
+    const intervalMs = sseConnected ? SSE_FALLBACK_POLL_MS : cfg.pollIntervalSeconds * 1000;
+    fallbackPollTimeout = setTimeout(() => {
       void (async () => {
         await pollRemote();
-        if (!pollLoopStopped) scheduleNextPoll();
+        if (!loopStopped) scheduleFallbackPoll();
       })();
     }, intervalMs);
   }
 
-  scheduleNextPoll();
+  const stopSse = connectSse(
+    cfg,
+    token,
+    async () => {
+      sseConnected = true;
+      // Cancelar o próximo fallback poll pendente e fazer poll imediato
+      if (fallbackPollTimeout) clearTimeout(fallbackPollTimeout);
+      await pollRemote();
+      if (!loopStopped) scheduleFallbackPoll();
+    },
+    () => {
+      sseConnected = false; // fallback poll volta ao intervalo configurado enquanto reconecta
+    },
+  );
+
+  scheduleFallbackPoll();
 
   console.log(
-    `${C.cyan}${LOG}${C.reset} ${C.green}🚀 agente a correr${C.reset} ${C.dim}syncDir=${syncRoot} · poll a cada ${cfg.pollIntervalSeconds}s (sem precisar de abrir a pasta)${C.reset}`,
+    `${C.cyan}${LOG}${C.reset} ${C.green}🚀 a correr${C.reset} ${C.dim}syncDir=${syncRoot} · SSE em tempo real + poll fallback a cada ${cfg.pollIntervalSeconds}s${C.reset}`,
   );
   await new Promise<void>((resolve) => {
     const stop = () => resolve();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
-  pollLoopStopped = true;
-  if (pollTimeout) clearTimeout(pollTimeout);
+  loopStopped = true;
+  stopSse();
+  if (fallbackPollTimeout) clearTimeout(fallbackPollTimeout);
   await watcher.close();
   database.close();
 }
 
 async function applyRemoteChange(
   database: Database.Database,
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   ch: api.ChangeRow,
   remoteWriting: Set<string>,
@@ -563,7 +648,7 @@ async function applyRemoteChange(
 
 async function syncLocalPath(
   database: Database.Database,
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   rel: string,
   remoteWriting: Set<string>,
@@ -640,7 +725,7 @@ async function syncLocalPath(
 
 async function handleLocalDelete(
   database: Database.Database,
-  cfg: AgentConfig,
+  cfg: SyncConfig,
   token: string,
   rel: string,
 ): Promise<void> {

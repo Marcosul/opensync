@@ -76,6 +76,7 @@ import {
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
 import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
+import { connectVaultSse } from "@/lib/vault-sse-client";
 import {
   fetchVaultGitBlobQueryFn,
   LAZY_GIT_BLOB_GC_MS,
@@ -132,8 +133,8 @@ import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-redu
 import type { SidebarMode, TreeSortOrder } from "./explorer-tree-utils";
 import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
 
-/** Deteção de novas revisões no servidor (ex.: OpenSync Ubuntu) sem depender de sync manual na web. */
-const LAZY_VAULT_REMOTE_TAIL_POLL_MS = 5000;
+/** Fallback poll quando SSE não está disponível. SSE é o mecanismo primário. */
+const LAZY_VAULT_REMOTE_TAIL_POLL_MS = 30_000;
 /** Evita o indicador "a sincronizar" em pushes rápidos (menos piscar na barra). */
 const GITEA_SYNC_UI_SPIN_DELAY_MS = 280;
 
@@ -600,9 +601,15 @@ export function VaultOpenWorkspace({
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onVisibility);
     }
+    // SSE como mecanismo primário: notificação imediata de novas revisões
+    const stopSse = connectVaultSse(vaultId, (cursor) => {
+      if (cursor !== remoteTailPollSeenRef.current) void pollRemoteTail();
+    });
+    // Fallback poll: cobre reconexões SSE e cenários sem SSE
     const id = window.setInterval(pollRemoteTail, LAZY_VAULT_REMOTE_TAIL_POLL_MS);
     return () => {
       cancelled = true;
+      stopSse();
       window.clearInterval(id);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibility);

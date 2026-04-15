@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
+import { VaultSseService } from './vault-sse.service';
 import {
   normalizeVaultRelativePath,
   validateVaultSyncFiles,
@@ -68,6 +69,7 @@ export class VaultFilesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vaultGitSync: VaultGitSyncService,
+    private readonly vaultSse: VaultSseService,
   ) {}
 
   async listTree(vaultId: string): Promise<{
@@ -168,7 +170,7 @@ export class VaultFilesService {
     }
     const baseVersion = parseBaseVersion(baseVersionRaw ?? null);
 
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (tx) => {
         await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);
 
@@ -294,6 +296,10 @@ export class VaultFilesService {
         timeout: SNAPSHOT_TX_TIMEOUT_MS,
       },
     );
+
+    // Notificar subscribers SSE após commit (fora da transação)
+    void this.notifyVaultChange(vaultId);
+    return result;
   }
 
   async deleteWithBaseVersion(
@@ -310,7 +316,7 @@ export class VaultFilesService {
       throw new BadRequestException('base_version obrigatorio para delete');
     }
 
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (tx) => {
         await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);
 
@@ -357,6 +363,10 @@ export class VaultFilesService {
         timeout: SNAPSHOT_TX_TIMEOUT_MS,
       },
     );
+
+    // Notificar subscribers SSE após commit (fora da transação)
+    void this.notifyVaultChange(vaultId);
+    return result;
   }
 
   /**
@@ -511,6 +521,9 @@ export class VaultFilesService {
       `${colors.cyan}📦 Snapshot vault aplicado${colors.reset} vault=${vaultId} empty=${isEmptyPayload} tailChange=${syntheticHash}`,
     );
 
+    // Notificar subscribers SSE após commit (fora da transação)
+    void this.notifyVaultChange(vaultId, syntheticHash);
+
     return { ok: true, commitHash: `db:${syntheticHash}` };
   }
 
@@ -561,6 +574,19 @@ export class VaultFilesService {
       select: { id: true },
     });
     return row?.id ?? 0n;
+  }
+
+  /**
+   * Notifica subscribers SSE após mutação de vault.
+   * @param knownCursor cursor já conhecido (evita query extra); se omitido, busca do DB.
+   */
+  private async notifyVaultChange(vaultId: string, knownCursor?: string): Promise<void> {
+    try {
+      const cursor = knownCursor ?? String(await this.maxChangeId(vaultId));
+      await this.vaultSse.notify(vaultId, cursor);
+    } catch (err) {
+      this.logger.warn(`Falha ao notificar SSE vault=${vaultId}: ${String(err)}`);
+    }
   }
 
   /** Primeira abertura: copia estado do Gitea para Postgres se ainda vazio. */

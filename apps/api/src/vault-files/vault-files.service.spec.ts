@@ -32,7 +32,7 @@ describe('VaultFilesService', () => {
       readRepoTree: jest.fn(),
       readRepoBlob: jest.fn(),
     };
-    service = new VaultFilesService(prisma as never, vaultGitSync as never);
+    service = new VaultFilesService(prisma as never, vaultGitSync as never, { notify: jest.fn().mockResolvedValue(undefined) } as never);
   });
 
   describe('applyTrustedSnapshot', () => {
