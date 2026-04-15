@@ -1,6 +1,7 @@
 "use client";
 
 import { CodeNode } from "@lexical/code";
+import { GripVertical } from "lucide-react";
 import {
   $convertFromMarkdownString,
   $convertToMarkdownString,
@@ -17,6 +18,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
+import { DraggableBlockPlugin_EXPERIMENTAL } from "@lexical/react/LexicalDraggableBlockPlugin";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import {
@@ -26,14 +28,18 @@ import {
 } from "@lexical/react/LexicalTypeaheadMenuPlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
 import {
+  $isHeadingNode,
   $createHeadingNode,
   $createQuoteNode,
+  $isQuoteNode,
   HeadingNode,
   QuoteNode,
 } from "@lexical/rich-text";
 import {
+  $isListNode,
   INSERT_CHECK_LIST_COMMAND,
   INSERT_ORDERED_LIST_COMMAND,
+  REMOVE_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
 } from "@lexical/list";
 import {
@@ -45,12 +51,14 @@ import {
 import { $setBlocksType } from "@lexical/selection";
 import {
   $createParagraphNode,
+  $getNearestNodeOfType,
   $getSelection,
   $isRangeSelection,
   $getRoot,
   CLICK_COMMAND,
   COMMAND_PRIORITY_LOW,
   FORMAT_TEXT_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   type TextNode,
   type EditorThemeClasses,
 } from "lexical";
@@ -230,6 +238,9 @@ function InitialMarkdownPlugin({ markdown }: { markdown: string }) {
 
 function ToolbarPlugin() {
   const [editor] = useLexicalComposerContext();
+  const [blockType, setBlockType] = useState<
+    "paragraph" | "h1" | "h2" | "h3" | "quote" | "ul" | "ol" | "check"
+  >("paragraph");
 
   const applyHeading = useCallback(
     (tag: "h1" | "h2" | "h3") => {
@@ -243,8 +254,98 @@ function ToolbarPlugin() {
     [editor],
   );
 
+  useEffect(() => {
+    return editor.registerCommand(
+      SELECTION_CHANGE_COMMAND,
+      () => {
+        editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return;
+          const anchorNode = selection.anchor.getNode();
+          const element =
+            anchorNode.getKey() === "root"
+              ? anchorNode
+              : anchorNode.getTopLevelElementOrThrow();
+
+          const listNode = $getNearestNodeOfType(element, ListNode);
+          if (listNode && $isListNode(listNode)) {
+            if (listNode.getListType() === "bullet") setBlockType("ul");
+            else if (listNode.getListType() === "number") setBlockType("ol");
+            else setBlockType("check");
+            return;
+          }
+          if ($isHeadingNode(element)) {
+            const tag = element.getTag();
+            if (tag === "h1" || tag === "h2" || tag === "h3") setBlockType(tag);
+            else setBlockType("paragraph");
+            return;
+          }
+          if ($isQuoteNode(element)) {
+            setBlockType("quote");
+            return;
+          }
+          setBlockType("paragraph");
+        });
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+  }, [editor]);
+
+  const applyBlockType = useCallback(
+    (value: string) => {
+      if (value === "ul") {
+        editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined);
+        return;
+      }
+      if (value === "ol") {
+        editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined);
+        return;
+      }
+      if (value === "check") {
+        editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined);
+        return;
+      }
+      editor.dispatchCommand(REMOVE_LIST_COMMAND, undefined);
+      if (value === "quote") {
+        editor.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            $setBlocksType(selection, () => $createQuoteNode());
+          }
+        });
+        return;
+      }
+      if (value === "h1" || value === "h2" || value === "h3") {
+        applyHeading(value);
+        return;
+      }
+      editor.update(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          $setBlocksType(selection, () => $createParagraphNode());
+        }
+      });
+    },
+    [applyHeading, editor],
+  );
+
   return (
     <div className="mb-3 flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card/50 p-2">
+      <select
+        value={blockType}
+        onChange={(e) => applyBlockType(e.target.value)}
+        className="h-8 rounded border border-border bg-background px-2 text-xs"
+      >
+        <option value="paragraph">Normal</option>
+        <option value="h1">Heading 1</option>
+        <option value="h2">Heading 2</option>
+        <option value="h3">Heading 3</option>
+        <option value="ul">Bulleted List</option>
+        <option value="ol">Numbered List</option>
+        <option value="check">Check List</option>
+        <option value="quote">Quote</option>
+      </select>
       <button
         type="button"
         className="rounded px-2 py-1 text-xs hover:bg-muted"
@@ -315,6 +416,25 @@ function ToolbarPlugin() {
         Tabela
       </button>
     </div>
+  );
+}
+
+function isOnBlockMenu(element: HTMLElement): boolean {
+  return !!element.closest(".vault-draggable-block-menu");
+}
+
+function DraggableBlocksPlugin({ anchorElem }: { anchorElem: HTMLElement }) {
+  return (
+    <DraggableBlockPlugin_EXPERIMENTAL
+      anchorElem={anchorElem}
+      menuComponent={
+        <div className="vault-draggable-block-menu flex h-7 w-7 items-center justify-center rounded border border-border bg-background text-muted-foreground shadow-sm">
+          <GripVertical className="size-4" />
+        </div>
+      }
+      targetLineComponent={<div className="h-[2px] rounded bg-primary/60" />}
+      isOnMenu={isOnBlockMenu}
+    />
   );
 }
 
@@ -503,6 +623,7 @@ export function VaultLexicalMarkdownEditor({
 }: VaultLexicalMarkdownEditorProps) {
   const collabEnabled = collaboration?.enabled === true;
   const cursorsContainerRef = useRef<HTMLDivElement | null>(null);
+  const editorWrapperRef = useRef<HTMLDivElement | null>(null);
   const initialConfig = {
     namespace: `VaultNote-${docId}`,
     theme: lexicalTheme,
@@ -543,6 +664,9 @@ export function VaultLexicalMarkdownEditor({
         }
       />
       <MarkdownShortcutPlugin transformers={markdownTransformers} />
+      {editorWrapperRef.current ? (
+        <DraggableBlocksPlugin anchorElem={editorWrapperRef.current} />
+      ) : null}
       <SlashMenuPlugin />
       <WikilinkNavigationPlugin onSelectFile={onSelectFile} />
       <MarkdownChangePlugin onChange={onChange} />
@@ -574,7 +698,7 @@ export function VaultLexicalMarkdownEditor({
         className,
       )}
     >
-      <div className="vault-lexical-editor mx-auto w-full max-w-2xl">
+      <div ref={editorWrapperRef} className="vault-lexical-editor relative mx-auto w-full max-w-2xl">
         {collabEnabled ? <LexicalCollaboration>{lexicalEditor}</LexicalCollaboration> : lexicalEditor}
       </div>
     </div>
