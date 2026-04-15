@@ -10,6 +10,35 @@
   }
 }
 
+/** Entrada suave (Markdown / Plate): corpo primeiro, toolbar por último. */
+@keyframes vault-plate-md-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vault-plate-md-reveal-body {
+  animation: vault-plate-md-enter 0.52s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+}
+
+.vault-plate-md-reveal-toolbar {
+  animation: vault-plate-md-enter 0.44s cubic-bezier(0.22, 1, 0.36, 1) 0.4s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-plate-md-reveal-body,
+  .vault-plate-md-reveal-toolbar {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

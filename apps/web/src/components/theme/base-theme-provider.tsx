@@ -1,9 +1,18 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import { applyBaseThemeToDocument, type BaseTheme } from "@/lib/apply-base-theme";
+import { loadClientUiSettings, patchClientUiSettings } from "@/lib/client-ui-settings";
 import type { UserSettings } from "@/lib/user-settings";
 
 type BaseThemeContextValue = {
@@ -15,6 +24,12 @@ const BaseThemeContext = createContext<BaseThemeContextValue | null>(null);
 export function BaseThemeProvider({ children }: { children: ReactNode }) {
   const [baseTheme, setBaseTheme] = useState<BaseTheme | null>(null);
 
+  useLayoutEffect(() => {
+    const local = loadClientUiSettings();
+    applyBaseThemeToDocument(local.theme);
+    setBaseTheme(local.theme);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -22,9 +37,10 @@ export function BaseThemeProvider({ children }: { children: ReactNode }) {
         const response = await apiRequest<{ ok: boolean; settings: UserSettings }>("/api/settings");
         if (cancelled) return;
         setBaseTheme(response.settings.baseTheme);
+        patchClientUiSettings({ theme: response.settings.baseTheme });
       } catch {
         if (cancelled) return;
-        setBaseTheme("system");
+        setBaseTheme((prev) => prev ?? loadClientUiSettings().theme);
       }
     })();
     return () => {
@@ -47,6 +63,7 @@ export function BaseThemeProvider({ children }: { children: ReactNode }) {
 
   const syncBaseTheme = useCallback((theme: BaseTheme) => {
     setBaseTheme(theme);
+    patchClientUiSettings({ theme });
   }, []);
 
   return (

@@ -19,6 +19,7 @@ export function monacoLanguageFromDocPath(path: string): string {
     ".cjs": "javascript",
     ".json": "json",
     ".jsonc": "json",
+    ".jsonl": "json",
     ".py": "python",
     ".md": "markdown",
     ".mdx": "markdown",
@@ -79,7 +80,7 @@ export type VaultExplorerFileKind =
 export function vaultExplorerFileKind(fileName: string): VaultExplorerFileKind {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".md") || lower.endsWith(".mdx")) return "markdown";
-  if (lower.endsWith(".json") || lower.endsWith(".jsonc")) return "json";
+  if (lower.endsWith(".json") || lower.endsWith(".jsonc") || lower.endsWith(".jsonl")) return "json";
   if (lower.endsWith(".py")) return "python";
   if (lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".mts") || lower.endsWith(".cts")) {
     return "typescript";

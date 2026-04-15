@@ -2,6 +2,7 @@
 
 /**
  * Editor de código com Monaco (syntax highlight, números de linha, tema claro/escuro).
+ * Ocupa a altura disponível do contentor (100% via flex); scroll vertical dentro do Monaco.
  * Se o chunk falhar, usa `<textarea>` sem borda como fallback.
  */
 import type { EditorProps } from "@monaco-editor/react";
@@ -44,7 +45,7 @@ export function VaultCodeEditorFallback({
       onChange={(e) => onChange(e.target.value)}
       spellCheck={false}
       className={cn(
-        "box-border min-h-[min(60vh,480px)] w-full flex-1 resize-y bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed text-foreground",
+        "box-border h-full min-h-0 w-full flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 font-mono text-[13px] leading-relaxed text-foreground sm:px-2",
         "border-0 shadow-none outline-none ring-0 focus-visible:ring-0",
         className,
       )}
@@ -73,14 +74,14 @@ export function VaultCodeEditor({ docId, value, onChange, className }: VaultCode
     };
   }, []);
 
+  const shellClass = cn(
+    "vault-code-editor-shell flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent",
+    className,
+  );
+
   if (monacoFailed) {
     return (
-      <div
-        className={cn(
-          "flex min-h-[min(60vh,480px)] min-w-0 flex-1 flex-col overflow-auto rounded-md bg-muted/5",
-          className,
-        )}
-      >
+      <div className={shellClass}>
         <VaultCodeEditorFallback docId={docId} value={value} onChange={onChange} />
       </div>
     );
@@ -88,57 +89,52 @@ export function VaultCodeEditor({ docId, value, onChange, className }: VaultCode
 
   if (!Editor) {
     return (
-      <div
-        className={cn(
-          "flex min-h-[min(60vh,480px)] min-w-0 flex-1 flex-col overflow-auto rounded-md bg-muted/5",
-          className,
-        )}
-      >
+      <div className={shellClass}>
         <VaultCodeEditorFallback docId={docId} value={value} onChange={onChange} />
       </div>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "vault-code-editor-shell flex min-h-[min(60vh,480px)] h-[min(70vh,720px)] w-full min-w-0 flex-col overflow-hidden rounded-md",
-        "border border-border/50 bg-[color-mix(in_oklch,var(--card)_92%,transparent)] shadow-sm",
-        "dark:border-border/60 dark:bg-[color-mix(in_oklch,var(--muted)_40%,transparent)]",
-        className,
-      )}
-    >
-      <Editor
-        height="100%"
-        language={language}
-        theme={dark ? "vs-dark" : "vs"}
-        value={value}
-        onChange={(v) => onChange(v ?? "")}
-        loading={
-          <div className="flex h-full min-h-[200px] items-center justify-center bg-muted/20 font-mono text-xs text-muted-foreground">
-            A carregar Monaco…
-          </div>
-        }
-        options={{
-          minimap: { enabled: true, maxColumn: 80 },
-          fontSize: 13,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          lineNumbers: "on",
-          wordWrap: "on",
-          scrollBeyondLastLine: false,
-          padding: { top: 8, bottom: 8 },
-          automaticLayout: true,
-          tabSize: 2,
-          insertSpaces: true,
-          renderLineHighlight: "line",
-          cursorBlinking: "smooth",
-          smoothScrolling: true,
-          bracketPairColorization: { enabled: true },
-          folding: true,
-          renderWhitespace: "selection",
-          unicodeHighlight: { ambiguousCharacters: false },
-        }}
-      />
+    <div className={shellClass}>
+      <div className="relative min-h-0 flex-1">
+        <Editor
+          key={docId}
+          height="100%"
+          language={language}
+          theme={dark ? "vs-dark" : "vs"}
+          value={value}
+          onChange={(v) => onChange(v ?? "")}
+          loading={
+            <div className="flex min-h-[12rem] w-full flex-1 items-center justify-center bg-transparent font-mono text-xs text-muted-foreground">
+              A carregar Monaco…
+            </div>
+          }
+          options={{
+            minimap: { enabled: true, maxColumn: 80 },
+            fontSize: 13,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            lineNumbers: "on",
+            wordWrap: "on",
+            scrollBeyondLastLine: false,
+            padding: { top: 8, bottom: 8 },
+            automaticLayout: true,
+            tabSize: 2,
+            insertSpaces: true,
+            renderLineHighlight: "line",
+            cursorBlinking: "smooth",
+            smoothScrolling: true,
+            bracketPairColorization: { enabled: true },
+            folding: true,
+            renderWhitespace: "selection",
+            unicodeHighlight: { ambiguousCharacters: false },
+            scrollbar: {
+              vertical: "auto",
+              horizontal: "auto",
+            },
+          }}
+        />
+      </div>
     </div>
   );
 }

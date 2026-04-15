@@ -95,6 +95,11 @@ import {
   usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
 import { isVaultPlainTextDocId } from "@/lib/vault-doc-kind";
+import {
+  defaultClientUiSettings,
+  loadClientUiSettings,
+  patchClientUiSettings,
+} from "@/lib/client-ui-settings";
 import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import { cn } from "@/lib/utils";
 
@@ -115,6 +120,7 @@ import type { VaultPageQueryState } from "./vault-page-query-types";
 import { vaultChromeMenuItemClass } from "./vault-chrome-styles";
 import { VaultExplorerDeleteConfirmDialog } from "./vault-explorer-delete-dialog";
 import { FileTab } from "./vault-file-tab";
+import { VaultExplorerSidebarResizeHandle } from "./vault-explorer-sidebar-resize-handle";
 import { FileTree } from "./vault-file-tree";
 import { FullGraph } from "./vault-full-graph";
 import { TagsPanel } from "./vault-tags-panel";
@@ -716,6 +722,10 @@ export function VaultOpenWorkspace({
 
   const { viewMode, openTabs, activeTabId } = ui;
   const activeDoc = activeTabId ? DOC_BY_ID[activeTabId] : undefined;
+  const lazyGitRemote = usesLazyGitRemote(vaultId, activeVaultMeta);
+  /** Docs de marketing em `DOC_BY_ID` só substituem o Git em vaults locais; com lazy-Git o blob do repo é a fonte (ex.: `openclaw.json` real). */
+  const mockMarketingDocBlocksLazyGitBlob = (id: string | undefined | null) =>
+    Boolean(id && DOC_BY_ID[id as string]) && !lazyGitRemote;
   const openTabsPrefetchSignature = useMemo(
     () => `${activeTabId ?? ""}\n${[...openTabs].sort().join("\n")}`,
     [activeTabId, openTabs]
@@ -728,9 +738,9 @@ export function VaultOpenWorkspace({
 
   const lazyActiveBlobQueryEnabled =
     Boolean(activeTabId) &&
-    usesLazyGitRemote(vaultId, activeVaultMeta) &&
+    lazyGitRemote &&
     activeTabId != null &&
-    !DOC_BY_ID[activeTabId] &&
+    !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
     activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
     !lazyGitDirtyDocIdsRef.current.has(activeTabId);
 
@@ -766,8 +776,8 @@ export function VaultOpenWorkspace({
   useEffect(() => {
     if (
       !activeTabId ||
-      !usesLazyGitRemote(vaultId, activeVaultMeta) ||
-      DOC_BY_ID[activeTabId] ||
+      !lazyGitRemote ||
+      mockMarketingDocBlocksLazyGitBlob(activeTabId) ||
       activeTabId === GIT_LAZY_PLACEHOLDER_DOC_ID
     ) {
       setBlobLoadError(null);
@@ -785,23 +795,26 @@ export function VaultOpenWorkspace({
   }, [
     activeTabId,
     vaultId,
-    activeVaultMeta,
+    lazyGitRemote,
     lazyBlobQuery.isError,
     lazyGitQueryEpoch,
   ]);
 
   /** Com `placeholderData: ""` o query deixa de estar `pending` mas o fetch ainda corre — mostrar a carregar em vez do editor vazio com placeholder. */
   const lazyBlobUiLoading =
-    usesLazyGitRemote(vaultId, activeVaultMeta) &&
+    lazyGitRemote &&
     Boolean(activeTabId) &&
     activeTabId != null &&
-    !DOC_BY_ID[activeTabId] &&
+    !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
     activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
     !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
     noteContents[activeTabId] === undefined &&
     (lazyBlobQuery.isPending || lazyBlobQuery.isFetching);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [explorerSidebarWidth, setExplorerSidebarWidth] = useState(
+    defaultClientUiSettings.sidebarWidth,
+  );
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
   const [editorSourceMode, setEditorSourceMode] = useState(false);
@@ -827,6 +840,10 @@ export function VaultOpenWorkspace({
   useEffect(() => {
     setExplorerInlineRename(null);
   }, [vaultId]);
+
+  useLayoutEffect(() => {
+    setExplorerSidebarWidth(loadClientUiSettings().sidebarWidth);
+  }, []);
 
   const defaultNewItemParent = useMemo(() => {
     if (treeRoot.type !== "dir") return "openclaw-root";
@@ -1023,7 +1040,7 @@ export function VaultOpenWorkspace({
     const priority = [...new Set([activeTabId, ...openTabs].filter(Boolean))] as string[];
     const candidates = priority.filter(
       (id) =>
-        !DOC_BY_ID[id] &&
+        !mockMarketingDocBlocksLazyGitBlob(id) &&
         id !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
         !lazyGitDirtyDocIdsRef.current.has(id) &&
         noteContentsRef.current[id] === undefined,
@@ -1614,98 +1631,113 @@ export function VaultOpenWorkspace({
               </button>
             </div>
           ) : (
-            <FileTree
-            treeRootLabel={rootExplorerLabel}
-            treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
-            treeChildren={treeChildren}
-            selectedId={activeTabId || null}
-            onSelect={browseSelectFile}
-            expandedPaths={expandedPaths}
-            onToggleDir={(path) =>
-              setExpandedPaths((prev) => {
-                const next = new Set(prev);
-                if (next.has(path)) next.delete(path);
-                else next.add(path);
-                return next;
-              })
-            }
-            folderSearch={folderSearch}
-            onFolderSearchChange={setFolderSearch}
-            bookmarks={bookmarks}
-            onOpenBookmark={(b) => {
-              if (b.kind === "file") browseSelectFile(b.docId);
-              else {
-                setFolderSearch(null);
-                setRevealTarget({ type: "folder", path: b.path });
-                setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
-              }
-            }}
-            onRemoveBookmark={(b) => {
-              setBookmarks((prev) =>
-                prev.filter((x) =>
-                  b.kind === "file"
-                    ? !(x.kind === "file" && x.docId === b.docId)
-                    : !(x.kind === "folder" && x.path === b.path)
-                )
-              );
-            }}
-            revealTarget={revealTarget}
-            onRevealHandled={clearRevealTarget}
-            onExplorerCommand={handleExplorerCommand}
-            vaultMetas={vaultMetas}
-            activeVaultId={vaultId}
-            activeVaultName={activeVaultMeta?.name ?? "cofre"}
-            vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
-            vaultStatsLine={vaultStatsLine}
-            onSelectVault={switchVault}
-            onOpenManageVaults={() => setManageVaultsOpen(true)}
-            sidebarMode={sidebarMode}
-            onSidebarModeChange={setSidebarMode}
-            treeSortOrder={treeSortOrder}
-            onCycleSort={cycleTreeSort}
-            onQuickNewNote={quickNewNoteFromToolbar}
-            onQuickNewFolder={quickNewFolderFromToolbar}
-            onCollapseAllFolders={collapseAllFolders}
-            onCollapseSidebar={() => setSidebarCollapsed(true)}
-            explorerInlineRename={explorerInlineRename}
-            onExplorerRenameDraftChange={setExplorerRenameDraft}
-            onExplorerRenameCommit={commitExplorerInlineRename}
-            onExplorerRenameCancel={cancelExplorerInlineRename}
-            skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
-            explorerTreeNonce={explorerTreeNonce}
-            vaultTreeRoot={treeRoot}
-            onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
-            onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
-            onExplorerNewNote={() =>
-              handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
-            }
-            onExplorerNewFolder={() =>
-              handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
-            }
-            onExplorerRenameRow={(row) => {
-              if (row.kind === "file") {
-                openExplorerInlineRename({
-                  kind: "file",
-                  docId: row.docId,
-                  parentTreePath: row.parentTreePath,
-                  draft: row.name,
-                  initialName: row.name,
-                });
-              } else {
-                openExplorerInlineRename({
-                  kind: "folder",
-                  treePath: row.path,
-                  draft: row.name,
-                  initialName: row.name,
-                });
-              }
-            }}
-            giteaSyncSpinningDocId={
-              isBackendSyncVaultId(vaultId) && giteaSyncStatus === "syncing"
-                ? (activeTabId ?? null)
-                : undefined
-            }
-          />
+            <div
+              className="flex h-full shrink-0 flex-row border-r border-border bg-sidebar/30"
+              style={{ width: explorerSidebarWidth }}
+            >
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                <FileTree
+                  treeRootLabel={rootExplorerLabel}
+                  treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
+                  treeChildren={treeChildren}
+                  selectedId={activeTabId || null}
+                  onSelect={browseSelectFile}
+                  expandedPaths={expandedPaths}
+                  onToggleDir={(path) =>
+                    setExpandedPaths((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(path)) next.delete(path);
+                      else next.add(path);
+                      return next;
+                    })
+                  }
+                  folderSearch={folderSearch}
+                  onFolderSearchChange={setFolderSearch}
+                  bookmarks={bookmarks}
+                  onOpenBookmark={(b) => {
+                    if (b.kind === "file") browseSelectFile(b.docId);
+                    else {
+                      setFolderSearch(null);
+                      setRevealTarget({ type: "folder", path: b.path });
+                      setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+                    }
+                  }}
+                  onRemoveBookmark={(b) => {
+                    setBookmarks((prev) =>
+                      prev.filter((x) =>
+                        b.kind === "file"
+                          ? !(x.kind === "file" && x.docId === b.docId)
+                          : !(x.kind === "folder" && x.path === b.path)
+                      )
+                    );
+                  }}
+                  revealTarget={revealTarget}
+                  onRevealHandled={clearRevealTarget}
+                  onExplorerCommand={handleExplorerCommand}
+                  vaultMetas={vaultMetas}
+                  activeVaultId={vaultId}
+                  activeVaultName={activeVaultMeta?.name ?? "cofre"}
+                  vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
+                  vaultStatsLine={vaultStatsLine}
+                  onSelectVault={switchVault}
+                  onOpenManageVaults={() => setManageVaultsOpen(true)}
+                  sidebarMode={sidebarMode}
+                  onSidebarModeChange={setSidebarMode}
+                  treeSortOrder={treeSortOrder}
+                  onCycleSort={cycleTreeSort}
+                  onQuickNewNote={quickNewNoteFromToolbar}
+                  onQuickNewFolder={quickNewFolderFromToolbar}
+                  onCollapseAllFolders={collapseAllFolders}
+                  onCollapseSidebar={() => setSidebarCollapsed(true)}
+                  explorerInlineRename={explorerInlineRename}
+                  onExplorerRenameDraftChange={setExplorerRenameDraft}
+                  onExplorerRenameCommit={commitExplorerInlineRename}
+                  onExplorerRenameCancel={cancelExplorerInlineRename}
+                  skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
+                  explorerTreeNonce={explorerTreeNonce}
+                  vaultTreeRoot={treeRoot}
+                  onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
+                  onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
+                  onExplorerNewNote={() =>
+                    handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
+                  }
+                  onExplorerNewFolder={() =>
+                    handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
+                  }
+                  onExplorerRenameRow={(row) => {
+                    if (row.kind === "file") {
+                      openExplorerInlineRename({
+                        kind: "file",
+                        docId: row.docId,
+                        parentTreePath: row.parentTreePath,
+                        draft: row.name,
+                        initialName: row.name,
+                      });
+                    } else {
+                      openExplorerInlineRename({
+                        kind: "folder",
+                        treePath: row.path,
+                        draft: row.name,
+                        initialName: row.name,
+                      });
+                    }
+                  }}
+                  giteaSyncSpinningDocId={
+                    isBackendSyncVaultId(vaultId) && giteaSyncStatus === "syncing"
+                      ? (activeTabId ?? null)
+                      : undefined
+                  }
+                />
+              </div>
+              <VaultExplorerSidebarResizeHandle
+                sidebarWidth={explorerSidebarWidth}
+                onSidebarWidthChange={setExplorerSidebarWidth}
+                onResizeEnd={(w) => {
+                  setExplorerSidebarWidth(w);
+                  patchClientUiSettings({ sidebarWidth: w });
+                }}
+              />
+            </div>
         )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1849,37 +1881,41 @@ export function VaultOpenWorkspace({
             {blobLoadError}
           </div>
         ) : (
-          <VaultNoteEditor
-            key={activeTabId}
-            vaultId={vaultId}
-            docId={activeTabId}
-            plateEditorMountKey={
-              lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
-                ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
-                : undefined
-            }
-            value={
-              noteContents[activeTabId] ??
-              (lazyActiveBlobQueryEnabled
-                ? lazyBlobQuery.data
-                : undefined) ??
-              (activeDoc ? mockDocToMarkdown(activeDoc) : `# ${activeTabId}\n\n`)
-            }
-            onChange={(next) => {
-              if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
-                markLazyGitDirtyDoc(activeTabId);
-              } else if (isBackendSyncVaultId(vaultId)) {
-                bumpFullSnapshotDirtyForPush();
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <VaultNoteEditor
+              key={activeTabId}
+              vaultId={vaultId}
+              docId={activeTabId}
+              plateEditorMountKey={
+                lazyActiveBlobQueryEnabled && !lazyBlobQuery.isFetching
+                  ? `${activeTabId}-${lazyBlobQuery.dataUpdatedAt}`
+                  : undefined
               }
-              setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
-            }}
-            breadcrumb={editorBreadcrumb}
-            onSelectFile={browseSelectFile}
-            hideTopChrome
-            sourceMode={editorSourceMode}
-            onSourceModeChange={setEditorSourceMode}
-            plainTextDocument={isVaultPlainTextDocId(activeTabId)}
-          />
+              value={
+                noteContents[activeTabId] ??
+                (lazyActiveBlobQueryEnabled
+                  ? lazyBlobQuery.data
+                  : undefined) ??
+                (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
+                  ? mockDocToMarkdown(activeDoc)
+                  : `# ${activeTabId}\n\n`)
+              }
+              onChange={(next) => {
+                if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+                  markLazyGitDirtyDoc(activeTabId);
+                } else if (isBackendSyncVaultId(vaultId)) {
+                  bumpFullSnapshotDirtyForPush();
+                }
+                setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
+              }}
+              breadcrumb={editorBreadcrumb}
+              onSelectFile={browseSelectFile}
+              hideTopChrome
+              sourceMode={editorSourceMode}
+              onSourceModeChange={setEditorSourceMode}
+              plainTextDocument={isVaultPlainTextDocId(activeTabId)}
+            />
+          </div>
         )}
       </div>
 

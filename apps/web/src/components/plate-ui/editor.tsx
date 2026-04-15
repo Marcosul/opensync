@@ -31,6 +31,8 @@ const editorContainerVariants = cva(
           "has-aria-disabled:border-input has-aria-disabled:bg-muted",
         ),
         default: "h-full",
+        /** Altura pelo conteúdo; scroll no contentor pai (ex. página estilo Notion). */
+        pageScroll: cn("h-auto min-h-[12rem] !overflow-y-visible overflow-x-hidden"),
         demo: "h-[650px]",
         select: cn(
           "group rounded-md border border-input ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",

@@ -334,7 +334,7 @@ export function VaultPlateMarkdownEditor({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col overflow-y-auto px-3 py-4 sm:px-8 sm:py-6 min-[1360px]:px-10",
+        "flex min-h-0 w-full flex-1 flex-col overflow-visible px-3 py-4 sm:px-8 sm:py-6 min-[1360px]:px-10",
         className,
       )}
     >
@@ -345,12 +345,14 @@ export function VaultPlateMarkdownEditor({
             emitMarkdown(ed);
           }}
         >
-          <div className="overflow-hidden rounded-xl bg-card">
-            <VaultPlateToolbar />
+          <div className="overflow-visible rounded-none bg-transparent">
+            <div className="vault-plate-md-reveal-toolbar will-change-[transform,opacity]">
+              <VaultPlateToolbar />
+            </div>
             <EditorContainer
-              variant="default"
+              variant="pageScroll"
               className={cn(
-                "min-h-[min(56vh,26rem)] max-h-[min(72vh,40rem)] rounded-b-xl bg-background",
+                "vault-plate-md-reveal-body rounded-none bg-background pb-24 will-change-[transform,opacity]",
                 "[&_.slate-gutterLeft]:!left-0 [&_.slate-blockToolbar]:!left-0",
               )}
             >
@@ -358,7 +360,7 @@ export function VaultPlateMarkdownEditor({
               <Editor
                 variant="none"
                 className={cn(
-                  "min-h-[min(52vh,24rem)] w-full pl-10 pr-4 py-5 text-base leading-relaxed text-foreground/90 sm:pl-12 sm:pr-8 sm:py-7 min-[1360px]:pl-14",
+                  "min-h-[12rem] w-full pl-10 pr-4 py-5 text-base leading-relaxed text-foreground/90 sm:pl-12 sm:pr-8 sm:py-7 min-[1360px]:pl-14",
                   "[&_h1]:mb-3 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:tracking-tight",
                   "[&_h2]:mb-2 [&_h2]:mt-6 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:tracking-tight",
                   "[&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-xl [&_h3]:font-semibold",

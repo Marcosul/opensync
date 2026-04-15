@@ -446,7 +446,7 @@ export function FileTree({
     "flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground";
 
   return (
-    <div className="flex w-[200px] shrink-0 flex-col border-r border-border bg-sidebar/30">
+    <div className="flex h-full min-h-0 w-full min-w-0 shrink-0 flex-col bg-sidebar/30">
       <div className="flex shrink-0 items-center justify-center gap-0.5 border-b border-border px-1 py-1">
         <button
           type="button"

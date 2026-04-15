@@ -4,6 +4,8 @@ import { FileCode2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/api/rest/generic";
 import { VaultCodeEditor } from "@/components/app/vault-code-editor";
+import { VaultJsonlViewer } from "@/components/app/vault-jsonl-viewer";
+import { isVaultJsonlDocId } from "@/lib/vault-doc-kind";
 import {
   VaultPlateMarkdownEditor,
   type VaultPlateMarkdownEditorProps,
@@ -230,16 +232,30 @@ export function VaultNoteEditor({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          plainTextDocument ? "overflow-hidden" : "overflow-y-auto",
+        )}
+      >
         {useTextareaLayout ? (
           plainTextDocument ? (
-            <div className="flex h-full min-h-0 flex-col px-2 py-3 sm:px-4 sm:py-4">
-              <VaultCodeEditor
-                docId={docId}
-                value={value}
-                onChange={onChange}
-                className="mx-auto w-full max-w-[min(100%,56rem)]"
-              />
+            <div className="flex min-h-0 flex-1 flex-col px-2 py-3 sm:px-4 sm:py-4">
+              {isVaultJsonlDocId(docId) ? (
+                <VaultJsonlViewer
+                  docId={docId}
+                  value={value}
+                  onChange={onChange}
+                  className="mx-auto min-h-0 w-full max-w-[min(100%,56rem)] flex-1"
+                />
+              ) : (
+                <VaultCodeEditor
+                  docId={docId}
+                  value={value}
+                  onChange={onChange}
+                  className="mx-auto min-h-0 w-full max-w-[min(100%,56rem)] flex-1"
+                />
+              )}
             </div>
           ) : (
             <div className="h-full overflow-y-auto px-4 py-6 sm:px-10 sm:py-8">
