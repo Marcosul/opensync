@@ -127,7 +127,7 @@ say ""
 # curl | bash: o stdin do bash é o pipe do curl — NÃO uses 'exec 0</dev/tty' no meio do script
 # (o bash pode deixar de ler o resto do script). Lê sempre de </dev/tty> e passa o tty ao init.
 if [[ ! -r /dev/tty ]]; then
-  warn "Sem /dev/tty — exporte OPENSYNC_WORKSPACE_TOKEN=usk_... e corre: \${C}opensync-ubuntu init\${N}"
+  warn "Sem /dev/tty — exporte OPENSYNC_WORKSPACE_TOKEN=usk_... e corre: \${C}opensync init\${N}"
   exit 0
 fi
 
@@ -135,7 +135,7 @@ hdr "🔑 Token de workspace (usk_...)"
 say "Gera o token no painel (fica à espera até colares e carregares Enter)."
 say "\${C}\${OPENSYNC_WEB_ORIGIN}/settings?section=access-tokens\${N}"
 say ""
-say "\${D}O assistente opensync-ubuntu init usa esta variável e continua com pasta e vault.\${N}"
+say "\${D}O assistente opensync init usa esta variável e continua com pasta e vault.\${N}"
 say ""
 
 while true; do
@@ -161,7 +161,7 @@ say ""
 ok "Token recebido. A abrir o assistente (vault, pasta, systemd)…"
 say ""
 
-opensync-ubuntu init < /dev/tty
+opensync init < /dev/tty
 `;
 }
 

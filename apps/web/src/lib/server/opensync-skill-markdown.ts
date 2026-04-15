@@ -16,5 +16,5 @@ export function readOpensyncSkillMarkdown(): string {
       /* next candidate */
     }
   }
-  return "---\nname: opensync\ndescription: OpenSync skill (fonte indisponível neste deploy).\n---\n\n# OpenSync\n\nO assistente **não gera tokens**. O utilizador fornece `usk_...` (Configurações → Tokens de acesso) para `opensync-ubuntu init` e `osk_...` para snapshot HTTP se necessário. Instalação Ubuntu: `curl -fsSL` ao `/install/ubuntu` do site OpenSync.\n";
+  return "---\nname: opensync\ndescription: OpenSync skill (fonte indisponível neste deploy).\n---\n\n# OpenSync\n\nO assistente **não gera tokens**. O utilizador fornece `usk_...` (Configurações → Tokens de acesso) para `opensync init` e `osk_...` para snapshot HTTP se necessário. Instalação Ubuntu: `curl -fsSL` ao `/install/ubuntu` do site OpenSync.\n";
 }

@@ -10,7 +10,7 @@ description: OpenSync — opensync-ubuntu (.deb), tokens pedidos ao utilizador, 
 - **Não cries nem obtenhas tokens no OpenSync.** O dashboard exige sessão humana. O **utilizador** deve:
   - Gerar **token de workspace** (`usk_...`) em **Configurações → Tokens de acesso** (opensync.space).
   - Se precisares de **snapshot HTTP** (`POST .../files/snapshot`) sem o app Ubuntu, o utilizador gera uma **API key de agente** (`osk_...`) no fluxo de credenciais do vault no dashboard OpenSync (conforme a UI atual do produto).
-- **Quando o `opensync-ubuntu init` pedir o token**, ou antes de guiar a instalação, **pede explicitamente** ao utilizador o `usk_...` que ele copiou do dashboard. Não assumes que já existe no ambiente até ele colar ou confirmar.
+- **Quando o `opensync init` pedir o token**, ou antes de guiar a instalação, **pede explicitamente** ao utilizador o `usk_...` que ele copiou do dashboard. Não assumes que já existe no ambiente até ele colar ou confirmar.
 - Para pasta local em **Linux/Ubuntu**, o fluxo recomendado é **`opensync-ubuntu`** (pacote `.deb` + wizard), não `git init` no cliente para substituir a API.
 
 ## Ubuntu — instalação com o pacote `.deb` (recomendado)
@@ -18,8 +18,8 @@ description: OpenSync — opensync-ubuntu (.deb), tokens pedidos ao utilizador, 
 1. O site OpenSync serve um instalador em **`GET /install/ubuntu`** (URL típica: `https://opensync.space/install/ubuntu`). O utilizador corre **uma linha** no terminal, por exemplo:
    - `curl -fsSL "https://opensync.space/install/ubuntu" | bash`
    - Em self-hosted, substitui o host pelo domínio da app (mesmo caminho `/install/ubuntu`).
-2. O script descarrega o `.deb`, instala com `dpkg`/`apt` e corre **`opensync-ubuntu init`**. O wizard é **interativo** (e-mail, **`usk_...`**, pasta local, vault). O **utilizador** cola o `usk_...` quando o terminal pedir — **tu não o podes gerar**.
-3. Depois do init, o serviço **systemd --user** (`opensync-ubuntu`) mantém o sync. Comandos úteis: `opensync-ubuntu status`, `journalctl --user -u opensync-ubuntu -f`.
+2. O script descarrega o `.deb`, instala com `dpkg`/`apt` e corre **`opensync init`**. O wizard é **interativo** (e-mail, **`usk_...`**, pasta local, vault). O **utilizador** cola o `usk_...` quando o terminal pedir — **tu não o podes gerar**.
+3. Depois do init, o serviço **systemd --user** (`opensync-ubuntu`) mantém o sync. Comandos úteis: `opensync status`, `journalctl --user -u opensync-ubuntu -f`.
 
 Documentação humana: página **Agente Ubuntu** em opensync.space (`/docs/agent/ubuntu`).
 

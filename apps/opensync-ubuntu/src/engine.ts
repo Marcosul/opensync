@@ -7,7 +7,7 @@ import * as api from "./api";
 import * as db from "./db";
 import type Database from "better-sqlite3";
 
-const LOG = "[opensync-ubuntu]";
+const LOG = "[opensync]";
 const DEBOUNCE_MS = 3000;
 
 /** ANSI — visível em journalctl e terminal */
@@ -176,7 +176,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
     } catch (e: unknown) {
       const err = e as { status?: number };
       if (err?.status === 401 || err?.status === 403) {
-        console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync-ubuntu init");
+        console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync init");
         process.exit(1);
       }
       console.error(`${C.yellow}${LOG}${C.reset} ⚠️ poll error`, e);
@@ -326,7 +326,7 @@ async function syncLocalPath(
   } catch (e: unknown) {
     const err = e as { status?: number };
     if (err?.status === 401 || err?.status === 403) {
-      console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync-ubuntu init");
+      console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync init");
       process.exit(1);
     }
     if (err?.status === 409) {
@@ -365,7 +365,7 @@ async function handleLocalDelete(
   } catch (e: unknown) {
     const err = e as { status?: number };
     if (err?.status === 401 || err?.status === 403) {
-      console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync-ubuntu init");
+      console.error(LOG, "ERRO DE AUTENTICACAO — token invalido ou revogado. Corrija com: opensync init");
       process.exit(1);
     }
     console.error(LOG, "delete", rel, e);

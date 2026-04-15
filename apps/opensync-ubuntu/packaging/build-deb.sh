@@ -56,12 +56,6 @@ exit 0
 POSTINST
 chmod 755 "$STAGE/DEBIAN/postinst"
 
-cat >"$STAGE/usr/bin/opensync-ubuntu" <<'WRAP'
-#!/bin/sh
-exec node /usr/lib/opensync-ubuntu/dist/cli.js "$@"
-WRAP
-chmod 755 "$STAGE/usr/bin/opensync-ubuntu"
-
 cat >"$STAGE/usr/bin/opensync" <<'WRAP'
 #!/bin/sh
 exec node /usr/lib/opensync-ubuntu/dist/cli.js "$@"

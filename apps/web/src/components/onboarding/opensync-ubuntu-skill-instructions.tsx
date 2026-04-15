@@ -96,7 +96,7 @@ export function ConnectAgentSkillStep3Panel({
     return (
       `Lê e aplica o SKILL em ${skillMdUrl} e o guia ${skillGuideUrl}. ` +
       `OPENSYNC_API_URL="${apiBaseUrl}" OPENSYNC_VAULT_ID="${vaultId}"${keyInPaste}. ` +
-      `Não cries tokens no OpenSync: pede ao utilizador o usk_... (Configurações → Tokens de acesso) quando o wizard opensync-ubuntu init pedir, para finalizar a ligação ao vault.${httpKeyHint} ` +
+      `Não cries tokens no OpenSync: pede ao utilizador o usk_... (Configurações → Tokens de acesso) quando o wizard opensync init pedir, para finalizar a ligação ao vault.${httpKeyHint} ` +
       `Instalação .deb no Ubuntu: o utilizador corre no terminal: curl -fsSL "${ubuntuInstallScriptUrl}" | bash`
     );
   }, [skillMdUrl, skillGuideUrl, apiBaseUrl, vaultId, agentApiKey, ubuntuInstallScriptUrl]);
@@ -171,7 +171,7 @@ export function ConnectAgentSkillStep3Panel({
               <p className="text-xs font-medium text-foreground">Gere um token de workspace</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 O token começa por <span className="font-mono text-[10px]">usk_...</span> e será pedido no passo 2 (
-                <span className="font-mono">opensync-ubuntu init</span>). Pode gerá-lo aqui ou em{" "}
+                <span className="font-mono">opensync init</span>). Pode gerá-lo aqui ou em{" "}
                 <Link
                   href="/settings?section=access-tokens"
                   className="font-medium text-primary underline-offset-4 hover:underline"
@@ -249,7 +249,7 @@ export function ConnectAgentSkillStep3Panel({
               <p className="text-xs font-medium text-foreground">No Ubuntu: instalar e configurar</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Cole no terminal. O script instala o <span className="font-mono">.deb</span> e corre{" "}
-                <span className="font-mono">opensync-ubuntu init</span> (e-mail, token{" "}
+                <span className="font-mono">opensync init</span> (e-mail, token{" "}
                 <span className="font-mono">usk_...</span>, pasta e vault). O serviço fica ativo no boot.
               </p>
               <div

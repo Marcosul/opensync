@@ -134,7 +134,7 @@ curl -sS -X POST "\${OPENSYNC_API_URL}/agent/vaults/\${OPENSYNC_VAULT_ID}/files/
         <p className="mt-2 text-sm text-muted-foreground">
           Instalação recomendada: linha <span className="font-mono text-xs">curl … | bash</span> a partir de{" "}
           <span className="font-mono text-xs">/install/ubuntu</span> no site (script instala o{" "}
-          <span className="font-mono text-xs">.deb</span> e corre <span className="font-mono text-xs">opensync-ubuntu init</span>
+          <span className="font-mono text-xs">.deb</span> e corre <span className="font-mono text-xs">opensync init</span>
           ; o utilizador cola o <span className="font-mono text-xs">usk_...</span> quando o wizard pedir).{" "}
           <Link href="/docs/agent/ubuntu" className="font-medium text-primary underline-offset-2 hover:underline">
             Guia de instalação

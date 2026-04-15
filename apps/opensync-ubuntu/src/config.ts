@@ -37,13 +37,16 @@ export function resolveUserPath(inputPath: string): string {
   if (!trimmed) return "";
   if (trimmed === "~") return os.homedir();
   if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
+  const home = os.homedir();
+  const legacyPrefix = `${home}${path.sep}~${path.sep}`;
+  if (trimmed.startsWith(legacyPrefix)) return path.join(home, trimmed.slice(legacyPrefix.length));
   return path.resolve(trimmed);
 }
 
 export function loadConfig(): AgentConfig {
   const p = configPath();
   if (!existsSync(p)) {
-    throw new Error(`Config nao encontrada. Execute: opensync-ubuntu init (${p})`);
+    throw new Error(`Config nao encontrada. Execute: opensync init (${p})`);
   }
   const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<AgentConfig>;
   if (!raw.apiUrl?.trim() || !raw.vaultId?.trim() || !raw.syncDir?.trim()) {
@@ -62,6 +65,19 @@ export function loadConfig(): AgentConfig {
 export function saveConfig(cfg: AgentConfig): void {
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
   writeFileSync(configPath(), JSON.stringify(cfg, null, 2), { mode: 0o600 });
+}
+
+export function normalizeAndPersistConfigPathsIfNeeded(): boolean {
+  const p = configPath();
+  if (!existsSync(p)) return false;
+  const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<AgentConfig>;
+  const original = raw.syncDir?.trim() ?? "";
+  const normalized = resolveUserPath(original);
+  if (!original || original === normalized) return false;
+  raw.syncDir = normalized;
+  mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(p, JSON.stringify(raw, null, 2), { mode: 0o600 });
+  return true;
 }
 
 export function saveToken(token: string): void {

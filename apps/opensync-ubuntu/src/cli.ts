@@ -16,6 +16,7 @@ import {
   tokenPath,
   sqlitePath,
   DEFAULT_POLL_INTERVAL_SECONDS,
+  normalizeAndPersistConfigPathsIfNeeded,
   resolveUserPath,
 } from "./config";
 import { runAgent } from "./engine";
@@ -50,7 +51,7 @@ async function cmdUpdate(): Promise<void> {
     `opensync-ubuntu-update-${Date.now()}.deb`,
   );
 
-  console.log("OpenSync Ubuntu — update");
+  console.log("OpenSync — update");
   console.log(`  pacote: ${debUrl}`);
   console.log("  baixando...");
 
@@ -196,7 +197,7 @@ async function cmdStop(): Promise<void> {
 }
 
 async function cmdUninstall(): Promise<void> {
-  console.log("OpenSync Ubuntu — uninstall");
+  console.log("OpenSync — uninstall");
   runCommand("systemctl", ["--user", "stop", "opensync-ubuntu"]);
   runCommand("systemctl", ["--user", "disable", "opensync-ubuntu"]);
   runCommand("systemctl", ["--user", "daemon-reload"]);
@@ -210,7 +211,7 @@ async function cmdUninstall(): Promise<void> {
 }
 
 async function cmdReinstall(): Promise<void> {
-  console.log("OpenSync Ubuntu — reinstall");
+  console.log("OpenSync — reinstall");
   await cmdUpdate();
 }
 
@@ -239,7 +240,7 @@ async function cmdVersion(): Promise<void> {
 
 async function cmdListSync(): Promise<void> {
   const cfg = loadConfig();
-  console.log("OpenSync Ubuntu — sincronizacao local");
+  console.log("OpenSync — sincronizacao local");
   console.log("  vaultId: ", cfg.vaultId);
   console.log("  syncDir: ", cfg.syncDir);
   console.log("  apiUrl:  ", cfg.apiUrl);
@@ -272,7 +273,7 @@ async function cmdInit(): Promise<void> {
   try {
     const API_URL = "https://api.opensync.space/api";
 
-    console.log("OpenSync Ubuntu — sincroniza qualquer pasta com um vault OpenSync");
+    console.log("OpenSync — sincroniza qualquer pasta com um vault OpenSync");
     console.log("──────────────────────────────────────────────────────────────────\n");
     console.log("  Nao tem conta? Crie uma em: https://opensync.space/login");
 
@@ -389,28 +390,28 @@ async function cmdInit(): Promise<void> {
     console.log("  config:  ", defaultConfigPath());
 
     // ── Passo 6: Ativar systemd (sempre por defeito) ────────────────────────────
-    console.log("\nA activar e iniciar o servico systemd (utilizador)…");
+    console.log("\nA activar e reiniciar o servico systemd (utilizador)…");
     spawnSync("loginctl", ["enable-linger", process.env.USER ?? ""], { stdio: "inherit" });
     spawnSync("systemctl", ["--user", "daemon-reload"], { stdio: "inherit" });
-    spawnSync("systemctl", ["--user", "enable", "opensync-ubuntu"], { stdio: "inherit" });
-    const start = spawnSync("systemctl", ["--user", "start", "opensync-ubuntu"], { stdio: "inherit" });
+    const enable = spawnSync("systemctl", ["--user", "enable", "opensync-ubuntu"], { stdio: "inherit" });
+    const restart = spawnSync("systemctl", ["--user", "restart", "opensync-ubuntu"], { stdio: "inherit" });
 
-    if (start.status === 0) {
-      console.log("\n✓ Servico opensync-ubuntu iniciado e habilitado no boot.");
+    if (enable.status === 0 && restart.status === 0) {
+      console.log("\n✓ Servico opensync-ubuntu reiniciado e habilitado no boot.");
       console.log("  O poll remoto corre em background (nao depende de abrir a pasta no gestor de ficheiros).");
       console.log("  Com loginctl enable-linger (acima), o sync continua com o PC ligado mesmo sem login na sessao.");
       console.log("  Logs:   journalctl --user -u opensync-ubuntu -f");
-      console.log("  Status: opensync-ubuntu status");
+      console.log("  Status: opensync status");
     } else {
-      console.log("\nNao foi possivel iniciar o servico. Comandos manuais:");
+      console.log("\nNao foi possivel reiniciar o servico. Comandos manuais:");
       console.log("  loginctl enable-linger $USER");
       console.log("  systemctl --user daemon-reload");
       console.log("  systemctl --user enable opensync-ubuntu");
-      console.log("  systemctl --user start opensync-ubuntu");
+      console.log("  systemctl --user restart opensync-ubuntu");
     }
 
     console.log("\n──────────────────────────────────────────────────────────────────");
-    console.log("  ✅ Instalado com sucesso! — OpenSync Ubuntu esta pronto a sincronizar.");
+    console.log("  ✅ Instalado com sucesso! — OpenSync esta pronto a sincronizar.");
     console.log("──────────────────────────────────────────────────────────────────\n");
   } finally {
     rl.close();
@@ -418,6 +419,10 @@ async function cmdInit(): Promise<void> {
 }
 
 async function cmdRun(): Promise<void> {
+  const fixed = normalizeAndPersistConfigPathsIfNeeded();
+  if (fixed) {
+    console.log("🔧 Config antiga detetada e corrigida: caminho de sync normalizado.");
+  }
   const cfg = loadConfig();
   const token = loadToken();
   await runAgent(cfg, token);
@@ -435,7 +440,7 @@ async function cmdStatus(): Promise<void> {
     .prepare("SELECT path FROM files_state WHERE path LIKE '%(conflict%' AND is_deleted=0")
     .all() as { path: string }[];
 
-  console.log("OpenSync Ubuntu — status");
+  console.log("OpenSync — status");
   console.log("  syncDir:   ", cfg.syncDir);
   console.log("  vault:     ", cfg.vaultId);
   console.log("  apiUrl:    ", cfg.apiUrl);

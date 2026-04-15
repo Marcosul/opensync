@@ -106,7 +106,7 @@ function getSectionIntro(section: SettingsSectionId): { eyebrow: string; title: 
       eyebrow: "Tokens de acesso",
       title: "Tokens de acesso",
       description:
-        "Gere tokens para autenticar o opensync-ubuntu e outros clientes CLI no seu workspace. Cada token tem acesso somente leitura à lista de vaults e pode gerar tokens de sync para vaults específicos.",
+        "Gere tokens para autenticar o opensync e outros clientes CLI no seu workspace. Cada token tem acesso somente leitura à lista de vaults e pode gerar tokens de sync para vaults específicos.",
     };
   }
 
@@ -775,7 +775,7 @@ export default function SettingsPage() {
                     <h2 className="text-base font-semibold">Gerar novo token</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
                       Use tokens <code className="rounded bg-muted px-1 py-0.5 text-xs">usk_...</code> no assistente{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code> (lançado pelo
+                      <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync init</code> (lançado pelo
                       script de instalação ou manualmente).
                     </p>
                   </div>
@@ -880,7 +880,7 @@ export default function SettingsPage() {
                   <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
                     <li>
                       <span className="font-medium text-foreground">1.</span> No Ubuntu (amd64), num terminal — o script
-                      instala o pacote e corre <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync-ubuntu init</code>
+                      instala o pacote e corre <code className="rounded bg-muted px-1 py-0.5 text-xs">opensync init</code>
                       :
                       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-border bg-background px-2 py-2 font-mono text-[11px] leading-relaxed text-foreground">
                         {ubuntuInstallOneliner}

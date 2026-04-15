@@ -31,7 +31,7 @@ export default function UbuntuAgentDocPage() {
       <p className="mt-2 text-sm text-muted-foreground">
         No Ubuntu (amd64), uma linha: o site serve um script que descarrega o{" "}
         <code className={codeClass}>.deb</code>, instala com <code className={codeClass}>dpkg</code> e de seguida corre{" "}
-        <code className={codeClass}>opensync-ubuntu init</code> (o assistente interativo).
+        <code className={codeClass}>opensync init</code> (o assistente interativo).
       </p>
       <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
         {installOneliner}
@@ -65,7 +65,7 @@ export default function UbuntuAgentDocPage() {
       <h2 className="mt-8 text-lg font-medium">2. Gerir o serviço</h2>
       <pre className="mt-2 overflow-x-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed">
         {`# Ver estado do sync
-opensync-ubuntu status
+opensync status
 
 # Logs em tempo real
 journalctl --user -u opensync-ubuntu -f
@@ -98,7 +98,7 @@ systemctl --user restart opensync-ubuntu`}
         >
           Instale a skill OpenSync
         </Link>{" "}
-        — inclui os passos de instalação do <code className={codeClass}>opensync-ubuntu</code> e guia o agente
+        — inclui os passos de instalação do <code className={codeClass}>opensync</code> e guia o agente
         a configurar tudo automaticamente.
       </p>
     </main>
