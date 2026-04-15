@@ -63,6 +63,71 @@ async function readLocalFile(abs: string, maxBytes: number): Promise<string | nu
   }
 }
 
+const MERGE_UPSERT_MAX_ATTEMPTS = 4;
+const MERGE_UPSERT_DELAYS_MS = [250, 600, 1200];
+
+function isTransientMergeUpsertStatus(st: number | undefined): boolean {
+  if (st === undefined) return true;
+  if (st === 408 || st === 429) return true;
+  return st >= 500 && st <= 599;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Upsert do texto fusionado com backoff e re-merge em 409 (tip do servidor mudou).
+ */
+async function upsertMergedBodyWithRetry(
+  cfg: AgentConfig,
+  token: string,
+  filePath: string,
+  initialBody: string,
+  initialBaseVersion: string,
+  maxFileSizeBytes: number,
+): Promise<{ ok: true; version: string; body: string } | { ok: false; body: string; baseVersion: string }> {
+  let body = initialBody;
+  let baseVersion = initialBaseVersion;
+  const abs = path.join(cfg.syncDir, filePath);
+  for (let attempt = 0; attempt < MERGE_UPSERT_MAX_ATTEMPTS; attempt++) {
+    try {
+      const up = await api.upsertFile(cfg, token, filePath, body, baseVersion);
+      if (attempt > 0) {
+        console.warn(
+          `${C.cyan}${LOG}${C.reset} ${C.green}✅ merge upsert após retry${C.reset} ${C.dim}${filePath} · tentativa ${attempt + 1}/${MERGE_UPSERT_MAX_ATTEMPTS} · v${up.version}${C.reset}`,
+        );
+      }
+      return { ok: true, version: up.version, body };
+    } catch (e: unknown) {
+      const err = e as { status?: number };
+      const st = err.status;
+      if (st === 401 || st === 403) throw err;
+      if (st === 409) {
+        try {
+          const r = await api.getFileContent(cfg, token, filePath);
+          const local = await readLocalFile(abs, maxFileSizeBytes);
+          body = local !== null ? mergeTextPreserveBoth(local, r.content) : r.content;
+          baseVersion = r.version;
+          if (attempt < MERGE_UPSERT_MAX_ATTEMPTS - 1) {
+            console.warn(
+              `${C.yellow}${LOG}${C.reset} 🔁 merge upsert 409 — recalcular merge e retry: ${filePath} (${attempt + 1}/${MERGE_UPSERT_MAX_ATTEMPTS})`,
+            );
+          }
+        } catch {
+          /* mantém body/baseVersion */
+        }
+      } else if (!isTransientMergeUpsertStatus(st)) {
+        return { ok: false, body, baseVersion };
+      }
+      if (attempt < MERGE_UPSERT_MAX_ATTEMPTS - 1) {
+        await sleepMs(MERGE_UPSERT_DELAYS_MS[Math.min(attempt, MERGE_UPSERT_DELAYS_MS.length - 1)]);
+      }
+    }
+  }
+  return { ok: false, body, baseVersion };
+}
+
 async function reconcileDeletedLocalFiles(
   database: Database.Database,
   cfg: AgentConfig,
@@ -134,6 +199,49 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
   const remoteWriting = new Set<string>();
   /** Ficheiro com alteração local ainda não enviada ao servidor — o poll remoto não sobrescreve até concluir o upload. */
   const pendingLocalUpload = new Set<string>();
+
+  async function flushPendingMergePushes(): Promise<void> {
+    const rels = db.listPendingMergePaths(database);
+    if (rels.length === 0) return;
+    for (const rel of rels) {
+      if (pendingLocalUpload.has(rel) || remoteWriting.has(rel)) continue;
+      const abs = path.join(cfg.syncDir, rel);
+      let remote: { content: string; version: string };
+      try {
+        remote = await api.getFileContent(cfg, token, rel);
+      } catch {
+        continue;
+      }
+      const local = await readLocalFile(abs, cfg.maxFileSizeBytes);
+      if (local === null) {
+        db.removePendingMergePush(database, rel);
+        continue;
+      }
+      const merged = mergeTextPreserveBoth(local, remote.content);
+      const mr = await upsertMergedBodyWithRetry(
+        cfg,
+        token,
+        rel,
+        merged,
+        remote.version,
+        cfg.maxFileSizeBytes,
+      );
+      if (mr.ok) {
+        db.removePendingMergePush(database, rel);
+        remoteWriting.add(rel);
+        try {
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, mr.body, "utf8");
+          db.upsertFileState(database, rel, mr.version, db.hashContent(mr.body));
+        } finally {
+          setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
+        }
+        console.log(
+          `${C.cyan}${LOG}${C.reset} ${C.green}✅ pending merge push concluído${C.reset} ${C.dim}${rel} · v${mr.version}${C.reset}`,
+        );
+      }
+    }
+  }
 
   const queue = new Set<string>();
   let processing = false;
@@ -220,12 +328,25 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
           if (lh !== rh) {
             body = mergeTextPreserveBoth(localExisting, remote.content);
             hashOut = db.hashContent(body);
-            try {
-              const up = await api.upsertFile(cfg, token, ent.path, body, remote.version);
-              versionOut = up.version;
+            const mr = await upsertMergedBodyWithRetry(
+              cfg,
+              token,
+              ent.path,
+              body,
+              remote.version,
+              cfg.maxFileSizeBytes,
+            );
+            if (mr.ok) {
+              body = mr.body;
+              versionOut = mr.version;
+              hashOut = db.hashContent(mr.body);
+              db.removePendingMergePush(database, ent.path);
               console.warn(LOG, "manifest:", ent.path, "local≠remoto — merge preservado", `v${versionOut}`);
-            } catch (eUp) {
-              console.error(LOG, "manifest merge upsert falhou (só disco):", ent.path, eUp);
+            } else {
+              db.addPendingMergePush(database, ent.path);
+              console.error(
+                `${C.yellow}${LOG}${C.reset} ⚠️ manifest merge upsert esgotado (fila pending): ${ent.path}`,
+              );
             }
           }
         }
@@ -250,6 +371,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
   }
 
   async function pollRemote(): Promise<void> {
+    await flushPendingMergePushes();
     let cursor = db.getRemoteCursor(database);
     let totalApplied = 0;
     try {
@@ -401,12 +523,25 @@ async function applyRemoteChange(
       if (hasUnsyncedLocalEdit) {
         bodyToWrite = mergeTextPreserveBoth(local, content);
         hashToStore = db.hashContent(bodyToWrite);
-        try {
-          const resUp = await api.upsertFile(cfg, token, ch.path, bodyToWrite, ch.version);
-          versionToStore = resUp.version;
+        const mr = await upsertMergedBodyWithRetry(
+          cfg,
+          token,
+          ch.path,
+          bodyToWrite,
+          ch.version,
+          cfg.maxFileSizeBytes,
+        );
+        if (mr.ok) {
+          bodyToWrite = mr.body;
+          versionToStore = mr.version;
+          hashToStore = db.hashContent(mr.body);
+          db.removePendingMergePush(database, ch.path);
           console.warn(LOG, "conflito remoto+local:", ch.path, "merge enviado", `v${versionToStore}`);
-        } catch (eUp) {
-          console.error(LOG, "upsert merge falhou (gravado só em disco):", ch.path, eUp);
+        } else {
+          db.addPendingMergePush(database, ch.path);
+          console.error(
+            `${C.yellow}${LOG}${C.reset} ⚠️ merge upsert esgotado (fila pending, gravado em disco): ${ch.path}`,
+          );
         }
       }
     }
@@ -465,19 +600,29 @@ async function syncLocalPath(
       try {
         const remote = await api.getFileContent(cfg, token, rel);
         const merged = mergeTextPreserveBoth(text, remote.content);
-        const mergedH = db.hashContent(merged);
-        let verOut = remote.version;
-        try {
-          const up = await api.upsertFile(cfg, token, rel, merged, remote.version);
-          verOut = up.version;
+        const mr = await upsertMergedBodyWithRetry(
+          cfg,
+          token,
+          rel,
+          merged,
+          remote.version,
+          cfg.maxFileSizeBytes,
+        );
+        const mergedH = db.hashContent(mr.body);
+        const verOut = mr.ok ? mr.version : mr.baseVersion;
+        if (mr.ok) {
+          db.removePendingMergePush(database, rel);
           console.warn(LOG, "409:", rel, "merge local+remoto enviado", `v${verOut}`);
-        } catch (eUp) {
-          console.error(LOG, "409 merge upsert falhou (merge só em disco):", rel, eUp);
+        } else {
+          db.addPendingMergePush(database, rel);
+          console.error(
+            `${C.yellow}${LOG}${C.reset} ⚠️ 409 merge upsert esgotado (fila pending, merge em disco): ${rel}`,
+          );
         }
         remoteWriting.add(rel);
         try {
           await fs.mkdir(path.dirname(abs), { recursive: true });
-          await fs.writeFile(abs, merged, "utf8");
+          await fs.writeFile(abs, mr.body, "utf8");
           db.upsertFileState(database, rel, verOut, mergedH);
         } finally {
           setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
