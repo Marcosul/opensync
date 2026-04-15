@@ -124,7 +124,6 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
                   "hover:bg-muted hover:text-foreground data-popup-open:bg-muted",
                 )}
                 aria-label={`Ações do cofre ${vault.name}`}
-                onClick={(e) => e.stopPropagation()}
               >
                 <MoreVertical className="size-4" aria-hidden />
               </Menu.Trigger>

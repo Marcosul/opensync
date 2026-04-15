@@ -32,6 +32,14 @@ export function defaultConfigPath(): string {
   return configPath();
 }
 
+export function resolveUserPath(inputPath: string): string {
+  const trimmed = inputPath.trim();
+  if (!trimmed) return "";
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
+  return path.resolve(trimmed);
+}
+
 export function loadConfig(): AgentConfig {
   const p = configPath();
   if (!existsSync(p)) {
@@ -44,7 +52,7 @@ export function loadConfig(): AgentConfig {
   return {
     apiUrl: raw.apiUrl.replace(/\/+$/, ""),
     vaultId: raw.vaultId.trim(),
-    syncDir: path.resolve(raw.syncDir.trim()),
+    syncDir: resolveUserPath(raw.syncDir),
     pollIntervalSeconds: Math.max(5, raw.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS),
     ignore: Array.isArray(raw.ignore) ? raw.ignore : DEFAULT_IGNORE,
     maxFileSizeBytes: raw.maxFileSizeBytes ?? 1048576,

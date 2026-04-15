@@ -8,11 +8,37 @@ const VAULT_NAME_MAX = 120;
 
 type EmptyPayload = { vaultName?: string };
 
+type BackendErrorPayload = {
+  statusCode?: number;
+  error?: string;
+  message?: string | string[];
+};
+
 function normalizeName(raw: string | undefined): string | null {
   if (raw == null) return null;
   const t = raw.trim();
   if (!t) return null;
   return t.length > VAULT_NAME_MAX ? t.slice(0, VAULT_NAME_MAX) : t;
+}
+
+function parseBackendError(rawMessage: string): BackendErrorPayload | null {
+  try {
+    const parsed = JSON.parse(rawMessage) as BackendErrorPayload;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function messageIncludesConflictHint(payload: BackendErrorPayload): boolean {
+  const text = Array.isArray(payload.message)
+    ? payload.message.join(" ")
+    : typeof payload.message === "string"
+      ? payload.message
+      : "";
+  const error = typeof payload.error === "string" ? payload.error : "";
+  return /conflict|ja existe|já existe|already exists|duplicate/i.test(`${text} ${error}`);
 }
 
 export async function POST(request: Request) {
@@ -48,8 +74,46 @@ export async function POST(request: Request) {
     };
     return NextResponse.json({ vault });
   } catch (error) {
-    const message =
+    const rawMessage =
       error instanceof Error ? error.message : "Falha ao criar vault no backend";
+    const parsed = parseBackendError(rawMessage);
+
+    if (parsed?.statusCode === 409 && messageIncludesConflictHint(parsed)) {
+      try {
+        const list = await backendRequest<{ vaults: BackendVault[] }>("/vaults", user, {
+          method: "GET",
+        });
+        const exact = list.vaults.find((v) => normalizeName(v.name) === name);
+        const fallback = list.vaults.find(
+          (v) => v.name.trim().toLowerCase() === name.toLowerCase(),
+        );
+        const existing = exact ?? fallback;
+
+        if (existing) {
+          const vault: VaultListItem = {
+            id: existing.id,
+            name: existing.name,
+            pathLabel: existing.giteaRepo,
+            kind: "blank",
+            managedByProfile: false,
+            deletable: true,
+            remoteSync: "git",
+          };
+          return NextResponse.json({ vault, reused: true as const });
+        }
+      } catch {
+        // Fallback para resposta de conflito amigável abaixo.
+      }
+      return NextResponse.json(
+        { error: `Ja existe um vault com nome "${name}" neste workspace.` },
+        { status: 409 },
+      );
+    }
+
+    const message =
+      parsed && typeof parsed.message === "string" && parsed.message
+        ? parsed.message
+        : rawMessage;
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

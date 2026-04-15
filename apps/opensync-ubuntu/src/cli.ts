@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import * as process from "node:process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as fsSync from "node:fs";
 import { spawnSync } from "node:child_process";
 import {
   loadConfig,
@@ -14,6 +16,7 @@ import {
   tokenPath,
   sqlitePath,
   DEFAULT_POLL_INTERVAL_SECONDS,
+  resolveUserPath,
 } from "./config";
 import { runAgent } from "./engine";
 import * as api from "./api";
@@ -21,6 +24,17 @@ import * as db from "./db";
 
 const DEFAULT_UPDATE_DEB_URL =
   "https://gpnxlfnjuxqhlsmxwfmc.supabase.co/storage/v1/object/public/installer/opensync-ubuntu_0.1.0_amd64.deb";
+
+function cliVersion(): string {
+  try {
+    const packageJsonPath = path.join(__dirname, "..", "package.json");
+    const raw = fsSync.readFileSync(packageJsonPath, "utf8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version?.trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function runCommand(cmd: string, args: string[]): void {
   const res = spawnSync(cmd, args, { stdio: "inherit" });
@@ -153,13 +167,18 @@ Uso:
 
 Comandos:
   help        Mostra esta ajuda
+  version     Mostra a versao instalada do CLI
+  status      Mostra o status local (cursor, arquivos e conflitos)
   update      Atualiza para a ultima versao e reinicia o servico local
   reinstall   Reinstala o pacote atual e reinicia o servico local
   uninstall   Remove o servico local (mantem configuracao local)
   sync        Inicia a sincronizacao (alias de run)
   restart     Reinicia o servico local opensync-ubuntu
   stop        Para o servico local opensync-ubuntu
+  list-sync   Mostra vault e diretorio local atualmente sincronizados
   list-vault  Lista os vaults da conta usando token usk_
+  set-sync-dir <diretorio>
+              Troca o diretorio local de sincronizacao do vault atual
 `);
 }
 
@@ -209,6 +228,40 @@ async function cmdListVault(): Promise<void> {
     for (const [i, v] of vaults.entries()) {
       console.log(`  ${i + 1}. ${v.name} [${v.id}] — workspace: ${v.workspaceName}`);
     }
+  } finally {
+    rl.close();
+  }
+}
+
+async function cmdVersion(): Promise<void> {
+  console.log(`opensync v${cliVersion()}`);
+}
+
+async function cmdListSync(): Promise<void> {
+  const cfg = loadConfig();
+  console.log("OpenSync Ubuntu — sincronizacao local");
+  console.log("  vaultId: ", cfg.vaultId);
+  console.log("  syncDir: ", cfg.syncDir);
+  console.log("  apiUrl:  ", cfg.apiUrl);
+  console.log("  poll:    ", `${cfg.pollIntervalSeconds}s`);
+}
+
+async function cmdSetSyncDir(argPath?: string): Promise<void> {
+  const cfg = loadConfig();
+  const rl = readline.createInterface({ input, output });
+  try {
+    const nextRaw = (argPath?.trim() || (await ask(rl, "Novo diretorio de sincronizacao", cfg.syncDir))).trim();
+    if (!nextRaw) {
+      throw new Error("diretorio invalido");
+    }
+    const nextDir = resolveUserPath(nextRaw);
+    await fs.mkdir(nextDir, { recursive: true });
+    cfg.syncDir = nextDir;
+    saveConfig(cfg);
+    console.log("✅ Diretorio de sincronizacao atualizado.");
+    console.log("  vaultId: ", cfg.vaultId);
+    console.log("  syncDir: ", cfg.syncDir);
+    console.log("  Dica: execute `opensync restart` para aplicar no servico em background.");
   } finally {
     rl.close();
   }
@@ -301,6 +354,7 @@ async function cmdInit(): Promise<void> {
       console.error("Erro: pasta obrigatoria.");
       process.exit(1);
     }
+    const resolvedSyncDir = resolveUserPath(syncDir);
 
     // ── Passo 4: Gerar sync token (osk_...) ──────────────────────────────────
     console.log("\nGerando token de sync...");
@@ -319,19 +373,19 @@ async function cmdInit(): Promise<void> {
     const cfg: AgentConfig = {
       apiUrl: API_URL,
       vaultId,
-      syncDir,
+      syncDir: resolvedSyncDir,
       pollIntervalSeconds: Math.max(5, DEFAULT_POLL_INTERVAL_SECONDS),
       ignore: [".git", "node_modules", ".cache", ".DS_Store", "*.tmp", "*.swp"],
       maxFileSizeBytes: 1048576,
     };
 
-    await fs.mkdir(syncDir, { recursive: true });
+    await fs.mkdir(resolvedSyncDir, { recursive: true });
     saveConfig(cfg);
     saveToken(syncToken);
 
     console.log("\n✓ Configuracao salva:");
     console.log("  vault:   ", vaultName);
-    console.log("  pasta:   ", syncDir);
+    console.log("  pasta:   ", resolvedSyncDir);
     console.log("  config:  ", defaultConfigPath());
 
     // ── Passo 6: Ativar systemd (sempre por defeito) ────────────────────────────
@@ -416,6 +470,10 @@ async function main(): Promise<void> {
     await cmdRun();
     return;
   }
+  if (cmd === "version" || cmd === "-v" || cmd === "--version") {
+    await cmdVersion();
+    return;
+  }
   if (cmd === "status") {
     await cmdStatus();
     return;
@@ -442,6 +500,14 @@ async function main(): Promise<void> {
   }
   if (cmd === "list-vault") {
     await cmdListVault();
+    return;
+  }
+  if (cmd === "list-sync") {
+    await cmdListSync();
+    return;
+  }
+  if (cmd === "set-sync-dir") {
+    await cmdSetSyncDir(process.argv[3]);
     return;
   }
   printHelp();

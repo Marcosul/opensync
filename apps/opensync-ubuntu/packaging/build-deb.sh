@@ -32,8 +32,29 @@ pnpm --filter @opensync/opensync-ubuntu deploy --legacy "$DEPLOY"
 
 # Compilar binários nativos (better-sqlite3) no diretório de deploy
 cd "$DEPLOY"
-npm rebuild better-sqlite3 --ignore-scripts=false 2>/dev/null || true
+npm rebuild better-sqlite3 --ignore-scripts=false
 cd "$REPO_ROOT"
+
+cat >"$STAGE/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+
+APP_DIR="/usr/lib/opensync-ubuntu"
+
+if [ -d "$APP_DIR" ]; then
+  printf '%s\n' "🔧 [postinst] A alinhar binarios nativos com o Node da maquina..."
+  # Rebuild no host garante ABI compativel com a versao de nodejs instalada no sistema.
+  if ! npm rebuild --prefix "$APP_DIR" better-sqlite3 --ignore-scripts=false >/dev/null 2>&1; then
+    printf '%s\n' "❌ [postinst] Falha ao reconstruir better-sqlite3 para o Node atual."
+    printf '%s\n' "   Execute: sudo npm rebuild --prefix $APP_DIR better-sqlite3 --ignore-scripts=false"
+    exit 1
+  fi
+  printf '%s\n' "✅ [postinst] better-sqlite3 recompilado com sucesso."
+fi
+
+exit 0
+POSTINST
+chmod 755 "$STAGE/DEBIAN/postinst"
 
 cat >"$STAGE/usr/bin/opensync-ubuntu" <<'WRAP'
 #!/bin/sh
