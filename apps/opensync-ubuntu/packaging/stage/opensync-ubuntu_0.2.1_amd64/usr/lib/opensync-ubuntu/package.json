@@ -1,6 +1,6 @@
 {
   "name": "@opensync/opensync-ubuntu",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "private": true,
   "description": "OpenSync Ubuntu: sync bidirecional de qualquer pasta com um vault OpenSync",
   "files": [
