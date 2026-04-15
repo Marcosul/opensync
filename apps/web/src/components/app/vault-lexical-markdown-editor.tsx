@@ -697,14 +697,14 @@ function SlashMenuPlugin() {
       options={options}
       onSelectOption={onSelectOption}
       menuRenderFn={(anchorElementRef, context) => {
-        const { highlightedIndex, selectOptionAndCleanUp, setHighlightedIndex } = context;
+        const { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex } = context;
         if (!anchorElementRef.current || options.length === 0) {
           return null;
         }
         return createPortal(
           <div className="z-50 max-h-64 w-56 overflow-auto rounded-lg border border-border bg-popover p-1 shadow-xl">
             {options.map((option, index) => {
-              const selected = highlightedIndex === index;
+              const selected = selectedIndex === index;
               return (
                 <button
                   key={option.key}

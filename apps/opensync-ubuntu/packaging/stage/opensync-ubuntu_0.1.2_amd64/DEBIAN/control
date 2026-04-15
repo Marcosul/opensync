@@ -1,0 +1,9 @@
+Package: opensync-ubuntu
+Version: 0.1.2
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: OpenSync <hello@opensync.space>
+Depends: nodejs (>= 20)
+Description: OpenSync Ubuntu - sync bidirecional de qualquer pasta com vault
+ Sincroniza qualquer diretorio local com um vault OpenSync. Sem OpenClaw, skill ou plugin.
