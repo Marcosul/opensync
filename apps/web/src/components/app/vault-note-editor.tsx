@@ -3,10 +3,14 @@
 import { FileCode2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { WebsocketProvider } from "y-websocket";
+import { Doc } from "yjs";
 
 import { apiRequest } from "@/api/rest/generic";
 import { VaultCodeEditor } from "@/components/app/vault-code-editor";
-import { VaultLexicalMarkdownEditor } from "@/components/app/vault-lexical-markdown-editor";
+import {
+  VaultLexicalMarkdownEditor,
+  type VaultLexicalMarkdownEditorProps,
+} from "@/components/app/vault-lexical-markdown-editor";
 import { cn } from "@/lib/utils";
 
 function countWords(text: string): number {
@@ -75,6 +79,10 @@ export function VaultNoteEditor({
   onSourceModeChange,
   plainTextDocument = false,
 }: VaultNoteEditorProps) {
+  type CollaborationProviderFactory = NonNullable<
+    VaultLexicalMarkdownEditorProps["collaboration"]
+  >["providerFactory"];
+
   const [internalSourceMode, setInternalSourceMode] = useState(false);
   const sourceMode = sourceModeProp ?? internalSourceMode;
   const setSourceMode = onSourceModeChange ?? setInternalSourceMode;
@@ -228,7 +236,7 @@ export function VaultNoteEditor({
                     roomId: `lexical:${vaultId}:${docId}`,
                     username: collabProfile.name,
                     cursorColor: collabProfile.color,
-                    providerFactory: (roomId) => {
+                    providerFactory: ((roomId: string) => {
                       const baseUrl = resolveCollabWsUrl();
                       if (!baseUrl) {
                         throw new Error(
@@ -241,7 +249,7 @@ export function VaultNoteEditor({
                       const provider = new WebsocketProvider(
                         wsUrl.origin + wsUrl.pathname,
                         roomId,
-                        undefined,
+                        new Doc(),
                         {
                           params: {
                             room: roomId,
@@ -258,7 +266,7 @@ export function VaultNoteEditor({
                         setActiveUsers(provider.awareness.getStates().size);
                       });
                       return provider;
-                    },
+                    }) as unknown as CollaborationProviderFactory,
                   }
                 : undefined
             }
