@@ -2,6 +2,8 @@ app = "opensync-api"
 primary_region = "gru"
 
 [build]
+  # Inclui packages/sync (workspace:* não funciona só com apps/api no contexto).
+  context = "../.."
   dockerfile = "Dockerfile"
 
 [deploy]

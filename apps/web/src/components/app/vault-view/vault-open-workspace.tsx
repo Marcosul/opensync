@@ -835,7 +835,12 @@ export function VaultOpenWorkspace({
     activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
     !lazyGitDirtyDocIdsRef.current.has(activeTabId);
 
-  const lazyBlobQuery = useQuery({
+  const lazyBlobQuery = useQuery<
+    string,
+    Error,
+    string,
+    ReturnType<typeof vaultGitBlobQueryKey>
+  >({
     queryKey: vaultGitBlobQueryKey(vaultId, activeTabId ?? "", blobCommitKey),
     queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, activeTabId!, signal),
     enabled: lazyActiveBlobQueryEnabled,
@@ -845,8 +850,13 @@ export function VaultOpenWorkspace({
      * `keepPreviousData` global reutilizava o blob do separador anterior ao mudar de ficheiro
      * (queryKey muda o path no índice 2). Só reaproveitar placeholder quando é o mesmo path.
      */
-    placeholderData: (previousData: string | undefined, previousQuery: Query | undefined) => {
-      const qk = previousQuery?.queryKey as readonly unknown[] | undefined;
+    placeholderData: (
+      previousData: string | undefined,
+      previousQuery:
+        | Query<string, Error, string, ReturnType<typeof vaultGitBlobQueryKey>>
+        | undefined,
+    ) => {
+      const qk = previousQuery?.queryKey;
       const prevPath = qk?.[2];
       if (typeof prevPath === "string" && prevPath === activeTabId) {
         return previousData;

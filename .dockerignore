@@ -1,0 +1,11 @@
+# Contexto raiz para `docker build -f apps/api/Dockerfile .` / Fly com build.context = "../.."
+**/.git
+**/node_modules
+**/.turbo
+**/dist
+**/.next
+**/.cache
+**/coverage
+*.log
+.env
+.env.*
