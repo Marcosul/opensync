@@ -1,5 +1,7 @@
 export type VaultListItem = {
   id: string;
+  /** Workspace no backend (quando vem da API). */
+  workspaceId?: string;
   name: string;
   pathLabel: string;
   kind: "openclaw" | "blank";

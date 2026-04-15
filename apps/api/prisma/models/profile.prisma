@@ -11,9 +11,11 @@ model Profile {
   onboardingCompletedAt  DateTime? @map("onboarding_completed_at")
   agentConnection        Json?     @map("agent_connection")
 
-  workspaces  Workspace[]
-  auditLogs   AuditLog[]
-  userApiKeys UserApiKey[]
+  workspaces            Workspace[]
+  workspaceMemberships  WorkspaceMember[]
+  workspaceInvitesSent  WorkspaceInvite[] @relation("WorkspaceInviteInvitedBy")
+  auditLogs             AuditLog[]
+  userApiKeys           UserApiKey[]
 
   @@map("profiles")
 }

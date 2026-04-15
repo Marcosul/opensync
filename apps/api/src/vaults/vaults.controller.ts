@@ -159,10 +159,7 @@ export class VaultsController {
     @Body() body: SyncVaultDto,
   ) {
     const uid = this.requireUserId(userId);
-    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
-    if (!vault) {
-      throw new NotFoundException('Vault não encontrado');
-    }
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
     return this.vaultFiles.applyTrustedSnapshot(vault.id, body.files);
   }
 }

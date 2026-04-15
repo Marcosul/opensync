@@ -1,0 +1,56 @@
+/// Papéis de colaboração em workspace (membros e convites).
+enum WorkspaceRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum WorkspaceMemberStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum WorkspaceInviteStatus {
+  PENDING
+  ACCEPTED
+  CANCELLED
+  EXPIRED
+}
+
+model WorkspaceMember {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String                @map("workspace_id") @db.Uuid
+  profileId   String                @map("profile_id") @db.Uuid
+  role        WorkspaceRole
+  status      WorkspaceMemberStatus   @default(ACTIVE)
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, profileId])
+  @@index([profileId])
+  @@map("workspace_members")
+}
+
+model WorkspaceInvite {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String               @map("workspace_id") @db.Uuid
+  email       String
+  role        WorkspaceRole
+  status      WorkspaceInviteStatus  @default(PENDING)
+  token       String               @unique
+  expiresAt   DateTime             @map("expires_at")
+  message     String?
+  invitedById String               @map("invited_by_id") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy Profile   @relation("WorkspaceInviteInvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@map("workspace_invites")
+}

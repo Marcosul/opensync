@@ -22,6 +22,9 @@ const user_access_keys_module_1 = require("./user-access-keys/user-access-keys.m
 const user_module_1 = require("./user/user.module");
 const health_controller_1 = require("./health.controller");
 const prisma_module_1 = require("./common/prisma.module");
+const collab_module_1 = require("./collab/collab.module");
+const workspace_members_module_1 = require("./workspace-members/workspace-members.module");
+const workspace_invites_module_1 = require("./workspace-invites/workspace-invites.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -42,6 +45,9 @@ exports.AppModule = AppModule = __decorate([
             billing_module_1.BillingModule,
             user_access_keys_module_1.UserAccessKeysModule,
             user_module_1.UserModule,
+            collab_module_1.CollabModule,
+            workspace_members_module_1.WorkspaceMembersModule,
+            workspace_invites_module_1.WorkspaceInvitesModule,
         ],
     })
 ], AppModule);

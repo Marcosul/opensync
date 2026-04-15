@@ -13,6 +13,9 @@ import { UserAccessKeysModule } from './user-access-keys/user-access-keys.module
 import { UserModule } from './user/user.module';
 import { HealthController } from './health.controller';
 import { PrismaModule } from './common/prisma.module';
+import { CollabModule } from './collab/collab.module';
+import { WorkspaceMembersModule } from './workspace-members/workspace-members.module';
+import { WorkspaceInvitesModule } from './workspace-invites/workspace-invites.module';
 
 @Module({
   controllers: [HealthController],
@@ -30,6 +33,9 @@ import { PrismaModule } from './common/prisma.module';
     BillingModule,
     UserAccessKeysModule,
     UserModule,
+    CollabModule,
+    WorkspaceMembersModule,
+    WorkspaceInvitesModule,
   ],
 })
 export class AppModule {}

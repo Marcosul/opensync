@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -48,6 +49,16 @@ export class WorkspacesController {
     return { workspace };
   }
 
+  @Get(':id')
+  async getOne(
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Param('id') workspaceId: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    const workspace = await this.workspacesService.getByIdForUser(uid, workspaceId);
+    return { workspace };
+  }
+
   @Patch(':id')
   async update(
     @Headers('x-opensync-user-id') userId: string | undefined,
@@ -57,5 +68,14 @@ export class WorkspacesController {
     const uid = this.requireUserId(userId);
     const workspace = await this.workspacesService.updateForUser(uid, workspaceId, body);
     return { workspace };
+  }
+
+  @Delete(':id')
+  async remove(
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Param('id') workspaceId: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    return this.workspacesService.deleteForUser(uid, workspaceId);
   }
 }
