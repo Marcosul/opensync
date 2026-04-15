@@ -127,6 +127,38 @@ export function listDeletedPaths(db: Database.Database): string[] {
   return rows.map((row) => row.path);
 }
 
+const PENDING_MERGE_PATHS_KEY = "opensync_pending_merge_paths";
+
+/** Caminhos com merge gravado em disco mas upsert ao servidor ainda por concluir (retry no próximo poll). */
+export function listPendingMergePaths(db: Database.Database): string[] {
+  const raw = getMeta(db, PENDING_MERGE_PATHS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? (parsed as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addPendingMergePush(db: Database.Database, filePath: string): void {
+  const paths = listPendingMergePaths(db);
+  if (paths.includes(filePath)) return;
+  paths.push(filePath);
+  setMeta(db, PENDING_MERGE_PATHS_KEY, JSON.stringify(paths));
+}
+
+export function removePendingMergePush(db: Database.Database, filePath: string): void {
+  const paths = listPendingMergePaths(db).filter((p) => p !== filePath);
+  if (paths.length === 0) {
+    db.prepare("DELETE FROM sync_meta WHERE key = ?").run(PENDING_MERGE_PATHS_KEY);
+  } else {
+    setMeta(db, PENDING_MERGE_PATHS_KEY, JSON.stringify(paths));
+  }
+}
+
 export function hashContent(s: string): string {
   return crypto.createHash("sha256").update(s, "utf8").digest("hex");
 }

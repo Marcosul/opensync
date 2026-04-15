@@ -169,7 +169,11 @@ export async function upsertFile(
     err.status = 409;
     throw err;
   }
-  if (!res.ok) throw new Error(text || `upsert ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(text || `upsert ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
   return JSON.parse(text) as { path: string; version: string };
 }
 

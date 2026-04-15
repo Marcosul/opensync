@@ -23,6 +23,14 @@ function versionRank(v: string | null | undefined): bigint {
   }
 }
 
+/** Marcadores estilo Git: nenhuma das partes é descartada silenciosamente. */
+function mergeTextPreserveBoth(local: string, remote: string): string {
+  const L = local.replace(/\r\n/g, "\n");
+  const R = remote.replace(/\r\n/g, "\n");
+  if (L === R) return L;
+  return `<<<<<<< OPENSYNC_LOCAL\n${L}\n=======\n${R}\n>>>>>>> OPENSYNC_REMOTE\n`;
+}
+
 /** ANSI — visível em journalctl e terminal */
 const C = {
   dim: "\x1b[2m",
@@ -82,6 +90,7 @@ async function fullReconcile(
   database: Database.Database,
   cfg: AgentConfig,
   token: string,
+  remoteWriting: Set<string>,
 ): Promise<void> {
   console.log(LOG, "full reconcile iniciado em", cfg.syncDir);
   let uploaded = 0;
@@ -106,7 +115,7 @@ async function fullReconcile(
         const h = db.hashContent(text);
         const row = db.fileState(database, rel);
         if (row?.last_synced_hash === h) continue; // já sincronizado
-        await syncLocalPath(database, cfg, token, rel); // startup: sem guarda de pending (pasta ainda)
+        await syncLocalPath(database, cfg, token, rel, remoteWriting);
         uploaded++;
       }
     }
@@ -139,7 +148,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
         for (const rel of paths) {
           let outcome: "uploaded" | "noop" | "failed" = "failed";
           try {
-            outcome = await syncLocalPath(database, cfg, token, rel);
+            outcome = await syncLocalPath(database, cfg, token, rel, remoteWriting);
           } finally {
             if (outcome === "uploaded") {
               setTimeout(() => pendingLocalUpload.delete(rel), POST_UPLOAD_POLL_GUARD_MS);
@@ -200,13 +209,31 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
       remoteWriting.add(ent.path);
       try {
         const remote = await api.getFileContent(cfg, token, ent.path);
-        const h = db.hashContent(remote.content);
         const abs = path.join(cfg.syncDir, ent.path);
+        const localExisting = await readLocalFile(abs, cfg.maxFileSizeBytes);
+        let body = remote.content;
+        let versionOut = remote.version;
+        let hashOut = db.hashContent(remote.content);
+        if (localExisting !== null) {
+          const lh = db.hashContent(localExisting);
+          const rh = db.hashContent(remote.content);
+          if (lh !== rh) {
+            body = mergeTextPreserveBoth(localExisting, remote.content);
+            hashOut = db.hashContent(body);
+            try {
+              const up = await api.upsertFile(cfg, token, ent.path, body, remote.version);
+              versionOut = up.version;
+              console.warn(LOG, "manifest:", ent.path, "local≠remoto — merge preservado", `v${versionOut}`);
+            } catch (eUp) {
+              console.error(LOG, "manifest merge upsert falhou (só disco):", ent.path, eUp);
+            }
+          }
+        }
         await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, remote.content, "utf8");
-        db.upsertFileState(database, ent.path, remote.version, h);
+        await fs.writeFile(abs, body, "utf8");
+        db.upsertFileState(database, ent.path, versionOut, hashOut);
         pulled++;
-        console.log(LOG, "manifest aplicado:", ent.path, `v${remote.version}`);
+        console.log(LOG, "manifest aplicado:", ent.path, `v${versionOut}`);
       } catch (e: unknown) {
         console.error(LOG, "manifest entrada falhou:", ent.path, e);
       } finally {
@@ -265,7 +292,7 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
   await pullMissingFromRemoteManifest();
 
   // 2. FULL_RECONCILE: enviar arquivos locais existentes ainda não sincronizados
-  await fullReconcile(database, cfg, token);
+  await fullReconcile(database, cfg, token, remoteWriting);
 
   const watcher = chokidar.watch(syncRoot, {
     ignoreInitial: true,
@@ -359,37 +386,44 @@ async function applyRemoteChange(
   const content = ch.content ?? "";
   const h = db.hashContent(content);
 
-  // Só gera conflito se a mudança local for genuína: o arquivo existe, foi
-  // sincronizado antes (last_synced_hash != null) e o usuário o modificou
-  // (hash atual ≠ hash da última sincronização).
+  let bodyToWrite = content;
+  let versionToStore = ch.version;
+  let hashToStore = h;
+
   try {
     const local = await readLocalFile(abs, cfg.maxFileSizeBytes);
     if (local !== null) {
       const localH = db.hashContent(local);
       const last = st?.last_synced_hash ?? null;
-      if (last !== null && localH !== last && localH !== h) {
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const conflictName = `${ch.path} (conflict remote ${stamp})`;
-        const conflictAbs = path.join(cfg.syncDir, conflictName);
-        await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
-        await fs.writeFile(conflictAbs, local, "utf8");
-        console.warn(LOG, "conflito:", ch.path, "-> copia local em", conflictName);
+      const hasUnsyncedLocalEdit =
+        (last !== null && localH !== last && localH !== h) ||
+        (last === null && localH !== h);
+      if (hasUnsyncedLocalEdit) {
+        bodyToWrite = mergeTextPreserveBoth(local, content);
+        hashToStore = db.hashContent(bodyToWrite);
+        try {
+          const resUp = await api.upsertFile(cfg, token, ch.path, bodyToWrite, ch.version);
+          versionToStore = resUp.version;
+          console.warn(LOG, "conflito remoto+local:", ch.path, "merge enviado", `v${versionToStore}`);
+        } catch (eUp) {
+          console.error(LOG, "upsert merge falhou (gravado só em disco):", ch.path, eUp);
+        }
       }
     }
   } catch {
     /* ignore */
   }
 
-  // Marcar como "sendo escrito remotamente" antes de tocar o disco para que o
-  // watcher não dispare um upload de volta.
   remoteWriting.add(ch.path);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, content, "utf8");
-  db.upsertFileState(database, ch.path, ch.version, h);
-  // Manter na lista por DEBOUNCE_MS + margem para garantir que o watcher ignore.
-  setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
+  try {
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, bodyToWrite, "utf8");
+    db.upsertFileState(database, ch.path, versionToStore, hashToStore);
+  } finally {
+    setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
+  }
 
-  console.log(LOG, "remoto aplicado:", ch.path, `v${ch.version}`);
+  console.log(LOG, "remoto aplicado:", ch.path, `v${versionToStore}`);
 }
 
 async function syncLocalPath(
@@ -397,6 +431,7 @@ async function syncLocalPath(
   cfg: AgentConfig,
   token: string,
   rel: string,
+  remoteWriting: Set<string>,
 ): Promise<"uploaded" | "noop" | "failed"> {
   const abs = path.join(cfg.syncDir, rel);
   try {
@@ -429,14 +464,25 @@ async function syncLocalPath(
     if (err?.status === 409) {
       try {
         const remote = await api.getFileContent(cfg, token, rel);
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const conflictName = `${rel} (conflict local ${stamp})`;
-        const conflictAbs = path.join(cfg.syncDir, conflictName);
-        await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
-        await fs.copyFile(abs, conflictAbs);
-        await fs.writeFile(abs, remote.content, "utf8");
-        db.upsertFileState(database, rel, remote.version, db.hashContent(remote.content));
-        console.warn(LOG, "409:", rel, "remoto aplicado; copia local em", conflictName);
+        const merged = mergeTextPreserveBoth(text, remote.content);
+        const mergedH = db.hashContent(merged);
+        let verOut = remote.version;
+        try {
+          const up = await api.upsertFile(cfg, token, rel, merged, remote.version);
+          verOut = up.version;
+          console.warn(LOG, "409:", rel, "merge local+remoto enviado", `v${verOut}`);
+        } catch (eUp) {
+          console.error(LOG, "409 merge upsert falhou (merge só em disco):", rel, eUp);
+        }
+        remoteWriting.add(rel);
+        try {
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, merged, "utf8");
+          db.upsertFileState(database, rel, verOut, mergedH);
+        } finally {
+          setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
+        }
+        return "uploaded";
       } catch (e2) {
         console.error(LOG, "falha ao resolver conflito", rel, e2);
       }
