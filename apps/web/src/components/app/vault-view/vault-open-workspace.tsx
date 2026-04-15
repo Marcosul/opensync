@@ -1841,9 +1841,7 @@ export function VaultOpenWorkspace({
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            A carregar o ficheiro…
-          </div>
+          <div className="min-h-0 flex-1 bg-background" aria-busy="true" />
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
           blobLoadError &&
           noteContents[activeTabId] === undefined ? (
