@@ -9,6 +9,19 @@ import type Database from "better-sqlite3";
 
 const LOG = "[opensync]";
 const DEBOUNCE_MS = 3000;
+/** Após upload local, manter o path em `pendingLocalUpload` mais este tempo para o poll não reaplicar revisão antiga do servidor por cima do ficheiro no disco. */
+const POST_UPLOAD_POLL_GUARD_MS = 6000;
+
+function versionRank(v: string | null | undefined): bigint {
+  if (v == null) return -1n;
+  const s = String(v).trim();
+  if (s === "") return -1n;
+  try {
+    return BigInt(s);
+  } catch {
+    return -1n;
+  }
+}
 
 /** ANSI — visível em journalctl e terminal */
 const C = {
@@ -93,7 +106,7 @@ async function fullReconcile(
         const h = db.hashContent(text);
         const row = db.fileState(database, rel);
         if (row?.last_synced_hash === h) continue; // já sincronizado
-        await syncLocalPath(database, cfg, token, rel);
+        await syncLocalPath(database, cfg, token, rel); // startup: sem guarda de pending (pasta ainda)
         uploaded++;
       }
     }
@@ -124,10 +137,15 @@ export async function runAgent(cfg: AgentConfig, token: string): Promise<void> {
         const paths = [...queue];
         queue.clear();
         for (const rel of paths) {
+          let outcome: "uploaded" | "noop" | "failed" = "failed";
           try {
-            await syncLocalPath(database, cfg, token, rel);
+            outcome = await syncLocalPath(database, cfg, token, rel);
           } finally {
-            pendingLocalUpload.delete(rel);
+            if (outcome === "uploaded") {
+              setTimeout(() => pendingLocalUpload.delete(rel), POST_UPLOAD_POLL_GUARD_MS);
+            } else {
+              pendingLocalUpload.delete(rel);
+            }
           }
         }
       }
@@ -302,6 +320,12 @@ async function applyRemoteChange(
   const st = db.fileState(database, ch.path);
 
   if (ch.deleted) {
+    const stRankDel = versionRank(st?.remote_version);
+    const chRankDel = versionRank(ch.version);
+    if (stRankDel > chRankDel) {
+      console.log(LOG, "ignorar delete atrasado no feed:", ch.path, `v${ch.version}`);
+      return;
+    }
     // Se já está marcado como deletado com a mesma versão, nada a fazer.
     if (st?.is_deleted && st.remote_version === ch.version) return;
     remoteWriting.add(ch.path);
@@ -314,6 +338,18 @@ async function applyRemoteChange(
       setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
     }
     db.markRemoteDeleted(database, ch.path, ch.version);
+    return;
+  }
+
+  const stRank = versionRank(st?.remote_version);
+  const chRank = versionRank(ch.version);
+  if (stRank > chRank) {
+    console.log(
+      LOG,
+      "ignorar mudanca remota antiga:",
+      ch.path,
+      `feed v${ch.version} < estado v${st?.remote_version ?? "?"}`,
+    );
     return;
   }
 
@@ -361,28 +397,29 @@ async function syncLocalPath(
   cfg: AgentConfig,
   token: string,
   rel: string,
-): Promise<void> {
+): Promise<"uploaded" | "noop" | "failed"> {
   const abs = path.join(cfg.syncDir, rel);
   try {
     const st = await fs.stat(abs);
-    if (!st.isFile()) return;
+    if (!st.isFile()) return "failed";
   } catch {
     await handleLocalDelete(database, cfg, token, rel);
-    return;
+    return "failed";
   }
 
   const text = await readLocalFile(abs, cfg.maxFileSizeBytes);
-  if (text === null) return;
+  if (text === null) return "failed";
 
   const h = db.hashContent(text);
   const row = db.fileState(database, rel);
-  if (row?.last_synced_hash === h) return;
+  if (row?.last_synced_hash === h) return "noop";
 
   try {
     const baseVer = row?.remote_version ?? null;
     const res = await api.upsertFile(cfg, token, rel, text, baseVer && baseVer !== "" ? baseVer : null);
     db.upsertFileState(database, rel, res.version, h);
     console.log(LOG, "local enviado:", rel, `v${res.version}`);
+    return "uploaded";
   } catch (e: unknown) {
     const err = e as { status?: number };
     if (err?.status === 401 || err?.status === 403) {
@@ -403,9 +440,10 @@ async function syncLocalPath(
       } catch (e2) {
         console.error(LOG, "falha ao resolver conflito", rel, e2);
       }
-      return;
+      return "failed";
     }
     console.error(LOG, "upsert", rel, e);
+    return "failed";
   }
 }
 

@@ -21,6 +21,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -29,6 +30,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { Query } from "@tanstack/react-query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiRequest } from "@/api/rest/generic";
@@ -332,20 +334,22 @@ export function VaultOpenWorkspace({
           remoteTail !== lastLazyGitTreeCommitShortRef.current;
         setLastGiteaCommitHash(remoteTail);
         remoteTailPollSeenRef.current = remoteTail;
-        setTreeRoot(next.tree);
-        setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
-        setNoteContents((prev) => {
-          const merged = mergeLazyGitNoteContentsAfterRemoteTree(
-            prev,
-            next.noteContents,
-            remotePaths,
-            allowed,
-            lazyGitDirtyDocIdsRef.current,
-            evictRemoteCachedBodies,
-          );
-          noteContentsRef.current = merged;
-          lazyPersistedNoteContentsRef.current = merged;
-          return merged;
+        startTransition(() => {
+          setTreeRoot(next.tree);
+          setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
+          setNoteContents((prev) => {
+            const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+              prev,
+              next.noteContents,
+              remotePaths,
+              allowed,
+              lazyGitDirtyDocIdsRef.current,
+              evictRemoteCachedBodies,
+            );
+            noteContentsRef.current = merged;
+            lazyPersistedNoteContentsRef.current = merged;
+            return merged;
+          });
         });
         lastLazyGitTreeCommitShortRef.current = remoteTail;
         lastBlobFetchRef.current = null;
@@ -409,7 +413,9 @@ export function VaultOpenWorkspace({
             Object.assign(mergedContents, remapped);
           }
           noteContentsRef.current = mergedContents;
-          setNoteContents(mergedContents);
+          startTransition(() => {
+            setNoteContents(mergedContents);
+          });
         }
         const files = flattenVaultTreeToSyncFiles(
           treeRootRef.current,
@@ -487,31 +493,33 @@ export function VaultOpenWorkspace({
           const evictRemoteCachedBodies =
             lastLazyGitTreeCommitShortRef.current !== null &&
             remoteTail !== lastLazyGitTreeCommitShortRef.current;
-          setTreeRoot(next.tree);
-          setNoteContents((prev) => {
-            const merged = mergeLazyGitNoteContentsAfterRemoteTree(
-              prev,
-              next.noteContents,
-              remotePaths,
-              allowed,
-              lazyGitDirtyDocIdsRef.current,
-              evictRemoteCachedBodies,
+          startTransition(() => {
+            setTreeRoot(next.tree);
+            setNoteContents((prev) => {
+              const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+                prev,
+                next.noteContents,
+                remotePaths,
+                allowed,
+                lazyGitDirtyDocIdsRef.current,
+                evictRemoteCachedBodies,
+              );
+              noteContentsRef.current = merged;
+              lazyPersistedNoteContentsRef.current = merged;
+              return merged;
+            });
+            setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
+            setBookmarks([]);
+            const mergedUi = mergeVaultUiAfterGitTreeRefresh(
+              uiLatestRef.current,
+              next.ui,
+              next.tree,
             );
-            noteContentsRef.current = merged;
-            lazyPersistedNoteContentsRef.current = merged;
-            return merged;
+            dispatchUi({ type: "reset", state: mergedUi });
           });
           lastLazyGitTreeCommitShortRef.current = remoteTail;
           lastBlobFetchRef.current = null;
           lazyGitBlobsSnapshotCommitRef.current = null;
-          setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
-          setBookmarks([]);
-          const mergedUi = mergeVaultUiAfterGitTreeRefresh(
-            uiLatestRef.current,
-            next.ui,
-            next.tree,
-          );
-          dispatchUi({ type: "reset", state: mergedUi });
           await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
             queryClient,
             noteContentsRef,
@@ -812,13 +820,6 @@ export function VaultOpenWorkspace({
       ? lastGiteaCommitHash.trim()
       : "pending";
 
-  const noteEditorRemountKey = useMemo(() => {
-    if (!activeTabId) return "";
-    if (!lazyGitRemote) return activeTabId;
-    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return activeTabId;
-    return `${activeTabId}\0${blobCommitKey}`;
-  }, [activeTabId, lazyGitRemote, blobCommitKey, lazyGitQueryEpoch]);
-
   const lazyActiveBlobQueryEnabled =
     Boolean(activeTabId) &&
     lazyGitRemote &&
@@ -833,8 +834,18 @@ export function VaultOpenWorkspace({
     enabled: lazyActiveBlobQueryEnabled,
     staleTime: LAZY_GIT_BLOB_STALE_MS,
     gcTime: LAZY_GIT_BLOB_GC_MS,
-    /** Evita o ecrã "A carregar…" em ficheiros vazios: o editor mostra-se já com texto vazio até o blob chegar. */
-    placeholderData: "",
+    /**
+     * `keepPreviousData` global reutilizava o blob do separador anterior ao mudar de ficheiro
+     * (queryKey muda o path no índice 2). Só reaproveitar placeholder quando é o mesmo path.
+     */
+    placeholderData: (previousData: string | undefined, previousQuery: Query | undefined) => {
+      const qk = previousQuery?.queryKey as readonly unknown[] | undefined;
+      const prevPath = qk?.[2];
+      if (typeof prevPath === "string" && prevPath === activeTabId) {
+        return previousData;
+      }
+      return undefined;
+    },
     retry: (failureCount, err) => {
       const msg = err instanceof Error ? err.message : String(err);
       if (/404|Ficheiro nao encontrado|not found|NotFound/i.test(msg)) return false;
@@ -847,29 +858,31 @@ export function VaultOpenWorkspace({
     if (!activeTabId || !lazyActiveBlobQueryEnabled) return;
     if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
     if (lazyBlobQuery.data === undefined) return;
-    /** Só consolidar após o fetch: com `placeholderData: ""`, `data` pode ser `""` antes do texto real. */
+    /** Só consolidar após o fetch (evita estado intermédio durante refetch com `keepPreviousData`). */
     if (lazyBlobQuery.isFetching) return;
     const data = lazyBlobQuery.data;
-    setNoteContents((prev) => {
-      const cur = prev[activeTabId];
-      if (cur === undefined) {
-        const next = { ...prev, [activeTabId]: data };
-        lazyPersistedNoteContentsRef.current = {
-          ...lazyPersistedNoteContentsRef.current,
-          [activeTabId]: data,
-        };
-        return next;
-      }
-      /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
-      if (cur !== data) {
-        const next = { ...prev, [activeTabId]: data };
-        lazyPersistedNoteContentsRef.current = {
-          ...lazyPersistedNoteContentsRef.current,
-          [activeTabId]: data,
-        };
-        return next;
-      }
-      return prev;
+    startTransition(() => {
+      setNoteContents((prev) => {
+        const cur = prev[activeTabId];
+        if (cur === undefined) {
+          const next = { ...prev, [activeTabId]: data };
+          lazyPersistedNoteContentsRef.current = {
+            ...lazyPersistedNoteContentsRef.current,
+            [activeTabId]: data,
+          };
+          return next;
+        }
+        /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
+        if (cur !== data) {
+          const next = { ...prev, [activeTabId]: data };
+          lazyPersistedNoteContentsRef.current = {
+            ...lazyPersistedNoteContentsRef.current,
+            [activeTabId]: data,
+          };
+          return next;
+        }
+        return prev;
+      });
     });
   }, [
     activeTabId,
@@ -878,17 +891,6 @@ export function VaultOpenWorkspace({
     lazyBlobQuery.isFetching,
     blobCommitKey,
   ]);
-
-  /** Com `placeholderData: ""` o query deixa de estar `pending` mas o fetch ainda corre — mostrar a carregar em vez do editor vazio com placeholder. */
-  const lazyBlobUiLoading =
-    lazyGitRemote &&
-    Boolean(activeTabId) &&
-    activeTabId != null &&
-    !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
-    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
-    !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
-    noteContents[activeTabId] === undefined &&
-    (lazyBlobQuery.isPending || lazyBlobQuery.isFetching);
 
   /**
    * Usar `error` (e não `isError` sozinho): durante retries o TanStack Query expõe o erro em
@@ -1186,15 +1188,17 @@ export function VaultOpenWorkspace({
         if (cancelled) return;
         if (Object.keys(updates).length === 0) continue;
         lazyGitBlobsSnapshotCommitRef.current = commitKey;
-        setNoteContents((prev) => {
-          const next = { ...prev };
-          for (const [k, v] of Object.entries(updates)) {
-            if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
-            if (next[k] !== undefined) continue;
-            next[k] = v;
-          }
-          noteContentsRef.current = next;
-          return next;
+        startTransition(() => {
+          setNoteContents((prev) => {
+            const next = { ...prev };
+            for (const [k, v] of Object.entries(updates)) {
+              if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+              if (next[k] !== undefined) continue;
+              next[k] = v;
+            }
+            noteContentsRef.current = next;
+            return next;
+          });
         });
       }
     })();
@@ -1487,9 +1491,13 @@ export function VaultOpenWorkspace({
     [treeChildren, activeTabId],
   );
 
-  /** Evita mostrar atalhos do editor na barra de abas enquanto o blob lazy ainda não chegou. */
+  /** Só no primeiro carregamento do blob (refetch em background não esconde atalhos). */
   const editorSubChromeLoading =
-    usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading;
+    usesLazyGitRemote(vaultId, activeVaultMeta) &&
+    Boolean(activeTabId) &&
+    noteContents[activeTabId] === undefined &&
+    lazyBlobQuery.isPending &&
+    !lazyBlobQuery.isFetched;
 
   const handleExplorerCommand = useCallback(
     (cmd: ExplorerCommand) => {
@@ -2052,8 +2060,6 @@ export function VaultOpenWorkspace({
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
-        ) : usesLazyGitRemote(vaultId, activeVaultMeta) && lazyBlobUiLoading ? (
-          <div className="min-h-0 flex-1 bg-background" aria-busy="true" />
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
           lazyGitBlobFatalLoadError &&
           noteContents[activeTabId] === undefined ? (
@@ -2066,7 +2072,6 @@ export function VaultOpenWorkspace({
               key={activeTabId}
               vaultId={vaultId}
               docId={activeTabId}
-              plateEditorMountKey={noteEditorRemountKey || undefined}
               value={
                 noteContents[activeTabId] ??
                 (lazyActiveBlobQueryEnabled
@@ -2098,7 +2103,6 @@ export function VaultOpenWorkspace({
               key={activeTabId}
               vaultId={vaultId}
               docId={activeTabId}
-              plateEditorMountKey={noteEditorRemountKey || undefined}
               value={
                 noteContents[activeTabId] ??
                 (lazyActiveBlobQueryEnabled

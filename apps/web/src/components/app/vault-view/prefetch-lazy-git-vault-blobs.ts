@@ -3,6 +3,7 @@
  * Alimenta grafo/backlinks e evita loading ao abrir ficheiros já em cache.
  */
 import type { QueryClient } from "@tanstack/react-query";
+import { startTransition } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
 import type { VaultUiState } from "@/components/app/vault-persistence";
@@ -70,14 +71,16 @@ export async function prefetchLazyGitVaultBlobs(
     if (signal.aborted) return;
     if (Object.keys(updates).length === 0) continue;
     blobsSnapshotCommitRef.current = opts.commitShort;
-    setNoteContents((prev) => {
-      const next = { ...prev };
-      for (const [k, v] of Object.entries(updates)) {
-        if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
-        next[k] = v;
-      }
-      noteContentsRef.current = next;
-      return next;
+    startTransition(() => {
+      setNoteContents((prev) => {
+        const next = { ...prev };
+        for (const [k, v] of Object.entries(updates)) {
+          if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+          next[k] = v;
+        }
+        noteContentsRef.current = next;
+        return next;
+      });
     });
   }
   if (signal.aborted) return;

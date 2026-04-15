@@ -25,11 +25,6 @@ export type VaultNoteEditorProps = {
   onChange: (next: string) => void;
   breadcrumb: string[];
   onSelectFile: (id: string) => void;
-  /**
-   * Chave opcional para remontar o editor Plate quando o conteúdo deixa de ser provisório
-   * (ex.: blob Git lazy após `isFetching` false).
-   */
-  plateEditorMountKey?: string;
   /** Esconde a faixa superior (breadcrumb + alternância de modo); use a barra externa no layout Obsidian. */
   hideTopChrome?: boolean;
   /** Modo fonte controlado pelo pai (com `onSourceModeChange`). */
@@ -97,7 +92,6 @@ export function VaultNoteEditor({
   onChange,
   breadcrumb,
   onSelectFile,
-  plateEditorMountKey,
   hideTopChrome = false,
   sourceMode: sourceModeProp,
   onSourceModeChange,
@@ -286,7 +280,7 @@ export function VaultNoteEditor({
           )
         ) : (
           <VaultPlateMarkdownEditor
-            key={plateEditorMountKey ?? docId}
+            key={docId}
             docId={docId}
             value={value}
             onChange={onChange}
