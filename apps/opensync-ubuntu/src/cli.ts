@@ -23,9 +23,6 @@ import { runSync } from "./engine";
 import * as api from "./api";
 import * as db from "./db";
 
-const DEFAULT_UPDATE_DEB_URL =
-  "https://gpnxlfnjuxqhlsmxwfmc.supabase.co/storage/v1/object/public/installer/opensync-ubuntu_0.1.0_amd64.deb";
-
 function cliVersion(): string {
   try {
     const packageJsonPath = path.join(__dirname, "..", "package.json");
@@ -37,6 +34,12 @@ function cliVersion(): string {
   }
 }
 
+function defaultUpdateDebUrl(): string {
+  const base =
+    "https://gpnxlfnjuxqhlsmxwfmc.supabase.co/storage/v1/object/public/installer/";
+  return `${base}opensync-ubuntu_${cliVersion()}_amd64.deb`;
+}
+
 function runCommand(cmd: string, args: string[]): void {
   const res = spawnSync(cmd, args, { stdio: "inherit" });
   if (res.status !== 0) {
@@ -45,7 +48,7 @@ function runCommand(cmd: string, args: string[]): void {
 }
 
 async function cmdUpdate(): Promise<void> {
-  const debUrl = (process.env.OPENSYNC_UPDATE_DEB_URL ?? DEFAULT_UPDATE_DEB_URL).trim();
+  const debUrl = (process.env.OPENSYNC_UPDATE_DEB_URL ?? defaultUpdateDebUrl()).trim();
   const tmpDebPath = path.join(
     process.env.TMPDIR ?? "/tmp",
     `opensync-ubuntu-update-${Date.now()}.deb`,

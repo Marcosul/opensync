@@ -339,20 +339,28 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
 
   const debouncers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /**
+   * Agenda upload local após debounce. Se o servidor acabou de gravar o mesmo path
+   * (`remoteWriting`), não podemos descartar o evento: o utilizador pode editar durante
+   * essa janela e o poll remoto sobrescreveria o disco sem `pendingLocalUpload`.
+   */
   function schedule(rel: string): void {
     if (shouldIgnore(cfg, rel)) return;
-    if (remoteWriting.has(rel)) return; // escrita remota em andamento — ignorar
     pendingLocalUpload.add(rel);
     const prev = debouncers.get(rel);
     if (prev) clearTimeout(prev);
-    debouncers.set(
-      rel,
-      setTimeout(() => {
-        debouncers.delete(rel);
-        queue.add(rel);
-        void processQueue();
-      }, DEBOUNCE_MS),
-    );
+
+    const tryFlush = (): void => {
+      if (remoteWriting.has(rel)) {
+        debouncers.set(rel, setTimeout(tryFlush, 400));
+        return;
+      }
+      debouncers.delete(rel);
+      queue.add(rel);
+      void processQueue();
+    };
+
+    debouncers.set(rel, setTimeout(tryFlush, DEBOUNCE_MS));
   }
 
   let lastHeartbeatAt = 0;

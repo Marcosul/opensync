@@ -13,11 +13,11 @@ export type SingleFileSyncResult =
  *
  * Fluxo:
  * 1. Tenta upsert com base_version do syncState
- * 2. Se 409 (versão divergiu): busca conteúdo remoto, faz merge com marcadores,
- *    re-tenta com a versão remota como base
+ * 2. Se 409 (versão divergiu): busca conteúdo remoto, resolve com merge determinístico
+ *    (sem marcadores no texto) e re-tenta com a versão remota como base
  * 3. Se merge também falhar: retorna { ok: false, merged } para a UI exibir ao usuário
  *
- * O mesmo padrão do app local (opensync-ubuntu/src/engine.ts → mergeTextPreserveBoth).
+ * Alinhado com opensync-ubuntu (`mergeTextPreserveBoth` → auto-resolve no pacote sync).
  */
 export async function syncSingleFile(
   vaultId: string,

@@ -16,7 +16,7 @@ import { PrismaService } from '../common/prisma.service';
 import { resolveVaultWithAgentBearer } from '../common/agent-vault.resolve';
 import { VaultFilesService } from './vault-files.service';
 import { VaultSseService } from './vault-sse.service';
-import type { VaultSseEvent } from '@opensync/sync';
+import type { VaultSseEvent } from '../contracts/vault-sse-event';
 
 @Controller('agent/vaults')
 @UseGuards(ThrottlerGuard)

@@ -1,0 +1,27 @@
+{
+  "name": "@opensync/opensync-ubuntu",
+  "version": "0.2.3",
+  "private": true,
+  "description": "OpenSync Ubuntu: sync bidirecional de qualquer pasta com um vault OpenSync",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "opensync": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node scripts/build-cli.cjs",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@opensync/sync": "workspace:*",
+    "better-sqlite3": "^11.8.1",
+    "chokidar": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20",
+    "esbuild": "^0.25.0",
+    "typescript": "^5"
+  }
+}

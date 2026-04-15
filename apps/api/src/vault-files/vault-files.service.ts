@@ -16,6 +16,7 @@ import {
   VAULT_READ_MAX_BLOB_BYTES,
   VAULT_READ_MAX_TREE_ENTRIES,
 } from '../sync/vault-git-sync.service';
+import { sanitizeOpenSyncArtifactContent } from './sanitize-merge-markers';
 
 const colors = {
   reset: '\x1b[0m',
@@ -116,7 +117,7 @@ export class VaultFilesService {
     if (!row) {
       throw new NotFoundException('Ficheiro nao encontrado');
     }
-    const content = row.content ?? '';
+    const content = sanitizeOpenSyncArtifactContent(row.content ?? '');
     const bytes = Buffer.byteLength(content, 'utf8');
     if (bytes > VAULT_READ_MAX_BLOB_BYTES) {
       throw new BadRequestException(`Ficheiro excede ${VAULT_READ_MAX_BLOB_BYTES} bytes`);
@@ -146,7 +147,10 @@ export class VaultFilesService {
       path: r.path,
       version: String(r.version),
       deleted: r.changeType === 'delete',
-      content: r.content,
+      content:
+        r.changeType === 'delete' || r.content == null
+          ? r.content
+          : sanitizeOpenSyncArtifactContent(r.content),
       updated_at: r.createdAt.toISOString(),
     }));
     const last = rows[rows.length - 1];
@@ -164,6 +168,7 @@ export class VaultFilesService {
     if (!path) {
       throw new BadRequestException('path invalido');
     }
+    content = sanitizeOpenSyncArtifactContent(content);
     const bytes = Buffer.byteLength(content, 'utf8');
     if (bytes > VAULT_READ_MAX_BLOB_BYTES) {
       throw new BadRequestException(`Conteudo excede ${VAULT_READ_MAX_BLOB_BYTES} bytes`);

@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { FastifyReply } from 'fastify';
-import type { VaultSseEvent } from '@opensync/sync';
+import type { VaultSseEvent } from '../contracts/vault-sse-event';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import { VaultFilesService } from '../vault-files/vault-files.service';
 import { VaultSseService } from '../vault-files/vault-sse.service';

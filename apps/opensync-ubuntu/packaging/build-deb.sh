@@ -25,7 +25,8 @@ EOF
 
 cd "$REPO_ROOT"
 pnpm install --frozen-lockfile
-cd "$ROOT" && pnpm exec tsc && cd "$REPO_ROOT"
+# Bundle (esbuild): embute @opensync/sync em dist/cli.js — evita Node 25 a carregar .ts em node_modules.
+pnpm --filter @opensync/opensync-ubuntu run build
 DEPLOY="$STAGE/usr/lib/opensync-ubuntu"
 rm -rf "$DEPLOY"
 pnpm --filter @opensync/opensync-ubuntu deploy --legacy "$DEPLOY"

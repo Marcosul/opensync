@@ -20,7 +20,7 @@ export const UBUNTU_INSTALL_SCRIPT_PATH = "/install/ubuntu";
 /**
  * Versão do pacote `.deb` em `public/releases/` (alinhado com `apps/opensync-ubuntu/package.json` e `build-deb.sh`).
  */
-export const UBUNTU_DEB_PACKAGE_VERSION = "0.1.0";
+export const UBUNTU_DEB_PACKAGE_VERSION = "0.2.5";
 
 /** Caminho público do `.deb` quando servido pelo próprio site (ficheiro em `apps/web/public/releases/`). */
 export function getDefaultUbuntuDebPathname(): string {
