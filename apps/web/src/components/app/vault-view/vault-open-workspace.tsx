@@ -820,13 +820,15 @@ export function VaultOpenWorkspace({
       ? lastGiteaCommitHash.trim()
       : "pending";
 
+  /** Não excluir `lazyGitDirtyDocIdsRef`: se o utilizador digitar antes do blob hidratar, o query
+   * desactivava-se, o merge nunca corria, `noteContents[path]` ficava ausente e o POST /sync
+   * mandava `""` para esse path — `applyTrustedSnapshot` apagava o ficheiro no Postgres. */
   const lazyActiveBlobQueryEnabled =
     Boolean(activeTabId) &&
     lazyGitRemote &&
     activeTabId != null &&
     !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
-    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
-    !lazyGitDirtyDocIdsRef.current.has(activeTabId);
+    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID;
 
   const lazyBlobQuery = useQuery<
     string,
@@ -866,13 +868,13 @@ export function VaultOpenWorkspace({
 
   useEffect(() => {
     if (!activeTabId || !lazyActiveBlobQueryEnabled) return;
-    if (lazyGitDirtyDocIdsRef.current.has(activeTabId)) return;
     if (lazyBlobQuery.data === undefined) return;
     /** Só consolidar após o fetch (evita estado intermédio durante refetch com `keepPreviousData`). */
     if (lazyBlobQuery.isFetching) return;
     const data = lazyBlobQuery.data;
     // Sem startTransition: hidratação do blob é fonte de verdade do servidor; em transição o
     // onValueChange síncrono do Plate pode ganhar a corrida e gravar "" por cima (nota vazia após F5).
+    const dirty = lazyGitDirtyDocIdsRef.current.has(activeTabId);
     setNoteContents((prev) => {
       const cur = prev[activeTabId];
       if (cur === undefined) {
@@ -882,6 +884,10 @@ export function VaultOpenWorkspace({
           [activeTabId]: data,
         };
         return next;
+      }
+      /** Com edição local pendente não sobrescrever o corpo pelo blob (evita apagar a digitação). */
+      if (dirty) {
+        return prev;
       }
       /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
       if (cur !== data) {
@@ -900,6 +906,7 @@ export function VaultOpenWorkspace({
     lazyBlobQuery.data,
     lazyBlobQuery.isFetching,
     blobCommitKey,
+    lazyGitQueryEpoch,
   ]);
 
   /**
