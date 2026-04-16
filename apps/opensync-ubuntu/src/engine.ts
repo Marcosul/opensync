@@ -385,7 +385,8 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
     }
     let pulled = 0;
     for (const ent of manifest.entries) {
-      if (pendingLocalUpload.has(ent.path)) continue;
+      // Não saltar por pendingLocalUpload: isso fazia perder mudanças remotas até o próximo
+      // upload local sobrescrever o servidor (comportamento oposto a Obsidian-like).
       const st = db.fileState(database, ent.path);
       if (st && st.remote_version === ent.version && !st.is_deleted) continue;
       remoteWriting.add(ent.path);
@@ -452,7 +453,7 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
       for (;;) {
         const { changes, next_cursor } = await api.fetchChanges(cfg, token, cursor);
         for (const ch of changes) {
-          await applyRemoteChange(database, cfg, token, ch, remoteWriting, pendingLocalUpload);
+          await applyRemoteChange(database, cfg, token, ch, remoteWriting);
           totalApplied++;
         }
         if (changes.length === 0) break;
@@ -555,9 +556,7 @@ async function applyRemoteChange(
   token: string,
   ch: api.ChangeRow,
   remoteWriting: Set<string>,
-  pendingLocalUpload: Set<string>,
 ): Promise<void> {
-  if (pendingLocalUpload.has(ch.path)) return;
   const abs = path.join(cfg.syncDir, ch.path);
   const st = db.fileState(database, ch.path);
 
