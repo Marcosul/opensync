@@ -202,6 +202,8 @@ export function VaultPlateMarkdownEditor({
   const valueRef = useRef(value);
   valueRef.current = value;
   const lastEmittedMarkdownRef = useRef<string | null>(null);
+  /** Evita que `setValue` programático dispare `onValueChange` e sobrescreva o pai com serialização intermédia. */
+  const suppressOnChangeRef = useRef(false);
 
   const plugins = useMemo(() => {
     const base = buildVaultPlateEditorPlugins();
@@ -283,7 +285,12 @@ export function VaultPlateMarkdownEditor({
     const current = vaultMarkdownFromPlate(editor);
     if (incoming === current) return;
     const nodes = editor.getApi(MarkdownPlugin).markdown.deserialize(preprocessWikiLinksForPlate(value ?? ""));
-    editor.tf.setValue(nodes.length ? nodes : EMPTY_VAULT_PLATE_DOC);
+    suppressOnChangeRef.current = true;
+    try {
+      editor.tf.setValue(nodes.length ? nodes : EMPTY_VAULT_PLATE_DOC);
+    } finally {
+      suppressOnChangeRef.current = false;
+    }
   }, [collabEnabled, editor, value, docId]);
 
   useLayoutEffect(() => {
@@ -342,6 +349,7 @@ export function VaultPlateMarkdownEditor({
         <Plate
           editor={editor}
           onValueChange={({ editor: ed }) => {
+            if (suppressOnChangeRef.current) return;
             emitMarkdown(ed);
           }}
         >

@@ -871,28 +871,28 @@ export function VaultOpenWorkspace({
     /** Só consolidar após o fetch (evita estado intermédio durante refetch com `keepPreviousData`). */
     if (lazyBlobQuery.isFetching) return;
     const data = lazyBlobQuery.data;
-    startTransition(() => {
-      setNoteContents((prev) => {
-        const cur = prev[activeTabId];
-        if (cur === undefined) {
-          const next = { ...prev, [activeTabId]: data };
-          lazyPersistedNoteContentsRef.current = {
-            ...lazyPersistedNoteContentsRef.current,
-            [activeTabId]: data,
-          };
-          return next;
-        }
-        /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
-        if (cur !== data) {
-          const next = { ...prev, [activeTabId]: data };
-          lazyPersistedNoteContentsRef.current = {
-            ...lazyPersistedNoteContentsRef.current,
-            [activeTabId]: data,
-          };
-          return next;
-        }
-        return prev;
-      });
+    // Sem startTransition: hidratação do blob é fonte de verdade do servidor; em transição o
+    // onValueChange síncrono do Plate pode ganhar a corrida e gravar "" por cima (nota vazia após F5).
+    setNoteContents((prev) => {
+      const cur = prev[activeTabId];
+      if (cur === undefined) {
+        const next = { ...prev, [activeTabId]: data };
+        lazyPersistedNoteContentsRef.current = {
+          ...lazyPersistedNoteContentsRef.current,
+          [activeTabId]: data,
+        };
+        return next;
+      }
+      /** Nova revisão no servidor (ex.: agente Ubuntu) com o mesmo ficheiro aberto — fundir sem remontar o cofre inteiro. */
+      if (cur !== data) {
+        const next = { ...prev, [activeTabId]: data };
+        lazyPersistedNoteContentsRef.current = {
+          ...lazyPersistedNoteContentsRef.current,
+          [activeTabId]: data,
+        };
+        return next;
+      }
+      return prev;
     });
   }, [
     activeTabId,
@@ -1198,17 +1198,15 @@ export function VaultOpenWorkspace({
         if (cancelled) return;
         if (Object.keys(updates).length === 0) continue;
         lazyGitBlobsSnapshotCommitRef.current = commitKey;
-        startTransition(() => {
-          setNoteContents((prev) => {
-            const next = { ...prev };
-            for (const [k, v] of Object.entries(updates)) {
-              if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
-              if (next[k] !== undefined) continue;
-              next[k] = v;
-            }
-            noteContentsRef.current = next;
-            return next;
-          });
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(updates)) {
+            if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+            if (next[k] !== undefined) continue;
+            next[k] = v;
+          }
+          noteContentsRef.current = next;
+          return next;
         });
       }
     })();
