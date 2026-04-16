@@ -36,11 +36,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/api/rest/generic";
 import {
   applyMissionMarkdownToSnapshot,
+  clearVaultGitPendingSyncPaths,
   countTreeStats,
   loadSnapshotWithSshBridge,
   readAndConsumePendingAgentProject,
+  readVaultGitPendingSyncPaths,
   saveSnapshot,
   writeActiveVaultId,
+  writeVaultGitPendingSyncPaths,
   type VaultBookmark,
   type VaultMeta,
   type VaultSnapshotV1,
@@ -261,6 +264,16 @@ export function VaultOpenWorkspace({
   const vaultIdRef = useRef(vaultId);
   vaultIdRef.current = vaultId;
   const prevVaultIdForBlobQueriesRef = useRef(vaultId);
+  /** Ao mudar de cofre: repõe dirty a partir de paths pendentes de sync (evita perda após F5). */
+  const lastVaultIdForPendingDirtyRef = useRef<string | null>(null);
+  if (lastVaultIdForPendingDirtyRef.current !== vaultId) {
+    lastVaultIdForPendingDirtyRef.current = vaultId;
+    if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
+      lazyGitDirtyDocIdsRef.current = new Set(readVaultGitPendingSyncPaths(vaultId));
+    } else {
+      lazyGitDirtyDocIdsRef.current.clear();
+    }
+  }
 
   /** Referência estável do meta do vault — evita `scheduleGitTreeRefresh` a cada render do pai. */
   const lazyVaultProfileKey = useMemo(
@@ -381,6 +394,9 @@ export function VaultOpenWorkspace({
       }, GITEA_SYNC_UI_SPIN_DELAY_MS);
       setGiteaSyncError(null);
       try {
+        /** Antes de qualquer await: captura para não enviar `""` ao Postgres por corrida Plate/flatten. */
+        const preSyncNoteSnapshot = { ...noteContentsRef.current };
+        const dirtyAtSyncStart = new Set(lazyGitDirtyDocIdsRef.current);
         const mergedContents = { ...noteContentsRef.current };
         let remotePathsForLazySync: string[] | null = null;
         if (isGitLazyVaultTree(treeRootRef.current)) {
@@ -443,6 +459,13 @@ export function VaultOpenWorkspace({
               patchedDirtyOnly++;
             }
           }
+          for (const docId of dirtyAtSyncStart) {
+            const built = files[docId];
+            const pre = preSyncNoteSnapshot[docId];
+            if (built === "" && typeof pre === "string" && pre.length > 0) {
+              files[docId] = pre;
+            }
+          }
           logVaultSync("POST /sync payload (lazy git)", {
             vaultId,
             treeDocCount,
@@ -475,11 +498,26 @@ export function VaultOpenWorkspace({
         if (ac.signal.aborted) return;
         setGiteaSyncStatus("synced");
         const remoteTail = commitHash.trim();
+        /**
+         * Após gravar no Postgres, o cache TanStack dos blobs pode ficar com revisão antiga;
+         * o prefetch ignora paths já em `noteContentsRef` → o merge blob→estado reaplicava texto velho por cima.
+         */
+        if (
+          usesLazyGitRemote(vaultId, activeVaultMetaRef.current) &&
+          isGitLazyVaultTree(treeRootRef.current)
+        ) {
+          queryClient.removeQueries({
+            queryKey: [...vaultGitBlobQueryKeyRoot, vaultId],
+          });
+          lazyGitBlobsSnapshotCommitRef.current = null;
+          lastBlobFetchRef.current = null;
+        }
         setLastGiteaCommitHash(remoteTail);
         remoteTailPollSeenRef.current = remoteTail;
         pendingPrefixMigrationsRef.current = [];
         lazyGitDirtyDocIdsRef.current.clear();
         lazyGitTreeDirtyRef.current = false;
+        clearVaultGitPendingSyncPaths(vaultId);
         syncDirtyStartAtRef.current = null;
         if (!usesLazyGitRemote(vaultId, activeVaultMetaRef.current)) {
           setFullSnapshotDirtyEpoch(0);
@@ -497,7 +535,7 @@ export function VaultOpenWorkspace({
         if (spinUiTimer) clearTimeout(spinUiTimer);
       }
     },
-    [refreshGitTreeAfterSync, applyPrefixMigrationsToContents],
+    [queryClient, refreshGitTreeAfterSync, applyPrefixMigrationsToContents],
   );
 
   const scheduleGitTreeRefresh = useCallback(
@@ -674,6 +712,11 @@ export function VaultOpenWorkspace({
        */
       noteContentsToPersist =
         dirty.size > 0 ? { ...lazyPersistedNoteContentsRef.current, ...dirtyMap } : noteContents;
+      if (dirty.size > 0) {
+        writeVaultGitPendingSyncPaths(vaultId, [...dirty]);
+      } else {
+        clearVaultGitPendingSyncPaths(vaultId);
+      }
     }
     const snap: VaultSnapshotV1 = {
       v: 1,
@@ -706,7 +749,6 @@ export function VaultOpenWorkspace({
     lazyPersistedNoteContentsRef.current = {
       ...loadSnapshotWithSshBridge(vaultId, activeVaultMeta).noteContents,
     };
-    lazyGitDirtyDocIdsRef.current.clear();
     lazyGitTreeDirtyRef.current = false;
     setFullSnapshotDirtyEpoch(0);
     lastBlobFetchRef.current = null;
@@ -1137,6 +1179,15 @@ export function VaultOpenWorkspace({
         expandForFile();
         setUrlSyncReady(true);
         appliedUrlTargetRef.current = urlTargetKey;
+      } else if (
+        isBackendSyncVaultId(vaultId) &&
+        usesLazyGitRemote(vaultId, activeVaultMeta)
+      ) {
+        /**
+         * Árvore ainda a hidratar ou ficheiro da URL ainda não listado: sem isto `urlSyncReady`
+         * fica falso e a UI fica em opacity 0 até ao timeout de 12s (tela “vazia”).
+         */
+        setUrlSyncReady(true);
       }
       return;
     }
@@ -1158,7 +1209,7 @@ export function VaultOpenWorkspace({
         setUrlSyncReady(true);
       }
     }
-  }, [urlTargetKey, treeDocIdsKey, dispatchUi, vaultId, router]);
+  }, [urlTargetKey, treeDocIdsKey, dispatchUi, vaultId, router, activeVaultMeta]);
 
   useEffect(() => {
     if (urlSyncReady) return;

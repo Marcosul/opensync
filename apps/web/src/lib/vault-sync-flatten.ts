@@ -4,6 +4,7 @@ import {
 } from "@/components/app/vault-tree-ops";
 import type { VaultMeta, VaultSnapshotV1 } from "@/components/app/vault-persistence";
 import type { TreeEntry } from "@/components/marketing/openclaw-workspace-mock";
+import { readVaultGitPendingSyncPaths } from "@/components/app/vault-persistence";
 import {
   GIT_LAZY_PLACEHOLDER_DOC_ID,
   collectLazyGitRepoRelativePaths,
@@ -76,6 +77,8 @@ export function usesLazyGitRemote(vaultId: string, meta: VaultMeta | undefined):
 /**
  * No primeiro render, não usar texto guardado em localStorage para ficheiros do repo
  * Git (vem do Gitea via blob). Evita flash de conteúdo antigo antes do fetch.
+ * Excepção: paths em `readVaultGitPendingSyncPaths` (edição ainda não enviada ao servidor)
+ * repõem-se a partir do snapshot para não perder texto após F5 antes do debounce de sync.
  * Se a árvore ainda não é lazy Git, limpa tudo até `scheduleGitTreeRefresh` hidratar.
  */
 export function initialNoteContentsForLazyGitVault(
@@ -86,9 +89,10 @@ export function initialNoteContentsForLazyGitVault(
   if (!usesLazyGitRemote(vaultId, meta)) return { ...snap.noteContents };
   if (isGitLazyVaultTree(snap.tree)) {
     const paths = new Set(collectLazyGitRepoRelativePaths(snap.tree));
+    const pending = new Set(readVaultGitPendingSyncPaths(vaultId));
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(snap.noteContents)) {
-      if (paths.has(k) && k !== GIT_LAZY_PLACEHOLDER_DOC_ID) continue;
+      if (paths.has(k) && k !== GIT_LAZY_PLACEHOLDER_DOC_ID && !pending.has(k)) continue;
       out[k] = v;
     }
     return out;

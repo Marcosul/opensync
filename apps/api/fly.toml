@@ -11,6 +11,8 @@ primary_region = "gru"
 [env]
   NODE_ENV = "production"
   PORT = "3001"
+  # Logs extra em applyTrustedSnapshot (vault-files.service). "0" em produção estável.
+  OPENSYNC_VAULT_SYNC_DEBUG = "1"
 
 [http_service]
   internal_port = 3001

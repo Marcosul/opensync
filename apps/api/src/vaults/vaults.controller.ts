@@ -7,6 +7,7 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -30,6 +31,8 @@ import { VaultsService } from './vaults.service';
 
 @Controller('vaults')
 export class VaultsController {
+  private readonly logger = new Logger(VaultsController.name);
+
   constructor(
     private readonly vaultsService: VaultsService,
     private readonly vaultGitSync: VaultGitSyncService,
@@ -138,6 +141,45 @@ export class VaultsController {
     }
     const { content, version } = await this.vaultFiles.getContent(vault.id, filePath);
     return { content, commitHash: version };
+  }
+
+  /**
+   * Leitura explícita da tabela `vault_files` (Postgres) — útil para confirmar persistência após POST /sync.
+   * Mesma origem que `git/blob`; resposta inclui metadados para inspeção rápida (curl / ferramentas).
+   */
+  @Get(':id/files/db')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getVaultFileFromDatabase(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('path') filePath: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    if (!filePath?.trim()) {
+      throw new BadRequestException('Query path e obrigatoria');
+    }
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    const { path, content, version } = await this.vaultFiles.getContent(
+      vault.id,
+      filePath,
+    );
+    const body = content ?? '';
+    const bytes = Buffer.byteLength(body, 'utf8');
+    this.logger.log(
+      `\x1b[36m📂 [vault/db-read]\x1b[0m vault=\x1b[33m${vault.id}\x1b[0m path=\x1b[32m${path}\x1b[0m bytes=\x1b[35m${bytes}\x1b[0m v=\x1b[90m${version}\x1b[0m`,
+    );
+    return {
+      source: 'vault_files',
+      vaultId: vault.id,
+      path,
+      version,
+      byteLength: bytes,
+      content: body,
+    };
   }
 
   @Get(':id/graph')

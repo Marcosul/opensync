@@ -86,8 +86,50 @@ export function applyMissionMarkdownToSnapshot(
 
 export const VAULT_SNAPSHOT_KEY_PREFIX = "opensync-vault-snapshot-";
 
+/** Paths de ficheiros Git lazy com alterações ainda não confirmadas no servidor (sobrevive a F5). */
+export const VAULT_GIT_PENDING_SYNC_PREFIX = "opensync-vault-git-pending-";
+
 export function vaultSnapshotKey(vaultId: string): string {
   return `${VAULT_SNAPSHOT_KEY_PREFIX}${vaultId}`;
+}
+
+export function vaultGitPendingSyncKey(vaultId: string): string {
+  return `${VAULT_GIT_PENDING_SYNC_PREFIX}${vaultId}`;
+}
+
+export function readVaultGitPendingSyncPaths(vaultId: string): string[] {
+  if (typeof window === "undefined" || !vaultId?.trim()) return [];
+  try {
+    const raw = localStorage.getItem(vaultGitPendingSyncKey(vaultId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((p): p is string => typeof p === "string" && p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export function writeVaultGitPendingSyncPaths(vaultId: string, paths: string[]): void {
+  if (typeof window === "undefined" || !vaultId?.trim()) return;
+  try {
+    if (paths.length === 0) {
+      localStorage.removeItem(vaultGitPendingSyncKey(vaultId));
+      return;
+    }
+    localStorage.setItem(vaultGitPendingSyncKey(vaultId), JSON.stringify([...new Set(paths)]));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+export function clearVaultGitPendingSyncPaths(vaultId: string): void {
+  if (typeof window === "undefined" || !vaultId?.trim()) return;
+  try {
+    localStorage.removeItem(vaultGitPendingSyncKey(vaultId));
+  } catch {
+    /* ignore */
+  }
 }
 
 export type ViewMode = "graph" | "editor";
