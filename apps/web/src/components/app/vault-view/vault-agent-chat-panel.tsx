@@ -1,7 +1,7 @@
 "use client";
 
 import { Bot, Check, File, FilePen, Folder, Plus, Send, Settings, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { collectDocIdsFromTree, findDir } from "@/components/app/vault-tree-ops";
 import { parseExplorerDragPayload } from "@/components/app/vault-explorer-tree-view";
@@ -101,7 +101,7 @@ function parseApplicableEdits(
 }
 
 export function VaultAgentChatPanel({
-  vaultId: _vaultId,
+  vaultId,
   treeChildren,
   noteContents,
   onRequestClose,
@@ -120,6 +120,8 @@ export function VaultAgentChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  /** Cache local para conteúdo buscado on-demand (lazy git: blobs não carregados). */
+  const fetchedContentRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -131,15 +133,41 @@ export function VaultAgentChatPanel({
     };
   }, []);
 
-  const buildContextPayload = useCallback(
-    (entries: ContextEntry[]) =>
-      entries.flatMap(({ docIds }) =>
-        docIds
-          .map((docId) => ({ path: docId, content: noteContents[docId] ?? "" }))
-          .filter((c) => c.content.length > 0),
-      ),
-    [noteContents],
-  );
+  /**
+   * Retorna o conteúdo de um arquivo. Para vaults lazy-git, o conteúdo
+   * só existe em `noteContents` se o arquivo já foi a aba ativa; caso contrário
+   * faz fetch on-demand do blob via API.
+   */
+  async function resolveFileContent(docId: string): Promise<string> {
+    const cached = noteContents[docId];
+    if (cached !== undefined && cached.length > 0) return cached;
+    const localCache = fetchedContentRef.current[docId];
+    if (localCache !== undefined) return localCache;
+    try {
+      const res = await fetch(
+        `/api/vaults/${encodeURIComponent(vaultId)}/git/blob?path=${encodeURIComponent(docId)}`,
+      );
+      if (!res.ok) return "";
+      const data = (await res.json()) as { content: string };
+      fetchedContentRef.current[docId] = data.content ?? "";
+      return fetchedContentRef.current[docId];
+    } catch {
+      return "";
+    }
+  }
+
+  async function buildContextPayload(
+    entries: ContextEntry[],
+  ): Promise<Array<{ path: string; content: string }>> {
+    const results: Array<{ path: string; content: string }> = [];
+    for (const { docIds } of entries) {
+      for (const docId of docIds) {
+        const content = await resolveFileContent(docId);
+        if (content.length > 0) results.push({ path: docId, content });
+      }
+    }
+    return results;
+  }
 
   async function sendMessage() {
     if (!input.trim() || isLoading || !credentials) return;
@@ -160,6 +188,7 @@ export function VaultAgentChatPanel({
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const context = await buildContextPayload(contextEntries);
       const res = await fetch("/api/agent-chat", {
         method: "POST",
         signal: controller.signal,
@@ -169,7 +198,7 @@ export function VaultAgentChatPanel({
           token: credentials.token,
           agentId: credentials.agentId ?? "main",
           messages: [...history, { role: "user", content: userText }],
-          context: buildContextPayload(contextEntries),
+          context,
         }),
       });
 
