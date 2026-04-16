@@ -81,7 +81,6 @@ import {
 import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
 import { connectVaultSse } from "@/lib/vault-sse-client";
 import {
-  createVaultGitBlobQueryFn,
   fetchVaultGitBlobQueryFn,
   LAZY_GIT_BLOB_GC_MS,
   LAZY_GIT_BLOB_STALE_MS,
@@ -1098,7 +1097,7 @@ export function VaultOpenWorkspace({
         // Prioriza o ficheiro clicado antes do prefetch global em lote.
         void queryClient.prefetchQuery({
           queryKey: vaultGitBlobQueryKey(vaultId, id, blobCommitKey),
-          queryFn: createVaultGitBlobQueryFn(vaultId, id),
+          queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, id, signal),
           staleTime: LAZY_GIT_BLOB_STALE_MS,
         });
       }
