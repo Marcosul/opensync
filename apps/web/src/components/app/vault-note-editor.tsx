@@ -243,7 +243,10 @@ export function VaultNoteEditor({
       >
         {useTextareaLayout ? (
           plainTextDocument ? (
-            <div className="flex min-h-0 flex-1 flex-col px-2 py-3 sm:px-4 sm:py-4">
+            <div
+              className="flex min-h-0 flex-1 flex-col px-2 py-3 sm:px-4 sm:py-4"
+              data-vault-pdf-export-root=""
+            >
               {isVaultJsonlDocId(docId) ? (
                 <VaultJsonlViewer
                   docId={docId}
@@ -264,6 +267,7 @@ export function VaultNoteEditor({
             </div>
           ) : (
             <div
+              data-vault-pdf-export-root=""
               className={cn(
                 "px-4 py-6 sm:px-10 sm:py-8",
                 edgeToEdgeScroll ? "min-h-0" : "h-full overflow-y-auto",

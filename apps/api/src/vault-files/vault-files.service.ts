@@ -1083,4 +1083,42 @@ export class VaultFilesService {
       `${colors.green}📥 Backfill Gitea→Postgres${colors.reset} vault=${vaultId} files=${Object.keys(files).length}`,
     );
   }
+
+  async listRepoCommitsForRestore(
+    giteaRepo: string,
+    limit: number = 20,
+  ): Promise<Array<{ sha: string; message: string; authorName: string; authoredAt: string }>> {
+    return this.vaultGitSync.listRepoCommits(giteaRepo, limit);
+  }
+
+  async restoreSnapshotFromRepoCommit(
+    vaultId: string,
+    giteaRepo: string,
+    commitRef: string,
+  ): Promise<{ ok: true; commitHash: string; importedFiles: number }> {
+    const ref = commitRef.trim();
+    if (!ref) {
+      throw new BadRequestException('commit obrigatorio');
+    }
+    const { commitHash, entries } = await this.vaultGitSync.readRepoTree(giteaRepo, ref);
+    const files: Record<string, string> = {};
+    const concurrency = 8;
+    for (let i = 0; i < entries.length; i += concurrency) {
+      const chunk = entries.slice(i, i + concurrency);
+      await Promise.all(
+        chunk.map(async (entry) => {
+          const blob = await this.vaultGitSync.readRepoBlob(giteaRepo, entry.path, commitHash);
+          files[entry.path] = blob.content;
+        }),
+      );
+    }
+    this.logger.log(
+      `${colors.cyan}🛟 [restore] aplicando commit${colors.reset} vault=${vaultId} ref=${commitHash.slice(0, 12)} files=${entries.length}`,
+    );
+    const applied = await this.applyTrustedSnapshot(vaultId, files);
+    this.logger.log(
+      `${colors.green}✅ [restore] commit restaurado${colors.reset} vault=${vaultId} from=${commitHash.slice(0, 12)} to=${applied.commitHash}`,
+    );
+    return { ok: true, commitHash: applied.commitHash, importedFiles: entries.length };
+  }
 }

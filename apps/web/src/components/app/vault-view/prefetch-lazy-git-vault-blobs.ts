@@ -13,12 +13,12 @@ import {
 } from "@/lib/vault-git-blob-query";
 import { isGitKeepMarkerPath } from "@/lib/vault-git-tree-import";
 
-export const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 4;
+export const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 2;
 /** Prefetch em segundo plano dos separadores abertos (baixa prioridade, pouca concorrência). */
 export const LAZY_OPEN_TAB_PREFETCH_CONCURRENCY = 2;
 export const LAZY_OPEN_TAB_PREFETCH_MAX = 16;
 /** Limita o prefetch global para não competir com a abertura interativa do editor. */
-export const LAZY_GIT_BACKGROUND_PREFETCH_MAX = 64;
+export const LAZY_GIT_BACKGROUND_PREFETCH_MAX = 20;
 
 export async function prefetchLazyGitVaultBlobs(
   vaultId: string,

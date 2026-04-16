@@ -359,6 +359,7 @@ export function VaultPlateMarkdownEditor({
             </div>
             <EditorContainer
               variant="pageScroll"
+              data-vault-pdf-export-root=""
               className={cn(
                 "vault-plate-md-reveal-body rounded-none bg-background pb-24 will-change-[transform,opacity]",
                 "[&_.slate-gutterLeft]:!left-0 [&_.slate-blockToolbar]:!left-0",

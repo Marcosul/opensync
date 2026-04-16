@@ -73,6 +73,12 @@ export type VaultGitTreeEntry = {
   path: string;
   size: number;
 };
+export type VaultGitCommitEntry = {
+  sha: string;
+  message: string;
+  authorName: string;
+  authoredAt: string;
+};
 
 export function normalizeVaultRelativePath(raw: string): string | null {
   const s = raw.trim().replace(/\\/g, '/');
@@ -394,7 +400,15 @@ export class VaultGitSyncService {
   async readRepoTree(repoFullName: string): Promise<{
     commitHash: string;
     entries: VaultGitTreeEntry[];
-  }> {
+  }>;
+  async readRepoTree(
+    repoFullName: string,
+    ref: string,
+  ): Promise<{ commitHash: string; entries: VaultGitTreeEntry[] }>;
+  async readRepoTree(
+    repoFullName: string,
+    ref?: string,
+  ): Promise<{ commitHash: string; entries: VaultGitTreeEntry[] }> {
     const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-read-tree-'));
     try {
@@ -402,9 +416,10 @@ export class VaultGitSyncService {
       this.logger.log(
         `${colors.cyan}📂 Leitura arvore (clone shallow):${colors.reset} ${repoFullName}`,
       );
-      await git.clone(cloneUrl, '.', ['--depth', '1']);
-      const commitHash = (await git.revparse(['HEAD'])).trim();
-      const raw = await git.raw(['ls-tree', '-r', '-l', 'HEAD']);
+      await git.clone(cloneUrl, '.', ['--depth', '80']);
+      const targetRef = ref?.trim() ? ref.trim() : 'HEAD';
+      const commitHash = (await git.revparse([targetRef])).trim();
+      const raw = await git.raw(['ls-tree', '-r', '-l', targetRef]);
       const entries: VaultGitTreeEntry[] = [];
       for (const line of raw.split('\n')) {
         const trimmed = line.trim();
@@ -428,7 +443,7 @@ export class VaultGitSyncService {
         );
       }
       this.logger.log(
-        `${colors.green}✅ Arvore:${colors.reset} ${entries.length} ficheiros @ ${commitHash.slice(0, 7)}`,
+        `${colors.green}✅ Arvore:${colors.reset} ${entries.length} ficheiros @ ${commitHash.slice(0, 7)} (${targetRef})`,
       );
       return { commitHash, entries };
     } catch (err) {
@@ -451,6 +466,16 @@ export class VaultGitSyncService {
   async readRepoBlob(
     repoFullName: string,
     rawPath: string,
+  ): Promise<{ content: string; commitHash: string }>;
+  async readRepoBlob(
+    repoFullName: string,
+    rawPath: string,
+    ref: string,
+  ): Promise<{ content: string; commitHash: string }>;
+  async readRepoBlob(
+    repoFullName: string,
+    rawPath: string,
+    ref?: string,
   ): Promise<{ content: string; commitHash: string }> {
     const norm = normalizeVaultRelativePath(rawPath);
     if (!norm) {
@@ -463,11 +488,12 @@ export class VaultGitSyncService {
       this.logger.log(
         `${colors.cyan}📄 Leitura blob:${colors.reset} ${repoFullName} :: ${norm}`,
       );
-      await git.clone(cloneUrl, '.', ['--depth', '1']);
-      const commitHash = (await git.revparse(['HEAD'])).trim();
+      await git.clone(cloneUrl, '.', ['--depth', '80']);
+      const targetRef = ref?.trim() ? ref.trim() : 'HEAD';
+      const commitHash = (await git.revparse([targetRef])).trim();
       let content: string;
       try {
-        content = await git.show([`HEAD:${norm}`]);
+        content = await git.show([`${targetRef}:${norm}`]);
       } catch {
         throw new NotFoundException('Ficheiro nao encontrado no repositorio');
       }
@@ -497,6 +523,53 @@ export class VaultGitSyncService {
         `${colors.red}❌ Falha ao ler blob git:${colors.reset} ${hint}`,
       );
       throw new BadGatewayException(`Falha ao ler ficheiro do Gitea: ${hint}`);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+        /* ignore */
+      });
+    }
+  }
+
+  async listRepoCommits(
+    repoFullName: string,
+    limit: number = 20,
+  ): Promise<VaultGitCommitEntry[]> {
+    const take = Math.max(1, Math.min(limit, 50));
+    const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-read-commits-'));
+    try {
+      const git = simpleGit({ baseDir: tmpRoot });
+      await git.clone(cloneUrl, '.', ['--depth', String(Math.max(80, take + 20))]);
+      const raw = await git.raw([
+        'log',
+        `-n${take}`,
+        '--date=iso-strict',
+        '--pretty=format:%H%x1f%an%x1f%aI%x1f%s',
+      ]);
+      const commits = raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [sha, authorName, authoredAt, message] = line.split('\x1f');
+          return {
+            sha: sha ?? '',
+            authorName: authorName ?? 'unknown',
+            authoredAt: authoredAt ?? new Date(0).toISOString(),
+            message: message ?? '(sem mensagem)',
+          } satisfies VaultGitCommitEntry;
+        })
+        .filter((c) => c.sha.length > 0);
+      this.logger.log(
+        `${colors.cyan}🧾 [restore] commits listados${colors.reset} repo=${repoFullName} count=${commits.length}`,
+      );
+      return commits;
+    } catch (err) {
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}❌ [restore] falha ao listar commits${colors.reset} repo=${repoFullName} err=${hint}`,
+      );
+      throw new BadGatewayException(`Falha ao listar commits no Gitea: ${hint}`);
     } finally {
       await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
         /* ignore */

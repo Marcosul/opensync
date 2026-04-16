@@ -10,12 +10,14 @@ import {
   Check,
   ChevronDown,
   FileCode2,
+  FileDown,
   Link2,
   ListX,
   Loader2,
   MoreVertical,
   PanelLeft,
   Plus,
+  RotateCcw,
   Share2,
 } from "lucide-react";
 import Link from "next/link";
@@ -109,6 +111,11 @@ import {
   patchClientUiSettings,
 } from "@/lib/client-ui-settings";
 import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
+import {
+  downloadVaultTextFile,
+  exportVaultEditorViewportToPdf,
+  resolveVaultExportFileName,
+} from "@/lib/vault-document-export";
 import { cn } from "@/lib/utils";
 
 import { BacklinksPanel } from "./vault-backlinks-panel";
@@ -141,6 +148,16 @@ import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
 const LAZY_VAULT_REMOTE_TAIL_POLL_MS = 30_000;
 /** Evita o indicador "a sincronizar" em pushes rápidos (menos piscar na barra). */
 const GITEA_SYNC_UI_SPIN_DELAY_MS = 280;
+/** Markdown muito grande no Plate pode atrasar abertura inicial; prioriza modo fonte nesses casos. */
+const LARGE_DOC_SOURCE_MODE_CHAR_THRESHOLD = 12_000;
+
+function isSyntheticDocHeadingOnly(docPath: string, content: string): boolean {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const compact = normalized.replace(/\u200b/g, "").trimEnd();
+  if (!compact) return true;
+  const heading = `# ${docPath}`;
+  return compact === heading;
+}
 
 export type VaultOpenWorkspaceProps = {
   vaultId: string;
@@ -434,6 +451,42 @@ export function VaultOpenWorkspace({
             setNoteContents(mergedContents);
           });
         }
+        if (!isGitLazyVaultTree(treeRootRef.current)) {
+          const treeDocIds = collectDocIdsFromTree(
+            treeRootRef.current.type === "dir" ? treeRootRef.current.children : [],
+          );
+          const missingDocIds = treeDocIds.filter((docId) => mergedContents[docId] === undefined);
+          if (missingDocIds.length > 0) {
+            const concurrency = 6;
+            let hydrationFailed = false;
+            for (let i = 0; i < missingDocIds.length; i += concurrency) {
+              if (ac.signal.aborted) return;
+              const chunk = missingDocIds.slice(i, i + concurrency);
+              await Promise.all(
+                chunk.map(async (docId) => {
+                  try {
+                    const { content } = await fetchVaultGitBlob(vaultId, docId, {
+                      signal: ac.signal,
+                    });
+                    mergedContents[docId] = content;
+                  } catch {
+                    hydrationFailed = true;
+                  }
+                }),
+              );
+            }
+            if (hydrationFailed) {
+              throw new Error(
+                "Nao foi possivel carregar todos os ficheiros antes do sync; sync abortado para evitar sobrescrever conteudo com vazio.",
+              );
+            }
+            noteContentsRef.current = mergedContents;
+            lazyPersistedNoteContentsRef.current = mergedContents;
+            startTransition(() => {
+              setNoteContents(mergedContents);
+            });
+          }
+        }
         const flatFiles = flattenVaultTreeToSyncFiles(
           treeRootRef.current,
           noteContentsRef.current,
@@ -481,10 +534,47 @@ export function VaultOpenWorkspace({
               .slice(0, 12),
           });
         } else {
+          // Proteção anti-overwrite: se o payload local tiver placeholders/vazios, preserva conteúdo remoto.
+          const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+          if (ac.signal.aborted) return;
+          const remotePaths = entries
+            .map((e) => e.path)
+            .filter((p) => !isGitKeepMarkerPath(p));
+          const suspicious = Object.entries(files)
+            .filter(
+              ([path, content]) =>
+                remotePaths.includes(path) &&
+                (content === "" || isSyntheticDocHeadingOnly(path, content)),
+            )
+            .map(([path]) => path);
+          let protectedFromOverwrite = 0;
+          const concurrency = 6;
+          for (let i = 0; i < suspicious.length; i += concurrency) {
+            if (ac.signal.aborted) return;
+            const chunk = suspicious.slice(i, i + concurrency);
+            await Promise.all(
+              chunk.map(async (path) => {
+                try {
+                  const { content: remoteContent } = await fetchVaultGitBlob(vaultId, path, {
+                    signal: ac.signal,
+                  });
+                  if (!remoteContent) return;
+                  if (files[path] === "" || isSyntheticDocHeadingOnly(path, files[path] ?? "")) {
+                    files[path] = remoteContent;
+                    protectedFromOverwrite++;
+                  }
+                } catch {
+                  /* mantém payload local para este path */
+                }
+              }),
+            );
+          }
           logVaultSync("POST /sync payload (non-lazy tree)", {
             vaultId,
             flatKeys: Object.keys(flatFiles).length,
             outKeys: Object.keys(files).length,
+            protectedFromOverwrite,
+            suspiciousPlaceholders: suspicious.slice(0, 12),
           });
         }
         const { commitHash } = await apiRequest<{ ok: boolean; commitHash: string }>(
@@ -910,12 +1000,13 @@ export function VaultOpenWorkspace({
   /** Não excluir `lazyGitDirtyDocIdsRef`: se o utilizador digitar antes do blob hidratar, o query
    * desactivava-se, o merge nunca corria, `noteContents[path]` ficava ausente e o POST /sync
    * mandava `""` para esse path — `applyTrustedSnapshot` apagava o ficheiro no Postgres. */
-  const lazyActiveBlobQueryEnabled =
+  const activeBlobQueryEnabled =
     Boolean(activeTabId) &&
-    lazyGitRemote &&
+    isBackendSyncVaultId(vaultId) &&
     activeTabId != null &&
     !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
-    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID;
+    activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
+    (lazyGitRemote || noteContents[activeTabId] === undefined);
 
   const lazyBlobQuery = useQuery<
     string,
@@ -925,7 +1016,7 @@ export function VaultOpenWorkspace({
   >({
     queryKey: vaultGitBlobQueryKey(vaultId, activeTabId ?? "", blobCommitKey),
     queryFn: ({ signal }) => fetchVaultGitBlobQueryFn(vaultId, activeTabId!, signal),
-    enabled: lazyActiveBlobQueryEnabled,
+    enabled: activeBlobQueryEnabled,
     staleTime: LAZY_GIT_BLOB_STALE_MS,
     gcTime: LAZY_GIT_BLOB_GC_MS,
     /**
@@ -954,14 +1045,14 @@ export function VaultOpenWorkspace({
   });
 
   useEffect(() => {
-    if (!activeTabId || !lazyActiveBlobQueryEnabled) return;
+    if (!activeTabId || !activeBlobQueryEnabled) return;
     if (lazyBlobQuery.data === undefined) return;
     /** Só consolidar após o fetch (evita estado intermédio durante refetch com `keepPreviousData`). */
     if (lazyBlobQuery.isFetching) return;
     const data = lazyBlobQuery.data;
     // Sem startTransition: hidratação do blob é fonte de verdade do servidor; em transição o
     // onValueChange síncrono do Plate pode ganhar a corrida e gravar "" por cima (nota vazia após F5).
-    const dirty = lazyGitDirtyDocIdsRef.current.has(activeTabId);
+    const dirty = lazyGitRemote && lazyGitDirtyDocIdsRef.current.has(activeTabId);
     logVaultSync("blob→noteContents merge", {
       activeTabId,
       dirty,
@@ -995,11 +1086,12 @@ export function VaultOpenWorkspace({
     });
   }, [
     activeTabId,
-    lazyActiveBlobQueryEnabled,
+    activeBlobQueryEnabled,
     lazyBlobQuery.data,
     lazyBlobQuery.isFetching,
     blobCommitKey,
     lazyGitQueryEpoch,
+    lazyGitRemote,
   ]);
 
   /**
@@ -1008,11 +1100,11 @@ export function VaultOpenWorkspace({
    */
   const lazyGitBlobFatalLoadError =
     activeTabId != null &&
-    lazyGitRemote &&
-    lazyActiveBlobQueryEnabled &&
+    isBackendSyncVaultId(vaultId) &&
+    activeBlobQueryEnabled &&
     activeTabId !== GIT_LAZY_PLACEHOLDER_DOC_ID &&
     !mockMarketingDocBlocksLazyGitBlob(activeTabId) &&
-    !lazyGitDirtyDocIdsRef.current.has(activeTabId) &&
+    !(lazyGitRemote && lazyGitDirtyDocIdsRef.current.has(activeTabId)) &&
     lazyBlobQuery.error != null &&
     !lazyBlobQuery.isFetching
       ? "Nao foi possivel carregar o ficheiro."
@@ -1026,9 +1118,17 @@ export function VaultOpenWorkspace({
   const [backlinksPanelWidth, setBacklinksPanelWidth] = useState(
     defaultClientUiSettings.backlinksPanelWidth,
   );
+  const [isCommitListLoading, setIsCommitListLoading] = useState(false);
+  const [isRestoringCommit, setIsRestoringCommit] = useState(false);
+  const [recoverCommitsOpen, setRecoverCommitsOpen] = useState(false);
+  const [recoverCommits, setRecoverCommits] = useState<
+    Array<{ sha: string; message: string; authorName: string; authoredAt: string }>
+  >([]);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
   const [editorSourceMode, setEditorSourceMode] = useState(false);
+  /** Quando o utilizador desativa modo fonte num doc grande, não forçar novamente nesta sessão. */
+  const largeDocRichModeOverrideRef = useRef<Set<string>>(new Set());
   const prevEditorTabRef = useRef<string | undefined>(undefined);
   const editorSourceModeRef = useRef(editorSourceMode);
   editorSourceModeRef.current = editorSourceMode;
@@ -1047,6 +1147,64 @@ export function VaultOpenWorkspace({
     }
     if (editorSourceModeRef.current) setEditorSourceMode(false);
   }, [activeTabId]);
+
+  const activeEditorValue =
+    activeTabId != null
+      ? (noteContents[activeTabId] ??
+          (activeBlobQueryEnabled ? lazyBlobQuery.data : undefined) ??
+          "")
+      : "";
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    if (isVaultPlainTextDocId(activeTabId)) return;
+    if (activeEditorValue.length < LARGE_DOC_SOURCE_MODE_CHAR_THRESHOLD) return;
+    if (largeDocRichModeOverrideRef.current.has(activeTabId)) return;
+    if (editorSourceModeRef.current) return;
+    setEditorSourceMode(true);
+  }, [activeTabId, activeEditorValue]);
+
+  const toggleEditorSourceMode = useCallback(() => {
+    const currentDocId = activeTabId;
+    if (!currentDocId) {
+      setEditorSourceMode((v) => !v);
+      return;
+    }
+    const currentValue =
+      noteContents[currentDocId] ??
+      (activeBlobQueryEnabled ? lazyBlobQuery.data : undefined) ??
+      "";
+    const isLargeMarkdownDoc =
+      !isVaultPlainTextDocId(currentDocId) &&
+      currentValue.length >= LARGE_DOC_SOURCE_MODE_CHAR_THRESHOLD;
+
+    setEditorSourceMode((prev) => {
+      const next = !prev;
+      if (isLargeMarkdownDoc) {
+        if (!next) largeDocRichModeOverrideRef.current.add(currentDocId);
+        else largeDocRichModeOverrideRef.current.delete(currentDocId);
+      }
+      return next;
+    });
+  }, [activeTabId, noteContents, activeBlobQueryEnabled, lazyBlobQuery.data]);
+
+  const exportActiveDocumentOriginal = useCallback(() => {
+    if (!activeTabId) return;
+    const treeName = findFileNameForDocId(treeChildren, activeTabId);
+    const fileName = resolveVaultExportFileName(activeTabId, treeName ?? null);
+    downloadVaultTextFile(fileName, activeEditorValue);
+  }, [activeTabId, activeEditorValue, treeChildren]);
+
+  const exportActiveDocumentPdf = useCallback(async () => {
+    if (!activeTabId) return;
+    const treeName = findFileNameForDocId(treeChildren, activeTabId);
+    const fileName = resolveVaultExportFileName(activeTabId, treeName ?? null);
+    try {
+      await exportVaultEditorViewportToPdf(fileName);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Não foi possível gerar o PDF.");
+    }
+  }, [activeTabId, treeChildren]);
 
   useEffect(() => {
     setExplorerInlineRename(null);
@@ -1090,7 +1248,7 @@ export function VaultOpenWorkspace({
         return;
       }
       if (
-        usesLazyGitRemote(vaultId, activeVaultMeta) &&
+        isBackendSyncVaultId(vaultId) &&
         noteContentsRef.current[id] === undefined &&
         id !== GIT_LAZY_PLACEHOLDER_DOC_ID
       ) {
@@ -1622,12 +1780,72 @@ export function VaultOpenWorkspace({
     }
   }, [vaultId, router]);
 
+  const openRecoverCommits = useCallback(async () => {
+    if (!isBackendSyncVaultId(vaultId)) return;
+    setIsCommitListLoading(true);
+    try {
+      const result = await apiRequest<{
+        commits: Array<{ sha: string; message: string; authorName: string; authoredAt: string }>;
+      }>(`/api/vaults/${encodeURIComponent(vaultId)}/git/commits?limit=20`);
+      setRecoverCommits(result.commits);
+      setRecoverCommitsOpen(true);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Falha ao carregar commits.";
+      window.alert(message);
+    } finally {
+      setIsCommitListLoading(false);
+    }
+  }, [vaultId]);
+
+  const restoreFromCommit = useCallback(
+    async (commit: string) => {
+      if (!isBackendSyncVaultId(vaultId)) return;
+      const short = commit.slice(0, 12);
+      const confirmed = window.confirm(
+        `Restaurar o vault para o commit ${short}? O estado atual remoto sera substituido.`,
+      );
+      if (!confirmed) return;
+      setIsRestoringCommit(true);
+      try {
+        const result = await apiRequest<{
+          ok: true;
+          commitHash: string;
+          importedFiles: number;
+        }>(`/api/vaults/${encodeURIComponent(vaultId)}/git/restore`, {
+          method: "POST",
+          body: { commit },
+        });
+        await scheduleGitTreeRefresh(vaultId, activeVaultMeta);
+        setRecoverCommitsOpen(false);
+        window.alert(
+          `Restauracao concluida a partir de ${short}. ${result.importedFiles} ficheiros restaurados.`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Falha ao restaurar commit.";
+        window.alert(message);
+      } finally {
+        setIsRestoringCommit(false);
+      }
+    },
+    [vaultId, scheduleGitTreeRefresh, activeVaultMeta],
+  );
+
   const graphHighlightId = activeTabId || null;
 
   const editorBreadcrumb = useMemo(
     () => vaultDocBreadcrumb(treeChildren, activeTabId || ""),
     [treeChildren, activeTabId],
   );
+
+  const activeExportFileLabel = useMemo(() => {
+    if (!activeTabId) return "";
+    return resolveVaultExportFileName(
+      activeTabId,
+      findFileNameForDocId(treeChildren, activeTabId) ?? null,
+    );
+  }, [activeTabId, treeChildren]);
 
   /** Só no primeiro carregamento do blob (refetch em background não esconde atalhos). */
   const editorSubChromeLoading =
@@ -1636,6 +1854,13 @@ export function VaultOpenWorkspace({
     noteContents[activeTabId] === undefined &&
     lazyBlobQuery.isPending &&
     !lazyBlobQuery.isFetched;
+  const activeDocHydrating =
+    Boolean(activeTabId) &&
+    isBackendSyncVaultId(vaultId) &&
+    noteContents[activeTabId!] === undefined &&
+    activeBlobQueryEnabled &&
+    lazyBlobQuery.data === undefined &&
+    (lazyBlobQuery.isPending || lazyBlobQuery.isFetching);
 
   const handleExplorerCommand = useCallback(
     (cmd: ExplorerCommand) => {
@@ -2106,6 +2331,24 @@ export function VaultOpenWorkspace({
           >
             <Plus className="size-4" />
           </button>
+          {isBackendSyncVaultId(vaultId) ? (
+            <button
+              type="button"
+              title="Recuperar de um commit (Gitea)"
+              onClick={() => {
+                void openRecoverCommits();
+              }}
+              disabled={isCommitListLoading || isRestoringCommit}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+              aria-label="Recuperar de commit"
+            >
+              {isCommitListLoading || isRestoringCommit ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RotateCcw className="size-4" />
+              )}
+            </button>
+          ) : null}
           <Menu.Root>
             <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
               <ChevronDown className="size-4" aria-label="Lista de abas" />
@@ -2150,6 +2393,44 @@ export function VaultOpenWorkspace({
             <div className="ml-0.5 flex shrink-0 items-center gap-0.5 border-l border-border/60 pl-1.5">
               <Menu.Root>
                 <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
+                  <FileDown className="size-4" aria-label="Exportar ficheiro" />
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Positioner className="z-[210] outline-none" side="bottom" align="end" sideOffset={4}>
+                    <Menu.Popup
+                      className={cn(
+                        "min-w-[200px] origin-[var(--transform-origin)] rounded-lg border border-border bg-card py-1 shadow-lg",
+                        "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0"
+                      )}
+                    >
+                      <Menu.Item
+                        className={vaultChromeMenuItemClass}
+                        onClick={() => {
+                          void exportActiveDocumentPdf();
+                        }}
+                      >
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="text-sm text-foreground">PDF</span>
+                          <span className="text-[10px] text-muted-foreground">Como visto no editor (A4)</span>
+                        </span>
+                      </Menu.Item>
+                      <Menu.Item className={vaultChromeMenuItemClass} onClick={exportActiveDocumentOriginal}>
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="text-sm text-foreground">Formato original</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            Texto UTF-8 (.md, .json, …)
+                          </span>
+                          <span className="truncate font-mono text-[10px] text-muted-foreground/90" title={activeExportFileLabel}>
+                            {activeExportFileLabel}
+                          </span>
+                        </span>
+                      </Menu.Item>
+                    </Menu.Popup>
+                  </Menu.Positioner>
+                </Menu.Portal>
+              </Menu.Root>
+              <Menu.Root>
+                <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
                   <MoreVertical className="size-4" aria-label="Mais opções" />
                 </Menu.Trigger>
                 <Menu.Portal>
@@ -2173,7 +2454,7 @@ export function VaultOpenWorkspace({
               {!isVaultPlainTextDocId(activeTabId) ? (
                 <button
                   type="button"
-                  onClick={() => setEditorSourceMode((v) => !v)}
+                  onClick={toggleEditorSourceMode}
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
                     editorSourceMode && "bg-muted text-foreground",
@@ -2198,6 +2479,11 @@ export function VaultOpenWorkspace({
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
           </div>
+        ) : activeDocHydrating ? (
+          <div className="flex flex-1 items-center justify-center gap-2 px-6 text-center font-mono text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            A carregar conteúdo do arquivo…
+          </div>
         ) : usesLazyGitRemote(vaultId, activeVaultMeta) &&
           lazyGitBlobFatalLoadError &&
           noteContents[activeTabId] === undefined ? (
@@ -2212,12 +2498,12 @@ export function VaultOpenWorkspace({
               docId={activeTabId}
               value={
                 noteContents[activeTabId] ??
-                (lazyActiveBlobQueryEnabled
+                (activeBlobQueryEnabled
                   ? lazyBlobQuery.data
                   : undefined) ??
                 (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
                   ? mockDocToMarkdown(activeDoc)
-                  : `# ${activeTabId}\n\n`)
+                  : "")
               }
               onChange={(next) => {
                 if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
@@ -2243,12 +2529,12 @@ export function VaultOpenWorkspace({
               docId={activeTabId}
               value={
                 noteContents[activeTabId] ??
-                (lazyActiveBlobQueryEnabled
+                (activeBlobQueryEnabled
                   ? lazyBlobQuery.data
                   : undefined) ??
                 (activeDoc && mockMarketingDocBlocksLazyGitBlob(activeTabId)
                   ? mockDocToMarkdown(activeDoc)
-                  : `# ${activeTabId}\n\n`)
+                  : "")
               }
               onChange={(next) => {
                 if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
@@ -2330,6 +2616,50 @@ export function VaultOpenWorkspace({
         onCancel={() => setExplorerDeleteItems(null)}
         onConfirm={confirmExplorerDeleteFromDialog}
       />
+      {recoverCommitsOpen ? (
+        <div className="absolute inset-0 z-[260] flex items-center justify-center bg-background/60 p-4">
+          <div className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-xl">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="font-mono text-sm font-semibold text-foreground">
+                Recuperar por commit (Gitea)
+              </h3>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => setRecoverCommitsOpen(false)}
+                disabled={isRestoringCommit}
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-2">
+              {recoverCommits.length === 0 ? (
+                <p className="px-2 py-4 text-sm text-muted-foreground">
+                  Nenhum commit encontrado para este vault.
+                </p>
+              ) : (
+                recoverCommits.map((c) => (
+                  <button
+                    key={c.sha}
+                    type="button"
+                    onClick={() => {
+                      void restoreFromCommit(c.sha);
+                    }}
+                    disabled={isRestoringCommit}
+                    className="mb-1 w-full rounded-md border border-border px-3 py-2 text-left hover:bg-muted disabled:pointer-events-none disabled:opacity-60"
+                  >
+                    <p className="font-mono text-xs text-foreground">{c.sha.slice(0, 12)}</p>
+                    <p className="truncate text-sm text-foreground">{c.message}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {c.authorName} - {new Date(c.authoredAt).toLocaleString()}
+                    </p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -143,6 +143,44 @@ export class VaultsController {
     return { content, commitHash: version };
   }
 
+  @Get(':id/git/commits')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async listGitCommits(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    const limit = Number.parseInt(limitRaw ?? '20', 10);
+    const commits = await this.vaultFiles.listRepoCommitsForRestore(
+      vault.giteaRepo,
+      Number.isFinite(limit) ? limit : 20,
+    );
+    return { commits };
+  }
+
+  @Post(':id/git/restore')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async restoreGitCommit(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body() body: { commit?: string },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const commit = body?.commit?.trim();
+    if (!commit) {
+      throw new BadRequestException('commit obrigatorio');
+    }
+    return this.vaultFiles.restoreSnapshotFromRepoCommit(vault.id, vault.giteaRepo, commit);
+  }
+
   /**
    * Leitura explícita da tabela `vault_files` (Postgres) — útil para confirmar persistência após POST /sync.
    * Mesma origem que `git/blob`; resposta inclui metadados para inspeção rápida (curl / ferramentas).
