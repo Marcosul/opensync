@@ -6,7 +6,8 @@
 
 | Documento | Conteúdo |
 |-----------|----------|
-| [sync-architecture.md](./sync-architecture.md) | Três bases (VPS / Gitea / web), fluxos atuais e roadmap (tree/blob, SFTP legado). |
+| [sync-engine-v2.md](./sync-engine-v2.md) | **Nova arquitetura:** file-first, offline-first bidirecional, manifest diff, 3 niveis de delta, tombstones, fileId estavel, conflict copy + merge 3-way, API incremental por cursor, E2EE (futuro). |
+| [sync-architecture.md](./sync-architecture.md) | Arquitetura legada: três bases (VPS / Gitea / web), fluxos e roadmap anterior. |
 | [vault-git-api.md](./vault-git-api.md) | Deploy key, `GET .../git/tree` e `GET .../git/blob`, proxy Next, rate limit. |
 | [templates/vault-gitignore](./templates/vault-gitignore) | Modelo `.gitignore` para o workspace na VPS. |
 | [openclaw-agent-sync.md](./openclaw-agent-sync.md) | Clone na VPS, cron OpenClaw, plugin opcional, conflitos `pull --rebase`. |
