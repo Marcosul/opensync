@@ -24,3 +24,26 @@ export async function fetchVaultGitBlob(
     { signal: opts?.signal },
   );
 }
+
+export async function fetchPublicVaultGitTree(
+  token: string,
+  opts?: { ref?: string; signal?: AbortSignal },
+): Promise<{ commitHash: string; entries: VaultGitTreeEntry[] }> {
+  const ref = opts?.ref;
+  const qs =
+    ref && ref.trim() ? `?ref=${encodeURIComponent(ref.trim())}` : "";
+  return apiRequest(`/api/public/vault/${encodeURIComponent(token)}/git/tree${qs}`, {
+    signal: opts?.signal,
+  });
+}
+
+export async function fetchPublicVaultGitBlob(
+  token: string,
+  path: string,
+  opts?: { signal?: AbortSignal },
+): Promise<{ content: string; commitHash: string }> {
+  return apiRequest(
+    `/api/public/vault/${encodeURIComponent(token)}/git/blob?path=${encodeURIComponent(path)}`,
+    { signal: opts?.signal },
+  );
+}

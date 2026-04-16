@@ -1,13 +1,17 @@
 "use client";
 
 import { Menu } from "@base-ui/react/menu";
-import { Cpu, FolderOpen, MoreVertical, Trash2, Wifi, WifiOff } from "lucide-react";
+import { Cpu, FolderOpen, MoreVertical, Share2, Trash2, Wifi, WifiOff } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCallback, useState } from "react";
 
 import { apiRequest } from "@/api/rest/generic";
 import { isBackendSyncVaultId } from "@/lib/vault-sync-flatten";
 import { cn } from "@/lib/utils";
+
+import { VaultDeleteConfirmDialog } from "./vault-delete-confirm-dialog";
+import { VaultPublishDialog } from "./vault-publish-dialog";
 
 export type DashboardVaultCardVault = {
   id: string;
@@ -34,17 +38,22 @@ const menuPopupClass = cn(
 
 export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
   const router = useRouter();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishUrl, setPublishUrl] = useState("");
+
   const explorerHref = `/vault?vaultId=${encodeURIComponent(vault.id)}`;
   const syncHref = vault.gitSetupLink
     ? `/dashboard/vaults/${encodeURIComponent(vault.id)}/git`
     : "/settings";
 
-  const handleDelete = async () => {
-    const ok = window.confirm(
-      `Remover o cofre «${vault.name}»? Esta ação não pode ser anulada.`,
-    );
-    if (!ok) return;
+  const canPublishOrDeleteRemote =
+    isBackendSyncVaultId(vault.id) && !vault.managedByProfile;
 
+  const runDelete = useCallback(async () => {
+    setDeleteBusy(true);
     try {
       if (vault.managedByProfile) {
         await apiRequest<{ ok: boolean }>("/api/vaults/unlink-agent-vault", {
@@ -56,14 +65,44 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
           method: "DELETE",
         });
       } else {
+        setDeleteOpen(false);
         window.alert("Este cofre não pode ser removido a partir do painel.");
         return;
       }
+      setDeleteOpen(false);
       router.refresh();
     } catch {
       window.alert("Não foi possível remover este cofre. Tente novamente.");
+    } finally {
+      setDeleteBusy(false);
     }
+  }, [router, vault.id, vault.managedByProfile]);
+
+  const requestDelete = () => {
+    setDeleteOpen(true);
   };
+
+  const handlePublish = useCallback(async () => {
+    if (!canPublishOrDeleteRemote) {
+      window.alert("Apenas cofres guardados no servidor podem ser publicados.");
+      return;
+    }
+    setPublishBusy(true);
+    try {
+      const res = await apiRequest<{ token: string; publicPath: string }>(
+        `/api/vaults/${encodeURIComponent(vault.id)}/public-share`,
+        { method: "POST" },
+      );
+      const path = res.publicPath?.trim() || `/public/vault/${encodeURIComponent(res.token)}`;
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      setPublishUrl(origin ? `${origin}${path.startsWith("/") ? path : `/${path}`}` : path);
+      setPublishOpen(true);
+    } catch {
+      window.alert("Não foi possível gerar o link público. Tente novamente.");
+    } finally {
+      setPublishBusy(false);
+    }
+  }, [canPublishOrDeleteRemote, vault.id]);
 
   const openSync = () => {
     router.push(syncHref);
@@ -134,9 +173,19 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
                     <Menu.Item className={menuItemClass} onClick={openSync}>
                       Instruções de sincronização
                     </Menu.Item>
+                    {canPublishOrDeleteRemote ? (
+                      <Menu.Item
+                        className={menuItemClass}
+                        onClick={() => void handlePublish()}
+                        disabled={publishBusy}
+                      >
+                        <Share2 className="size-3.5 shrink-0" aria-hidden />
+                        {publishBusy ? "A gerar…" : "Publicar vault"}
+                      </Menu.Item>
+                    ) : null}
                     <Menu.Item
                       className={cn(menuItemClass, "text-destructive data-highlighted:bg-destructive/10")}
-                      onClick={handleDelete}
+                      onClick={requestDelete}
                     >
                       <Trash2 className="size-3.5 shrink-0" aria-hidden />
                       Deletar
@@ -164,6 +213,20 @@ export function VaultCard({ vault }: { vault: DashboardVaultCardVault }) {
           <p className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{vault.description}</p>
         </Link>
       </div>
+
+      <VaultDeleteConfirmDialog
+        open={deleteOpen}
+        vaultName={vault.name}
+        busy={deleteBusy}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={runDelete}
+      />
+      <VaultPublishDialog
+        open={publishOpen}
+        vaultName={vault.name}
+        publicUrl={publishUrl}
+        onClose={() => setPublishOpen(false)}
+      />
     </div>
   );
 }

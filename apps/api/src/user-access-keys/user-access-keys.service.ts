@@ -9,15 +9,16 @@ export class UserAccessKeysService {
   async createForUser(userId: string, label?: string) {
     const { token, hash } = generateUserApiKey();
 
-    await this.prisma.userApiKey.create({
+    const row = await this.prisma.userApiKey.create({
       data: {
         userId,
         label: label ?? 'Token de acesso',
         keyHash: hash,
       },
+      select: { id: true, label: true },
     });
 
-    return { token }; // retornado apenas uma vez
+    return { token, id: row.id, label: row.label };
   }
 
   async listForUser(userId: string) {

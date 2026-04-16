@@ -231,6 +231,8 @@ function NewVaultWizard() {
   const isConnectAgentStep3 = step === 3 && startChoice === "connect_agent";
   const isConnectAgentStep3Loading =
     isConnectAgentStep3 && Boolean(urlVaultId) && !connectAgentSetup;
+  /** Com as instruções visíveis, o CTA principal fica oculto (abrir o vault faz-se pelo dashboard ou pelo explorador). */
+  const hideConnectAgentStep3PrimaryCta = isConnectAgentStep3 && Boolean(connectAgentSetup);
   const isConnectAgentStep2Submitting = step === 2 && startChoice === "connect_agent" && isSubmitting;
 
   function formatSubmitError(raw: string): string {
@@ -393,7 +395,7 @@ function NewVaultWizard() {
     isConnectAgentStep3Loading
       ? "A carregar…"
       : step === 3 && startChoice === "connect_agent" && connectAgentSetup
-      ? "SKILL instalada"
+      ? "Abrir explorador"
       : step < TOTAL_STEPS
         ? step === 2 && startChoice === "connect_agent"
           ? isSubmitting
@@ -427,7 +429,7 @@ function NewVaultWizard() {
             ? "Criando seu vault"
             : "Confirmar criacao"
           : startChoice === "connect_agent"
-            ? "Instalar a skill no agente"
+            ? "Instalar o app local"
             : "Confirmar criacao";
 
   const stepDescription =
@@ -435,10 +437,10 @@ function NewVaultWizard() {
       ? "Selecione o caminho que melhor descreve o que voce quer fazer agora."
       : step === 2
         ? startChoice === "connect_agent"
-          ? "Escolha o nome do vault e continue: criamos o cofre no Gitea e a API key antes de mostrar o guia da skill."
+          ? "Escolha o nome do vault e continue: criamos o cofre no Gitea e a API key antes de mostrar as instruções do app local."
           : "Escolha um nome para identificar este vault no dashboard."
         : startChoice === "connect_agent"
-          ? "Envie ao agente o link do guia. Use as variáveis abaixo no ambiente do OpenClaw. Quando a skill estiver instalada, abra o explorador."
+          ? "Instale o OpenSync no Ubuntu com o comando abaixo. Gere um token usk_... quando o assistente pedir (ou antecipadamente). O separador «Instale com seu Agente» é opcional para OpenClaw. Depois abra o explorador."
           : startChoice === "agent_project"
             ? "Para este fluxo voce nao precisa informar acesso agora. O onboarding guia objetivos, contexto e a conexao na ultima etapa."
             : isSubmitting
@@ -450,7 +452,7 @@ function NewVaultWizard() {
 
   const headerEyebrow =
     step === 3 && startChoice === "connect_agent" && connectAgentSetup
-      ? "OpenClaw — Skill"
+      ? "OpenSync — App local"
       : isConnectAgentStep2Submitting
         ? "OpenClaw — criando vault"
         : isEmptyVaultCreating
@@ -690,7 +692,12 @@ function NewVaultWizard() {
             <p className="mt-4 text-sm text-destructive">{submitError}</p>
           ) : null}
 
-          <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+          <div
+            className={cn(
+              "mt-8 flex flex-col-reverse gap-3 sm:flex-row",
+              hideConnectAgentStep3PrimaryCta ? "sm:justify-start" : "sm:justify-between",
+            )}
+          >
             <Button
               type="button"
               variant="ghost"
@@ -703,13 +710,15 @@ function NewVaultWizard() {
                   ? "Cancelar"
                   : "Voltar"}
             </Button>
-            <Button
-              type="button"
-              onClick={handlePrimaryAction}
-              disabled={primaryDisabled}
-            >
-              {primaryLabel}
-            </Button>
+            {hideConnectAgentStep3PrimaryCta ? null : (
+              <Button
+                type="button"
+                onClick={handlePrimaryAction}
+                disabled={primaryDisabled}
+              >
+                {primaryLabel}
+              </Button>
+            )}
           </div>
         </section>
       </div>

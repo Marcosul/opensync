@@ -12,6 +12,7 @@ const throttler_1 = require("@nestjs/throttler");
 const sync_module_1 = require("../sync/sync.module");
 const vault_files_module_1 = require("../vault-files/vault-files.module");
 const workspaces_module_1 = require("../workspaces/workspaces.module");
+const public_vaults_controller_1 = require("./public-vaults.controller");
 const vaults_controller_1 = require("./vaults.controller");
 const vaults_service_1 = require("./vaults.service");
 const graph_service_1 = require("./graph.service");
@@ -21,7 +22,7 @@ exports.VaultsModule = VaultsModule;
 exports.VaultsModule = VaultsModule = __decorate([
     (0, common_1.Module)({
         imports: [sync_module_1.SyncModule, vault_files_module_1.VaultFilesModule, workspaces_module_1.WorkspacesModule, throttler_1.ThrottlerModule],
-        controllers: [vaults_controller_1.VaultsController],
+        controllers: [vaults_controller_1.VaultsController, public_vaults_controller_1.PublicVaultsController],
         providers: [vaults_service_1.VaultsService, graph_service_1.GraphService],
         exports: [vaults_service_1.VaultsService],
     })

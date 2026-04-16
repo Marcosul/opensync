@@ -439,4 +439,68 @@ export class VaultsService {
       `${colors.green}🗑️ Vault desativado + repo Gitea apagado:${colors.reset} id=${vaultId} repo=${existing.giteaRepo}`,
     );
   }
+
+  /**
+   * Resolve vault ativo com partilha pública ativa (token opaco na URL).
+   */
+  async getVaultForPublicToken(
+    token: string,
+  ): Promise<{ id: string; giteaRepo: string; name: string } | null> {
+    const normalized = token.trim();
+    if (!normalized) {
+      return null;
+    }
+    return this.prisma.vault.findFirst({
+      where: {
+        publicAccessToken: normalized,
+        isActive: true,
+      },
+      select: { id: true, giteaRepo: true, name: true },
+    });
+  }
+
+  /**
+   * Cria token de partilha pública se ainda não existir (read-only para visitantes).
+   */
+  async enablePublicShareForUser(
+    userId: string,
+    vaultId: string,
+  ): Promise<{ token: string; vaultName: string; publicPath: string }> {
+    const vault = await this.prisma.vault.findFirst({
+      where: {
+        id: vaultId,
+        isActive: true,
+        ...this.vaultWhereAccessible(userId),
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        name: true,
+        publicAccessToken: true,
+      },
+    });
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    await this.workspaceAccess.requireEditorOrAdmin(userId, vault.workspaceId);
+
+    let token = vault.publicAccessToken?.trim() ?? '';
+    if (!token) {
+      token = randomBytes(32).toString('base64url');
+      await this.prisma.vault.update({
+        where: { id: vault.id },
+        data: { publicAccessToken: token },
+      });
+      this.logger.log(
+        `${colors.magenta}🔓 Partilha pública criada:${colors.reset} vault=${vault.id} token_len=${token.length}`,
+      );
+    } else {
+      this.logger.log(
+        `${colors.cyan}🔗 Partilha pública reutilizada:${colors.reset} vault=${vault.id}`,
+      );
+    }
+
+    const publicPath = `/public/vault/${encodeURIComponent(token)}`;
+    return { token, vaultName: vault.name, publicPath };
+  }
 }

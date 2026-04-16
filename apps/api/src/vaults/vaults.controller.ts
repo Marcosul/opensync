@@ -67,6 +67,16 @@ export class VaultsController {
     return { vaults };
   }
 
+  @Post(':id/public-share')
+  @HttpCode(HttpStatus.OK)
+  async enablePublicShare(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    return this.vaultsService.enablePublicShareForUser(uid, id.trim());
+  }
+
   @Delete(':id')
   async deleteVault(
     @Param('id') id: string,
@@ -139,6 +149,8 @@ export class VaultsController {
     if (!vault) {
       throw new NotFoundException('Vault não encontrado');
     }
+    /** Mesmo critério que `git/tree`: primeiro pedido pode ser o blob — sem backfill o Postgres ainda está vazio e o cliente fica preso em 404 (sem retry). */
+    await this.vaultFiles.backfillFromGiteaIfEmpty(vault.id, vault.giteaRepo);
     const { content, version } = await this.vaultFiles.getContent(vault.id, filePath);
     return { content, commitHash: version };
   }

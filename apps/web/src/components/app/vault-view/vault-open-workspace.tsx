@@ -7,6 +7,7 @@
 
 import { Menu } from "@base-ui/react/menu";
 import {
+  Bot,
   Check,
   ChevronDown,
   FileCode2,
@@ -110,6 +111,8 @@ import {
   loadClientUiSettings,
   patchClientUiSettings,
 } from "@/lib/client-ui-settings";
+import { VaultAgentChatPanel } from "./vault-agent-chat-panel";
+import { VaultAgentChatResizeHandle } from "./vault-agent-chat-resize-handle";
 import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import {
   downloadVaultTextFile,
@@ -325,6 +328,24 @@ export function VaultOpenWorkspace({
     if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) return;
     setFullSnapshotDirtyEpoch((e) => e + 1);
   }, []);
+
+  const handleApplyAgentFileEdit = useCallback(
+    async (docId: string, content: string) => {
+      await fetch(`/api/vaults/${encodeURIComponent(vaultId)}/files/upsert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: docId, content }),
+      }).then((r) => {
+        if (!r.ok) throw new Error(`Falha ao salvar ${docId}`);
+      });
+      setNoteContents((prev) => ({ ...prev, [docId]: content }));
+      markLazyGitDirtyDoc(docId);
+      if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
+        bumpFullSnapshotDirtyForPush();
+      }
+    },
+    [vaultId, activeVaultMeta, markLazyGitDirtyDoc, bumpFullSnapshotDirtyForPush],
+  );
 
   const hasPendingRemoteSync = useCallback(
     (targetVaultId: string, targetMeta: VaultMeta | undefined) => {
@@ -1118,6 +1139,10 @@ export function VaultOpenWorkspace({
   const [backlinksPanelWidth, setBacklinksPanelWidth] = useState(
     defaultClientUiSettings.backlinksPanelWidth,
   );
+  const [agentChatPanelOpen, setAgentChatPanelOpen] = useState(false);
+  const [agentChatPanelWidth, setAgentChatPanelWidth] = useState(
+    defaultClientUiSettings.agentChatPanelWidth,
+  );
   const [isCommitListLoading, setIsCommitListLoading] = useState(false);
   const [isRestoringCommit, setIsRestoringCommit] = useState(false);
   const [recoverCommitsOpen, setRecoverCommitsOpen] = useState(false);
@@ -1214,14 +1239,19 @@ export function VaultOpenWorkspace({
     const clientUi = loadClientUiSettings();
     setExplorerSidebarWidth(clientUi.sidebarWidth);
     setBacklinksPanelWidth(clientUi.backlinksPanelWidth);
+    setAgentChatPanelWidth(clientUi.agentChatPanelWidth);
   }, []);
 
   useEffect(() => {
     setBacklinksPanelOpen(false);
+    setAgentChatPanelOpen(false);
   }, [vaultId]);
 
   useEffect(() => {
-    if (viewMode === "graph") setBacklinksPanelOpen(false);
+    if (viewMode === "graph") {
+      setBacklinksPanelOpen(false);
+      setAgentChatPanelOpen(false);
+    }
   }, [viewMode]);
 
   const defaultNewItemParent = useMemo(() => {
@@ -2322,6 +2352,23 @@ export function VaultOpenWorkspace({
               <span className="hidden sm:inline">Backlinks</span>
             </button>
           ) : null}
+          {viewMode === "editor" ? (
+            <button
+              type="button"
+              onClick={() => setAgentChatPanelOpen((o) => !o)}
+              title={agentChatPanelOpen ? "Fechar painel do agente" : "Abrir chat do agente"}
+              aria-expanded={agentChatPanelOpen}
+              aria-controls="vault-agent-chat-panel"
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
+                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                agentChatPanelOpen && "bg-muted text-foreground",
+              )}
+            >
+              <Bot className="size-3.5 shrink-0" aria-hidden />
+              <span className="hidden sm:inline">Agente</span>
+            </button>
+          ) : null}
           <button
             type="button"
             title="Nova nota (nova aba)"
@@ -2595,6 +2642,33 @@ export function VaultOpenWorkspace({
                 onRequestClose={() => setBacklinksPanelOpen(false)}
               />
             )}
+          </aside>
+        </>
+      ) : null}
+      {viewMode === "editor" && agentChatPanelOpen ? (
+        <>
+          <VaultAgentChatResizeHandle
+            panelWidth={agentChatPanelWidth}
+            onPanelWidthChange={setAgentChatPanelWidth}
+            onResizeEnd={(w) => {
+              setAgentChatPanelWidth(w);
+              patchClientUiSettings({ agentChatPanelWidth: w });
+            }}
+          />
+          <aside
+            id="vault-agent-chat-panel"
+            className="relative flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+            style={{ width: agentChatPanelWidth }}
+            role="complementary"
+            aria-label="Chat do Agente"
+          >
+            <VaultAgentChatPanel
+              vaultId={vaultId}
+              treeChildren={treeChildren}
+              noteContents={noteContents}
+              onRequestClose={() => setAgentChatPanelOpen(false)}
+              onApplyFileEdit={handleApplyAgentFileEdit}
+            />
           </aside>
         </>
       ) : null}

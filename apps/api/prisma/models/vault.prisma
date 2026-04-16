@@ -8,6 +8,8 @@ model Vault {
   isActive    Boolean  @default(true) @map("is_active")
   /// ID da deploy key no Gitea (chave publica registada para o agente na VPS). A privada nunca e guardada na base.
   agentDeployKeyGiteaId Int? @map("agent_deploy_key_gitea_id")
+  /// Token opaco para partilha pública (URL read-only). Null = não publicado.
+  publicAccessToken String? @unique @map("public_access_token")
   createdAt   DateTime @default(now()) @map("created_at")
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
