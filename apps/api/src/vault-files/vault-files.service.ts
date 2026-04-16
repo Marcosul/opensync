@@ -828,6 +828,15 @@ export class VaultFilesService {
       Array.isArray(files) ||
       Object.keys(files).length === 0;
 
+    if (process.env.OPENSYNC_VAULT_SYNC_DEBUG === '1') {
+      const keys = isEmptyPayload ? [] : Object.keys(files);
+      const emptyKeys = keys.filter((k) => (typeof files[k] === 'string' ? files[k].length === 0 : true));
+      const totalBytes = keys.reduce((a, k) => a + Buffer.byteLength(String(files[k] ?? ''), 'utf8'), 0);
+      this.logger.log(
+        `${colors.cyan}📦 applyTrustedSnapshot DEBUG${colors.reset} vault=${vaultId} emptyPayload=${isEmptyPayload} paths=${keys.length} emptyPaths=${emptyKeys.length} bytes≈${totalBytes} sample=${keys.slice(0, 10).join(',')}`,
+      );
+    }
+
     const syntheticHash = await this.prisma.$transaction(
       async (tx) => {
         await setLocalStatementTimeoutMs(tx, SNAPSHOT_TX_TIMEOUT_MS);

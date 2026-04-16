@@ -92,6 +92,7 @@ import {
   isGitLazyVaultTree,
   mergeLazyGitNoteContentsAfterRemoteTree,
 } from "@/lib/vault-git-tree-import";
+import { logVaultSync } from "@/lib/vault-sync-debug";
 import {
   flattenVaultTreeToSyncFiles,
   initialNoteContentsForLazyGitVault,
@@ -381,12 +382,14 @@ export function VaultOpenWorkspace({
       setGiteaSyncError(null);
       try {
         const mergedContents = { ...noteContentsRef.current };
+        let remotePathsForLazySync: string[] | null = null;
         if (isGitLazyVaultTree(treeRootRef.current)) {
           const { entries } = await fetchVaultGitTree(vaultId, { signal: ac.signal });
           if (ac.signal.aborted) return;
           const paths = entries
             .map((e) => e.path)
             .filter((p) => !isGitKeepMarkerPath(p));
+          remotePathsForLazySync = paths;
           const concurrency = 8;
           for (let i = 0; i < paths.length; i += concurrency) {
             if (ac.signal.aborted) return;
@@ -415,10 +418,52 @@ export function VaultOpenWorkspace({
             setNoteContents(mergedContents);
           });
         }
-        const files = flattenVaultTreeToSyncFiles(
+        const flatFiles = flattenVaultTreeToSyncFiles(
           treeRootRef.current,
           noteContentsRef.current,
         );
+        const files: Record<string, string> = { ...flatFiles };
+        const treeDocCount = collectLazyGitRepoRelativePaths(treeRootRef.current).length;
+        if (remotePathsForLazySync) {
+          let filledFromRef = 0;
+          for (const p of remotePathsForLazySync) {
+            const fromRef = noteContentsRef.current[p];
+            const fromFlat = flatFiles[p];
+            const merged =
+              fromRef !== undefined ? fromRef : fromFlat !== undefined ? fromFlat : "";
+            files[p] = merged;
+            if (fromRef !== undefined && fromRef !== fromFlat) filledFromRef++;
+          }
+          let patchedDirtyOnly = 0;
+          for (const docId of lazyGitDirtyDocIdsRef.current) {
+            if (files[docId] !== undefined) continue;
+            const v = noteContentsRef.current[docId];
+            if (v !== undefined) {
+              files[docId] = v;
+              patchedDirtyOnly++;
+            }
+          }
+          logVaultSync("POST /sync payload (lazy git)", {
+            vaultId,
+            treeDocCount,
+            manifestPaths: remotePathsForLazySync.length,
+            flatKeys: Object.keys(flatFiles).length,
+            mergedRefKeys: Object.keys(noteContentsRef.current).length,
+            outKeys: Object.keys(files).length,
+            filledFromRefVsFlat: filledFromRef,
+            patchedDirtyOnly,
+            emptyOutPaths: Object.entries(files)
+              .filter(([, c]) => c === "")
+              .map(([k]) => k)
+              .slice(0, 12),
+          });
+        } else {
+          logVaultSync("POST /sync payload (non-lazy tree)", {
+            vaultId,
+            flatKeys: Object.keys(flatFiles).length,
+            outKeys: Object.keys(files).length,
+          });
+        }
         const { commitHash } = await apiRequest<{ ok: boolean; commitHash: string }>(
           `/api/vaults/${encodeURIComponent(vaultId)}/sync`,
           {
@@ -875,6 +920,12 @@ export function VaultOpenWorkspace({
     // Sem startTransition: hidratação do blob é fonte de verdade do servidor; em transição o
     // onValueChange síncrono do Plate pode ganhar a corrida e gravar "" por cima (nota vazia após F5).
     const dirty = lazyGitDirtyDocIdsRef.current.has(activeTabId);
+    logVaultSync("blob→noteContents merge", {
+      activeTabId,
+      dirty,
+      dataLen: data.length,
+      hadNoteBefore: noteContentsRef.current[activeTabId] !== undefined,
+    });
     setNoteContents((prev) => {
       const cur = prev[activeTabId];
       if (cur === undefined) {
