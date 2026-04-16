@@ -123,30 +123,17 @@ export function isGitLazyVaultTree(tree: TreeEntry): boolean {
 /** Caminhos relativos no repo (docIds) a partir da arvore lazy atual; exclui placeholder. */
 /**
  * Depois de atualizar a árvore a partir do Gitea: funde `prev` com `nextBaseNoteContents`.
- *
- * @param evictRemoteCachedBodies — `true` quando o commit do remoto mudou: não reutiliza
- *   corpos de ficheiros remotos em `prev` (força blobs frescos). `false` na re-hidratação
- *   com o mesmo commit: mantém texto já carregado nesta sessão para não limpar
- *   `noteContents` e re-disparar o loader.
+ * Mantém corpos em `prev` para paths permitidos até `prefetchLazyGitVaultBlobs` (com
+ * `forceBlobRefetch`) trazer revisões novas — evita apagar a UI por corrida com `startTransition`.
  */
 export function mergeLazyGitNoteContentsAfterRemoteTree(
   prev: Record<string, string>,
   nextBaseNoteContents: Record<string, string>,
-  remotePaths: readonly string[],
   allowed: ReadonlySet<string>,
-  dirty: ReadonlySet<string>,
-  evictRemoteCachedBodies: boolean,
 ): Record<string, string> {
-  const remote = new Set(remotePaths);
   const merged: Record<string, string> = { ...nextBaseNoteContents };
   for (const [k, v] of Object.entries(prev)) {
     if (!allowed.has(k)) continue;
-    if (remote.has(k) && !dirty.has(k)) {
-      if (!evictRemoteCachedBodies) {
-        merged[k] = v;
-      }
-      continue;
-    }
     merged[k] = v;
   }
   return merged;

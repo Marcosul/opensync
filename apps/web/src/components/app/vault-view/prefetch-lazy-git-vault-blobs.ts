@@ -32,6 +32,8 @@ export async function prefetchLazyGitVaultBlobs(
     lastBlobFetchRef: MutableRefObject<{ tab: string; commit: string | null } | null>;
     blobsSnapshotCommitRef: MutableRefObject<string | null>;
     commitShort: string;
+    /** Quando o tail remoto mudou: voltar a buscar mesmo que já exista corpo em memória. */
+    forceBlobRefetch?: boolean;
   },
 ): Promise<void> {
   const paths = remotePaths
@@ -45,6 +47,7 @@ export async function prefetchLazyGitVaultBlobs(
     uiLatestRef,
     lastBlobFetchRef,
     blobsSnapshotCommitRef,
+    forceBlobRefetch = false,
   } = opts;
   blobsSnapshotCommitRef.current = opts.commitShort;
   for (let i = 0; i < paths.length; i += LAZY_GIT_BLOB_PREFETCH_CONCURRENCY) {
@@ -55,8 +58,13 @@ export async function prefetchLazyGitVaultBlobs(
       slice.map(async (p) => {
         if (signal.aborted) return;
         if (lazyGitDirtyDocIdsRef.current.has(p)) return;
-        if (noteContentsRef.current[p] !== undefined) return;
+        if (!forceBlobRefetch && noteContentsRef.current[p] !== undefined) return;
         try {
+          if (forceBlobRefetch) {
+            await queryClient.removeQueries({
+              queryKey: vaultGitBlobQueryKey(vaultId, p, opts.commitShort),
+            });
+          }
           const content = await queryClient.fetchQuery({
             queryKey: vaultGitBlobQueryKey(vaultId, p, opts.commitShort),
             queryFn: createVaultGitBlobQueryFn(vaultId, p, signal),

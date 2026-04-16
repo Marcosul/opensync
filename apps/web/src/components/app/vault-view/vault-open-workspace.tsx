@@ -330,27 +330,22 @@ export function VaultOpenWorkspace({
         if (allowed.size === 0) {
           allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
         }
-        const evictRemoteCachedBodies =
+        const forceBlobRefetch =
           lastLazyGitTreeCommitShortRef.current !== null &&
           remoteTail !== lastLazyGitTreeCommitShortRef.current;
+        const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+          noteContentsRef.current,
+          next.noteContents,
+          allowed,
+        );
+        noteContentsRef.current = merged;
+        lazyPersistedNoteContentsRef.current = merged;
         setLastGiteaCommitHash(remoteTail);
         remoteTailPollSeenRef.current = remoteTail;
         startTransition(() => {
           setTreeRoot(next.tree);
           setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
-          setNoteContents((prev) => {
-            const merged = mergeLazyGitNoteContentsAfterRemoteTree(
-              prev,
-              next.noteContents,
-              remotePaths,
-              allowed,
-              lazyGitDirtyDocIdsRef.current,
-              evictRemoteCachedBodies,
-            );
-            noteContentsRef.current = merged;
-            lazyPersistedNoteContentsRef.current = merged;
-            return merged;
-          });
+          setNoteContents(merged);
         });
         lastLazyGitTreeCommitShortRef.current = remoteTail;
         lastBlobFetchRef.current = null;
@@ -365,6 +360,7 @@ export function VaultOpenWorkspace({
           lastBlobFetchRef,
           blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
           commitShort: remoteTail,
+          forceBlobRefetch,
         });
       } catch {
         /* arvore local mantem-se; commit ja veio do push */
@@ -414,6 +410,7 @@ export function VaultOpenWorkspace({
             Object.assign(mergedContents, remapped);
           }
           noteContentsRef.current = mergedContents;
+          lazyPersistedNoteContentsRef.current = mergedContents;
           startTransition(() => {
             setNoteContents(mergedContents);
           });
@@ -491,24 +488,19 @@ export function VaultOpenWorkspace({
           if (allowed.size === 0) {
             allowed.add(GIT_LAZY_PLACEHOLDER_DOC_ID);
           }
-          const evictRemoteCachedBodies =
+          const forceBlobRefetch =
             lastLazyGitTreeCommitShortRef.current !== null &&
             remoteTail !== lastLazyGitTreeCommitShortRef.current;
+          const merged = mergeLazyGitNoteContentsAfterRemoteTree(
+            noteContentsRef.current,
+            next.noteContents,
+            allowed,
+          );
+          noteContentsRef.current = merged;
+          lazyPersistedNoteContentsRef.current = merged;
           startTransition(() => {
             setTreeRoot(next.tree);
-            setNoteContents((prev) => {
-              const merged = mergeLazyGitNoteContentsAfterRemoteTree(
-                prev,
-                next.noteContents,
-                remotePaths,
-                allowed,
-                lazyGitDirtyDocIdsRef.current,
-                evictRemoteCachedBodies,
-              );
-              noteContentsRef.current = merged;
-              lazyPersistedNoteContentsRef.current = merged;
-              return merged;
-            });
+            setNoteContents(merged);
             setExpandedPaths((prev) => pruneExpandedPathsToTree(next.tree, prev));
             setBookmarks([]);
             const mergedUi = mergeVaultUiAfterGitTreeRefresh(
@@ -530,6 +522,7 @@ export function VaultOpenWorkspace({
             lastBlobFetchRef,
             blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
             commitShort: remoteTail,
+            forceBlobRefetch,
           });
         } catch {
           /* mantem snapshot local */
