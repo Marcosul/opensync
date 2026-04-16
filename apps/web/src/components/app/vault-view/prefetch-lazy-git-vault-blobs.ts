@@ -13,10 +13,12 @@ import {
 } from "@/lib/vault-git-blob-query";
 import { isGitKeepMarkerPath } from "@/lib/vault-git-tree-import";
 
-export const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 8;
+export const LAZY_GIT_BLOB_PREFETCH_CONCURRENCY = 4;
 /** Prefetch em segundo plano dos separadores abertos (baixa prioridade, pouca concorrência). */
 export const LAZY_OPEN_TAB_PREFETCH_CONCURRENCY = 2;
 export const LAZY_OPEN_TAB_PREFETCH_MAX = 16;
+/** Limita o prefetch global para não competir com a abertura interativa do editor. */
+export const LAZY_GIT_BACKGROUND_PREFETCH_MAX = 64;
 
 export async function prefetchLazyGitVaultBlobs(
   vaultId: string,
@@ -48,10 +50,22 @@ export async function prefetchLazyGitVaultBlobs(
     blobsSnapshotCommitRef,
     forceBlobRefetch = false,
   } = opts;
+  const pathSet = new Set(paths);
+  const priorityPaths = [
+    uiLatestRef.current.activeTabId,
+    ...uiLatestRef.current.openTabs,
+  ].filter((id): id is string => Boolean(id) && pathSet.has(id));
+  const prioritySet = new Set(priorityPaths);
+  const orderedPaths = [
+    ...new Set(priorityPaths),
+    ...paths
+      .filter((p) => !prioritySet.has(p))
+      .slice(0, LAZY_GIT_BACKGROUND_PREFETCH_MAX),
+  ];
   blobsSnapshotCommitRef.current = opts.commitShort;
-  for (let i = 0; i < paths.length; i += LAZY_GIT_BLOB_PREFETCH_CONCURRENCY) {
+  for (let i = 0; i < orderedPaths.length; i += LAZY_GIT_BLOB_PREFETCH_CONCURRENCY) {
     if (signal.aborted) return;
-    const slice = paths.slice(i, i + LAZY_GIT_BLOB_PREFETCH_CONCURRENCY);
+    const slice = orderedPaths.slice(i, i + LAZY_GIT_BLOB_PREFETCH_CONCURRENCY);
     const updates: Record<string, string> = {};
     await Promise.all(
       slice.map(async (p) => {

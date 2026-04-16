@@ -81,6 +81,7 @@ import {
 import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
 import { connectVaultSse } from "@/lib/vault-sse-client";
 import {
+  createVaultGitBlobQueryFn,
   fetchVaultGitBlobQueryFn,
   LAZY_GIT_BLOB_GC_MS,
   LAZY_GIT_BLOB_STALE_MS,
@@ -1089,6 +1090,18 @@ export function VaultOpenWorkspace({
       if (id === activeTabId && viewMode === "editor" && openTabs.includes(id)) {
         return;
       }
+      if (
+        usesLazyGitRemote(vaultId, activeVaultMeta) &&
+        noteContentsRef.current[id] === undefined &&
+        id !== GIT_LAZY_PLACEHOLDER_DOC_ID
+      ) {
+        // Prioriza o ficheiro clicado antes do prefetch global em lote.
+        void queryClient.prefetchQuery({
+          queryKey: vaultGitBlobQueryKey(vaultId, id, blobCommitKey),
+          queryFn: createVaultGitBlobQueryFn(vaultId, id),
+          staleTime: LAZY_GIT_BLOB_STALE_MS,
+        });
+      }
       skipVaultUrlOpenEffectRef.current = true;
       window.setTimeout(() => {
         skipVaultUrlOpenEffectRef.current = false;
@@ -1096,7 +1109,16 @@ export function VaultOpenWorkspace({
       dispatchUi({ type: "open", id });
       void setVaultPageQuery({ file: id, folder: null, view: null });
     },
-    [activeTabId, viewMode, openTabs, setVaultPageQuery]
+    [
+      activeTabId,
+      viewMode,
+      openTabs,
+      vaultId,
+      activeVaultMeta,
+      blobCommitKey,
+      setVaultPageQuery,
+      queryClient,
+    ]
   );
 
   useEffect(() => {
