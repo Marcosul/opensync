@@ -10,13 +10,15 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
   Query,
+  Req,
   Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { VaultSseEvent } from '../contracts/vault-sse-event';
 import { VaultGitSyncService } from '../sync/vault-git-sync.service';
 import { VaultFilesService } from '../vault-files/vault-files.service';
@@ -173,6 +175,101 @@ export class VaultsController {
    * Usa versionamento otimista: passa base_version para detectar conflitos (409).
    * O cliente web deve ter lógica de merge em caso de 409 (igual ao app local).
    */
+  @Post(':id/files/prepare-put')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async preparePut(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body()
+    body: {
+      path?: string;
+      hash?: string;
+      size?: number;
+      base_version?: string | null;
+    },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const path = body?.path;
+    const hash = body?.hash;
+    const size = body?.size;
+    if (!path?.trim() || typeof hash !== 'string' || typeof size !== 'number') {
+      throw new BadRequestException('path, hash e size sao obrigatorios');
+    }
+    return this.vaultFiles.preparePut(vault.id, path, hash, size, body.base_version);
+  }
+
+  @Put(':id/files/uploads/:token')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 200, ttl: 60_000 } })
+  async uploadBody(
+    @Param('id') id: string,
+    @Param('token') token: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Req() req: FastifyRequest,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const raw = req.body;
+    const text = typeof raw === 'string' ? raw : Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw ?? '');
+    return this.vaultFiles.storeUploadBody(vault.id, token, text);
+  }
+
+  @Post(':id/files/commit-put')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async commitPut(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body() body: { upload_token?: string },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    const tok = body?.upload_token;
+    if (!tok?.trim()) {
+      throw new BadRequestException('upload_token obrigatorio');
+    }
+    return this.vaultFiles.commitPut(vault.id, tok);
+  }
+
+  @Post(':id/files/rename')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async rename(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body()
+    body: { from_path?: string; to_path?: string; base_version?: string },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.assertVaultWritableForUser(uid, id.trim());
+    if (!body?.from_path?.trim() || !body?.to_path?.trim() || body.base_version === undefined) {
+      throw new BadRequestException('from_path, to_path e base_version sao obrigatorios');
+    }
+    return this.vaultFiles.renameWithBaseVersion(vault.id, body.from_path, body.to_path, body.base_version);
+  }
+
+  @Post(':id/files/manifest-diff')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 40, ttl: 60_000 } })
+  async manifestDiff(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Body() body: { entries?: Array<{ path: string; hash: string; version: string }> },
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    const entries = body?.entries;
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException('entries deve ser um array');
+    }
+    return this.vaultFiles.manifestDiff(vault.id, entries);
+  }
+
   @Post(':id/files/upsert')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 300, ttl: 60_000 } })

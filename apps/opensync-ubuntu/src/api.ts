@@ -1,5 +1,5 @@
 import type { SyncConfig } from "./config";
-import type { ChangeRow, ManifestEntry } from "@opensync/sync";
+import { putFileViaPrepareCommit, type ChangeRow, type ManifestEntry } from "@opensync/sync";
 
 export type { ChangeRow, ManifestEntry };
 
@@ -140,33 +140,12 @@ export async function upsertFile(
   content: string,
   baseVersion: string | null,
 ): Promise<{ path: string; version: string }> {
-  const base = apiBase(cfg);
-  const url = `${base}/agent/vaults/${encodeURIComponent(cfg.vaultId)}/files/upsert`;
-  const body: { path: string; content: string; base_version?: string | null } = {
+  return putFileViaPrepareCommit(
+    { apiBase: apiBase(cfg), vaultId: cfg.vaultId, bearerToken: token },
     path,
     content,
-  };
-  if (baseVersion !== null) body.base_version = baseVersion;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (res.status === 409) {
-    const err = new Error(text || "Conflict") as Error & { status: number };
-    err.status = 409;
-    throw err;
-  }
-  if (!res.ok) {
-    const err = new Error(text || `upsert ${res.status}`) as Error & { status: number };
-    err.status = res.status;
-    throw err;
-  }
-  return JSON.parse(text) as { path: string; version: string };
+    baseVersion,
+  );
 }
 
 export async function getFileContent(
@@ -181,7 +160,7 @@ export async function getFileContent(
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `content ${res.status}`);
-  return JSON.parse(text) as { content: string; version: string };
+  return JSON.parse(text) as { content: string; version: string; file_id?: string };
 }
 
 export async function deleteFile(

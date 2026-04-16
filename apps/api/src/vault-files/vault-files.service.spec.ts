@@ -58,7 +58,10 @@ describe('VaultFilesService', () => {
               path: 'notas/a.md',
             },
           },
-          data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+          data: expect.objectContaining({
+            deletedAt: expect.any(Date),
+            contentHash: null,
+          }),
         }),
       );
       expect(tx.vaultFileChange.create).toHaveBeenCalledWith(

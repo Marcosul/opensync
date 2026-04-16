@@ -17,6 +17,9 @@ async function bootstrap() {
     app.setGlobalPrefix('api');
     app.useGlobalFilters(new prisma_exception_filter_1.PrismaKnownRequestExceptionFilter(), new prisma_exception_filter_1.PrismaValidationExceptionFilter());
     const fastify = app.getHttpAdapter().getInstance();
+    fastify.addContentTypeParser('text/plain', { parseAs: 'string' }, (_req, body, done) => {
+        done(null, body);
+    });
     fastify.get('/', async (_req, reply) => {
         console.log(`${colors.magenta}🏠 Alguém acessou a raiz (GET /) — redirecionando mentalmente para /docs ✨${colors.reset}`);
         return reply.status(200).type('application/json').send({

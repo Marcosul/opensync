@@ -6,7 +6,13 @@ import type { SyncConfig } from "./config";
 import * as api from "./api";
 import * as db from "./db";
 import type Database from "better-sqlite3";
-import { mergeTextPreserveBoth, shouldIgnore as syncShouldIgnore, type VaultSseEvent } from "@opensync/sync";
+import {
+  buildConflictCopyRelativePath,
+  mergeTextPreserveBoth,
+  shouldIgnore as syncShouldIgnore,
+  SuppressedWrites,
+  type VaultSseEvent,
+} from "@opensync/sync";
 
 const LOG = "[opensync]";
 const DEBOUNCE_MS = 3000;
@@ -148,6 +154,8 @@ async function fullReconcile(
   cfg: SyncConfig,
   token: string,
   remoteWriting: Set<string>,
+  suppressed: SuppressedWrites,
+  deviceId: string,
 ): Promise<void> {
   console.log(LOG, "full reconcile iniciado em", cfg.syncDir);
   let uploaded = 0;
@@ -172,7 +180,7 @@ async function fullReconcile(
         const h = db.hashContent(text);
         const row = db.fileState(database, rel);
         if (row?.last_synced_hash === h) continue; // já sincronizado
-        await syncLocalPath(database, cfg, token, rel, remoteWriting);
+        await syncLocalPath(database, cfg, token, rel, remoteWriting, suppressed, deviceId);
         uploaded++;
       }
     }
@@ -258,7 +266,8 @@ function connectSse(
 
 export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
   const database = db.openDb(cfg);
-  db.ensureDeviceId(database);
+  const deviceId = db.ensureDeviceId(database);
+  const suppressed = new SuppressedWrites();
   const syncRoot = cfg.syncDir;
 
   // Arquivos que estamos escrevendo via download remoto — o watcher ignora esses.
@@ -296,6 +305,7 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
         db.removePendingMergePush(database, rel);
         remoteWriting.add(rel);
         try {
+          suppressed.register(rel, mr.body);
           await fs.mkdir(path.dirname(abs), { recursive: true });
           await fs.writeFile(abs, mr.body, "utf8");
           db.upsertFileState(database, rel, mr.version, db.hashContent(mr.body));
@@ -305,6 +315,25 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
         console.log(
           `${C.cyan}${LOG}${C.reset} ${C.green}✅ pending merge push concluído${C.reset} ${C.dim}${rel} · v${mr.version}${C.reset}`,
         );
+      } else {
+        const conflictRel = buildConflictCopyRelativePath(rel, deviceId);
+        const conflictAbs = path.join(cfg.syncDir, conflictRel);
+        remoteWriting.add(rel);
+        try {
+          suppressed.register(conflictRel, local);
+          suppressed.register(rel, remote.content);
+          await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
+          await fs.writeFile(conflictAbs, local, "utf8");
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, remote.content, "utf8");
+          db.upsertFileState(database, rel, remote.version, db.hashContent(remote.content));
+          db.removePendingMergePush(database, rel);
+          console.warn(
+            `${C.yellow}${LOG}${C.reset} 📋 pending merge — cópia local: ${conflictRel} · canonical remoto v${remote.version}`,
+          );
+        } finally {
+          setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
+        }
       }
     }
   }
@@ -322,7 +351,7 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
         for (const rel of paths) {
           let outcome: "uploaded" | "noop" | "failed" = "failed";
           try {
-            outcome = await syncLocalPath(database, cfg, token, rel, remoteWriting);
+            outcome = await syncLocalPath(database, cfg, token, rel, remoteWriting, suppressed, deviceId);
           } finally {
             if (outcome === "uploaded") {
               setTimeout(() => pendingLocalUpload.delete(rel), POST_UPLOAD_POLL_GUARD_MS);
@@ -418,13 +447,23 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
               db.removePendingMergePush(database, ent.path);
               console.warn(LOG, "manifest:", ent.path, "local≠remoto — merge preservado", `v${versionOut}`);
             } else {
-              db.addPendingMergePush(database, ent.path);
-              console.error(
-                `${C.yellow}${LOG}${C.reset} ⚠️ manifest merge upsert esgotado (fila pending): ${ent.path}`,
+              const conflictRel = buildConflictCopyRelativePath(ent.path, deviceId);
+              const conflictAbs = path.join(cfg.syncDir, conflictRel);
+              suppressed.register(conflictRel, localExisting);
+              suppressed.register(ent.path, remote.content);
+              await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
+              await fs.writeFile(conflictAbs, localExisting, "utf8");
+              body = remote.content;
+              versionOut = remote.version;
+              hashOut = db.hashContent(remote.content);
+              db.removePendingMergePush(database, ent.path);
+              console.warn(
+                `${C.yellow}${LOG}${C.reset} 📋 manifest merge esgotado — cópia: ${conflictRel} · remoto em ${ent.path}`,
               );
             }
           }
         }
+        suppressed.register(ent.path, body);
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await fs.writeFile(abs, body, "utf8");
         db.upsertFileState(database, ent.path, versionOut, hashOut);
@@ -453,7 +492,7 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
       for (;;) {
         const { changes, next_cursor } = await api.fetchChanges(cfg, token, cursor);
         for (const ch of changes) {
-          await applyRemoteChange(database, cfg, token, ch, remoteWriting);
+          await applyRemoteChange(database, cfg, token, ch, remoteWriting, suppressed, deviceId);
           totalApplied++;
         }
         if (changes.length === 0) break;
@@ -488,8 +527,14 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
   // 1b. Alinhar com manifesto servidor (backfill Gitea→Postgres + ficheiros activos)
   await pullMissingFromRemoteManifest();
 
+  // 1c. Journal persistente — enviar alterações locais depois de alinhar remoto (offline-first)
+  for (const row of db.listUnprocessedJournal(database, 5000)) {
+    if (!shouldIgnore(cfg, row.path)) queue.add(row.path);
+  }
+  await processQueue();
+
   // 2. FULL_RECONCILE: enviar arquivos locais existentes ainda não sincronizados
-  await fullReconcile(database, cfg, token, remoteWriting);
+  await fullReconcile(database, cfg, token, remoteWriting, suppressed, deviceId);
 
   const watcher = chokidar.watch(syncRoot, {
     ignoreInitial: true,
@@ -499,6 +544,11 @@ export async function runSync(cfg: SyncConfig, token: string): Promise<void> {
   watcher.on("all", (_evt, absPath) => {
     const rel = path.relative(syncRoot, absPath).split(path.sep).join("/");
     if (!rel || rel.startsWith("..")) return;
+    try {
+      db.appendChangeJournal(database, rel, String(_evt));
+    } catch (e) {
+      console.warn(`${C.yellow}${LOG}${C.reset} journal append falhou: ${rel}`, e);
+    }
     schedule(rel);
   });
 
@@ -556,7 +606,48 @@ async function applyRemoteChange(
   token: string,
   ch: api.ChangeRow,
   remoteWriting: Set<string>,
+  suppressed: SuppressedWrites,
+  deviceId: string,
 ): Promise<void> {
+  if (ch.rename_from) {
+    const fromRel = ch.rename_from;
+    const toRel = ch.path;
+    const fromAbs = path.join(cfg.syncDir, fromRel);
+    const toAbs = path.join(cfg.syncDir, toRel);
+    const stFrom = db.fileState(database, fromRel);
+    const chRank = versionRank(ch.version);
+    const stRank = versionRank(stFrom?.remote_version);
+    if (stRank > chRank) {
+      console.log(LOG, "ignorar rename atrasado no feed:", fromRel, "→", toRel, `v${ch.version}`);
+      return;
+    }
+    if (stFrom && stFrom.remote_version === ch.version && !stFrom.is_deleted) {
+      return;
+    }
+    remoteWriting.add(fromRel);
+    remoteWriting.add(toRel);
+    try {
+      await fs.mkdir(path.dirname(toAbs), { recursive: true });
+      try {
+        await fs.rename(fromAbs, toAbs);
+      } catch {
+        /* origem inexistente — apenas alinhar estado */
+      }
+      const text = await readLocalFile(toAbs, cfg.maxFileSizeBytes);
+      const hashToStore = text !== null ? db.hashContent(text) : "";
+      db.renameFileStatePath(database, fromRel, toRel, ch.version, hashToStore);
+      db.markJournalProcessedForPath(database, fromRel);
+      db.markJournalProcessedForPath(database, toRel);
+      console.log(`${C.cyan}${LOG}${C.reset} ${C.green}remoto rename${C.reset} ${fromRel} → ${toRel} v${ch.version}`);
+    } finally {
+      setTimeout(() => {
+        remoteWriting.delete(fromRel);
+        remoteWriting.delete(toRel);
+      }, DEBOUNCE_MS + 1000);
+    }
+    return;
+  }
+
   const abs = path.join(cfg.syncDir, ch.path);
   const st = db.fileState(database, ch.path);
 
@@ -604,53 +695,63 @@ async function applyRemoteChange(
   let versionToStore = ch.version;
   let hashToStore = h;
 
-  try {
-    const local = await readLocalFile(abs, cfg.maxFileSizeBytes);
-    if (local !== null) {
-      const localH = db.hashContent(local);
-      const last = st?.last_synced_hash ?? null;
-      const hasUnsyncedLocalEdit =
-        (last !== null && localH !== last && localH !== h) ||
-        (last === null && localH !== h);
-      if (hasUnsyncedLocalEdit) {
-        bodyToWrite = mergeTextPreserveBoth(local, content);
-        hashToStore = db.hashContent(bodyToWrite);
-        const mr = await upsertMergedBodyWithRetry(
-          cfg,
-          token,
-          ch.path,
-          bodyToWrite,
-          ch.version,
-          cfg.maxFileSizeBytes,
-        );
-        if (mr.ok) {
-          bodyToWrite = mr.body;
-          versionToStore = mr.version;
-          hashToStore = db.hashContent(mr.body);
-          db.removePendingMergePush(database, ch.path);
-          console.warn(LOG, "conflito remoto+local:", ch.path, "merge enviado", `v${versionToStore}`);
-        } else {
-          db.addPendingMergePush(database, ch.path);
-          console.error(
-            `${C.yellow}${LOG}${C.reset} ⚠️ merge upsert esgotado (fila pending, gravado em disco): ${ch.path}`,
-          );
-        }
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
   remoteWriting.add(ch.path);
   try {
+    try {
+      const local = await readLocalFile(abs, cfg.maxFileSizeBytes);
+      if (local !== null) {
+        const localH = db.hashContent(local);
+        const last = st?.last_synced_hash ?? null;
+        const hasUnsyncedLocalEdit =
+          (last !== null && localH !== last && localH !== h) ||
+          (last === null && localH !== h);
+        if (hasUnsyncedLocalEdit) {
+          bodyToWrite = mergeTextPreserveBoth(local, content);
+          hashToStore = db.hashContent(bodyToWrite);
+          const mr = await upsertMergedBodyWithRetry(
+            cfg,
+            token,
+            ch.path,
+            bodyToWrite,
+            ch.version,
+            cfg.maxFileSizeBytes,
+          );
+          if (mr.ok) {
+            bodyToWrite = mr.body;
+            versionToStore = mr.version;
+            hashToStore = db.hashContent(mr.body);
+            db.removePendingMergePush(database, ch.path);
+            console.warn(LOG, "conflito remoto+local:", ch.path, "merge enviado", `v${versionToStore}`);
+          } else {
+            const conflictRel = buildConflictCopyRelativePath(ch.path, deviceId);
+            const conflictAbs = path.join(cfg.syncDir, conflictRel);
+            const localStr = local ?? "";
+            suppressed.register(conflictRel, localStr);
+            suppressed.register(ch.path, content);
+            await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
+            await fs.writeFile(conflictAbs, localStr, "utf8");
+            bodyToWrite = content;
+            versionToStore = ch.version;
+            hashToStore = h;
+            db.removePendingMergePush(database, ch.path);
+            console.warn(
+              `${C.yellow}${LOG}${C.reset} 📋 merge upsert esgotado — cópia local: ${conflictRel} · remoto em ${ch.path} v${ch.version}`,
+            );
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    suppressed.register(ch.path, bodyToWrite);
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, bodyToWrite, "utf8");
     db.upsertFileState(database, ch.path, versionToStore, hashToStore);
+    console.log(LOG, "remoto aplicado:", ch.path, `v${versionToStore}`);
   } finally {
     setTimeout(() => remoteWriting.delete(ch.path), DEBOUNCE_MS + 1000);
   }
-
-  console.log(LOG, "remoto aplicado:", ch.path, `v${versionToStore}`);
 }
 
 async function syncLocalPath(
@@ -659,6 +760,8 @@ async function syncLocalPath(
   token: string,
   rel: string,
   remoteWriting: Set<string>,
+  suppressed: SuppressedWrites,
+  deviceId: string,
 ): Promise<"uploaded" | "noop" | "failed"> {
   const abs = path.join(cfg.syncDir, rel);
   try {
@@ -673,13 +776,21 @@ async function syncLocalPath(
   if (text === null) return "failed";
 
   const h = db.hashContent(text);
+  if (suppressed.consumeIfMatch(rel, text)) {
+    db.markJournalProcessedForPath(database, rel);
+    return "noop";
+  }
   const row = db.fileState(database, rel);
-  if (row?.last_synced_hash === h) return "noop";
+  if (row?.last_synced_hash === h) {
+    db.markJournalProcessedForPath(database, rel);
+    return "noop";
+  }
 
   try {
     const baseVer = row?.remote_version ?? null;
     const res = await api.upsertFile(cfg, token, rel, text, baseVer && baseVer !== "" ? baseVer : null);
     db.upsertFileState(database, rel, res.version, h);
+    db.markJournalProcessedForPath(database, rel);
     console.log(LOG, "local enviado:", rel, `v${res.version}`);
     return "uploaded";
   } catch (e: unknown) {
@@ -706,19 +817,32 @@ async function syncLocalPath(
           db.removePendingMergePush(database, rel);
           console.warn(LOG, "409:", rel, "merge local+remoto enviado", `v${verOut}`);
         } else {
-          db.addPendingMergePush(database, rel);
-          console.error(
-            `${C.yellow}${LOG}${C.reset} ⚠️ 409 merge upsert esgotado (fila pending, merge em disco): ${rel}`,
+          const conflictRel = buildConflictCopyRelativePath(rel, deviceId);
+          const conflictAbs = path.join(cfg.syncDir, conflictRel);
+          suppressed.register(conflictRel, text);
+          suppressed.register(rel, remote.content);
+          await fs.mkdir(path.dirname(conflictAbs), { recursive: true });
+          await fs.writeFile(conflictAbs, text, "utf8");
+          db.removePendingMergePush(database, rel);
+          console.warn(
+            `${C.yellow}${LOG}${C.reset} 📋 409 merge esgotado — cópia local: ${conflictRel} · remoto em ${rel}`,
           );
         }
         remoteWriting.add(rel);
         try {
+          suppressed.register(rel, mr.ok ? mr.body : remote.content);
           await fs.mkdir(path.dirname(abs), { recursive: true });
-          await fs.writeFile(abs, mr.body, "utf8");
-          db.upsertFileState(database, rel, verOut, mergedH);
+          await fs.writeFile(abs, mr.ok ? mr.body : remote.content, "utf8");
+          db.upsertFileState(
+            database,
+            rel,
+            verOut,
+            mr.ok ? mergedH : db.hashContent(remote.content),
+          );
         } finally {
           setTimeout(() => remoteWriting.delete(rel), DEBOUNCE_MS + 1000);
         }
+        db.markJournalProcessedForPath(database, rel);
         return "uploaded";
       } catch (e2) {
         console.error(LOG, "falha ao resolver conflito", rel, e2);

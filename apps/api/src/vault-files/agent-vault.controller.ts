@@ -6,12 +6,14 @@ import {
   Headers,
   Param,
   Post,
+  Put,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { PrismaService } from '../common/prisma.service';
 import { resolveVaultWithAgentBearer } from '../common/agent-vault.resolve';
 import { VaultFilesService } from './vault-files.service';
@@ -111,6 +113,93 @@ export class AgentVaultController {
     const { vault } = await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
     await this.vaultFiles.backfillFromGiteaIfEmpty(vault.id, vault.giteaRepo);
     return this.vaultFiles.listTree(vault.id);
+  }
+
+  @Post(':vaultId/files/prepare-put')
+  @Throttle({ default: { limit: 180, ttl: 60_000 } })
+  async preparePut(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: {
+      path?: string;
+      hash?: string;
+      size?: number;
+      base_version?: string | null;
+    },
+  ) {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    const path = body?.path;
+    const hash = body?.hash;
+    const size = body?.size;
+    if (!path?.trim() || typeof hash !== 'string' || typeof size !== 'number') {
+      throw new BadRequestException('path, hash e size sao obrigatorios');
+    }
+    return this.vaultFiles.preparePut(vaultId.trim(), path, hash, size, body.base_version);
+  }
+
+  @Put(':vaultId/files/uploads/:token')
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
+  async uploadBody(
+    @Param('vaultId') vaultId: string,
+    @Param('token') token: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Req() req: FastifyRequest,
+  ) {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    const raw = req.body;
+    const text = typeof raw === 'string' ? raw : Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw ?? '');
+    return this.vaultFiles.storeUploadBody(vaultId.trim(), token, text);
+  }
+
+  @Post(':vaultId/files/commit-put')
+  @Throttle({ default: { limit: 180, ttl: 60_000 } })
+  async commitPut(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Body() body: { upload_token?: string },
+  ) {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    const tok = body?.upload_token;
+    if (!tok?.trim()) {
+      throw new BadRequestException('upload_token obrigatorio');
+    }
+    return this.vaultFiles.commitPut(vaultId.trim(), tok);
+  }
+
+  @Post(':vaultId/files/rename')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async rename(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Body()
+    body: { from_path?: string; to_path?: string; base_version?: string },
+  ) {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    if (!body?.from_path?.trim() || !body?.to_path?.trim() || body.base_version === undefined) {
+      throw new BadRequestException('from_path, to_path e base_version sao obrigatorios');
+    }
+    return this.vaultFiles.renameWithBaseVersion(
+      vaultId.trim(),
+      body.from_path,
+      body.to_path,
+      body.base_version,
+    );
+  }
+
+  @Post(':vaultId/files/manifest-diff')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async manifestDiff(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Body() body: { entries?: Array<{ path: string; hash: string; version: string }> },
+  ) {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    const entries = body?.entries;
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException('entries deve ser um array');
+    }
+    return this.vaultFiles.manifestDiff(vaultId.trim(), entries);
   }
 
   @Post(':vaultId/files/upsert')

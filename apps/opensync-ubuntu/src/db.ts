@@ -21,7 +21,49 @@ export function openDb(cfg: SyncConfig): Database.Database {
       value TEXT
     );
   `);
+  migrateJournal(db);
   return db;
+}
+
+/** Journal persistente (sync-engine v2): sobrevive a crash antes do debounce. */
+function migrateJournal(db: Database.Database): void {
+  const v = Number(db.pragma("user_version", { simple: true }) ?? 0);
+  if (v >= 1) return;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS change_journal (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      processed INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_change_journal_processed_seq ON change_journal(processed, seq);
+    CREATE INDEX IF NOT EXISTS idx_change_journal_path_processed ON change_journal(path, processed);
+  `);
+  db.pragma("user_version = 1");
+}
+
+export function appendChangeJournal(db: Database.Database, filePath: string, eventType: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO change_journal (path, event_type, created_at, processed) VALUES (?, ?, ?, 0)",
+  ).run(filePath, eventType, now);
+}
+
+export function listUnprocessedJournal(
+  db: Database.Database,
+  limit: number,
+): Array<{ seq: number; path: string; event_type: string }> {
+  return db
+    .prepare(
+      "SELECT seq, path, event_type FROM change_journal WHERE processed = 0 ORDER BY seq ASC LIMIT ?",
+    )
+    .all(limit) as Array<{ seq: number; path: string; event_type: string }>;
+}
+
+/** Após upload local bem-sucedido, marcar eventos pendentes desse path como processados. */
+export function markJournalProcessedForPath(db: Database.Database, filePath: string): void {
+  db.prepare("UPDATE change_journal SET processed = 1 WHERE path = ? AND processed = 0").run(filePath);
 }
 
 export function getMeta(db: Database.Database, key: string): string | null {
@@ -62,6 +104,26 @@ export function fileState(
     .get(path) as
     | { remote_version: string | null; last_synced_hash: string | null; is_deleted: number }
     | undefined;
+}
+
+/** Após rename remoto: move a linha `files_state` de `fromPath` para `toPath`. */
+export function renameFileStatePath(
+  db: Database.Database,
+  fromPath: string,
+  toPath: string,
+  remoteVersion: string,
+  lastSyncedHash: string,
+): void {
+  const now = new Date().toISOString();
+  db.prepare("DELETE FROM files_state WHERE path = ?").run(toPath);
+  const info = db.prepare("UPDATE files_state SET path = ? WHERE path = ?").run(toPath, fromPath);
+  if (info.changes === 0) {
+    upsertFileState(db, toPath, remoteVersion, lastSyncedHash);
+    return;
+  }
+  db.prepare(
+    `UPDATE files_state SET remote_version = ?, last_synced_hash = ?, last_synced_at = ?, is_deleted = 0 WHERE path = ?`,
+  ).run(remoteVersion, lastSyncedHash, now, toPath);
 }
 
 export function upsertFileState(

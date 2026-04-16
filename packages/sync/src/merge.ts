@@ -97,3 +97,17 @@ export function mergeTextAutomatic(
 export function mergeTextPreserveBoth(local: string, remote: string): string {
   return mergeTextAutomatic(local, remote, "local");
 }
+
+/**
+ * Merge 3-way leve quando existe ancestral comum (último sync).
+ * Casos triviais (só um lado divergiu da base); caso geral → `mergeTextPreserveBoth`.
+ */
+export function mergeTextThreeWayLite(base: string, local: string, remote: string): string {
+  const B = stripOpenSyncConflictMarkers(base.replace(/\r\n/g, "\n"));
+  const L = stripOpenSyncConflictMarkers(local.replace(/\r\n/g, "\n"));
+  const R = stripOpenSyncConflictMarkers(remote.replace(/\r\n/g, "\n"));
+  if (L === R) return L;
+  if (L === B) return R;
+  if (R === B) return L;
+  return mergeTextPreserveBoth(L, R);
+}

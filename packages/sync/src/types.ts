@@ -6,6 +6,8 @@ export type ChangeRow = {
   deleted: boolean;
   content: string | null;
   updated_at: string;
+  /** Caminho anterior quando o servidor emitiu `change_type: rename`. */
+  rename_from?: string | null;
 };
 
 /** Entrada no manifesto (GET /files/manifest) */
@@ -13,6 +15,8 @@ export type ManifestEntry = {
   path: string;
   size: number;
   version: string;
+  file_id?: string;
+  hash?: string | null;
 };
 
 /** Estado local por arquivo no SQLite do agente */

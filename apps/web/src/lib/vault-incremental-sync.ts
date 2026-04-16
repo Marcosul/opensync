@@ -11,6 +11,9 @@ export type SingleFileSyncResult =
 /**
  * Faz upsert incremental de um único arquivo do vault com conflict resolution.
  *
+ * O servidor também expõe prepare-put → PUT → commit-put (ver `docs/dev/sync-engine-v2.md`);
+ * o cliente web mantém POST `/files/upsert` por simplicidade e paridade de merge com 409.
+ *
  * Fluxo:
  * 1. Tenta upsert com base_version do syncState
  * 2. Se 409 (versão divergiu): busca conteúdo remoto, resolve com merge determinístico

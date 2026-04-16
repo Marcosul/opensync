@@ -2,6 +2,8 @@ model VaultFile {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   vaultId     String    @map("vault_id") @db.Uuid
   path        String
+  /// Identificador estável do ficheiro lógico (rename não altera; soft-delete + recriar pode reutilizar via API).
+  logicalFileId String  @map("logical_file_id") @db.Uuid
   content     String?   @db.Text
   /// Incrementa a cada mutação; usado em base_version / 409.
   version     Int       @default(0)
@@ -13,6 +15,7 @@ model VaultFile {
   vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
 
   @@unique([vaultId, path])
+  @@unique([vaultId, logicalFileId])
   @@index([vaultId])
   @@map("vault_files")
 }

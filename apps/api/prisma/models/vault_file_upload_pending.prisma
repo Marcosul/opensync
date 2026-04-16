@@ -1,0 +1,17 @@
+/// Sessão de upload em duas fases (prepare → PUT body → commit), sync-engine v2.
+model VaultFileUploadPending {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vaultId             String   @map("vault_id") @db.Uuid
+  path                String
+  baseVersion         Int?     @map("base_version")
+  expectedContentHash String   @map("expected_content_hash")
+  expectedSizeBytes   Int      @map("expected_size_bytes")
+  content             String?  @db.Text
+  expiresAt           DateTime @map("expires_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@index([vaultId, expiresAt])
+  @@map("vault_file_uploads_pending")
+}

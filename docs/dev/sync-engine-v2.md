@@ -409,57 +409,64 @@ async function processDirtyFile(path: string) {
 
 ## 10. API remota
 
-### Endpoints
+Os endpoints reais da API Nest usam prefixo `/api` e dois modos de autenticacao: **agente** (`Authorization: Bearer` com token do agente) e **web** (cabecalho `x-opensync-user-id` + rotas em `/api/vaults/...`). O fluxo prepare → PUT corpo → commit esta implementado para o agente e espelhado para o utilizador web.
 
-**Buscar mudancas remotas:**
+### Agente (Ubuntu / CLI)
+
+**Mudancas incrementais (feed):**
 
 ```
-GET /sync/v1/vaults/:vaultId/changes?cursor=123
+GET /api/agent/vaults/:vaultId/changes?cursor=0
+```
+
+Resposta: `changes[]` com `change_id`, `path`, `version`, `deleted`, `content`, `updated_at`, e opcionalmente `rename_from` quando o servidor emitiu um rename.
+
+**Manifesto (arvore + `file_id` + hash):**
+
+```
+GET /api/agent/vaults/:vaultId/files/manifest
+```
+
+**Upload em duas fases (hash SHA-256 hex do UTF-8, sem prefixo `sha256:`):**
+
+```
+POST /api/agent/vaults/:vaultId/files/prepare-put
 ```
 
 ```json
-{
-  "nextCursor": 130,
-  "changes": [
-    { "type": "put", "path": "a.md", "version": 11, "hash": "sha256:..." },
-    { "type": "delete", "path": "b.md", "version": 5 }
-  ]
-}
+{ "path": "a.md", "hash": "<64 hex>", "size": 1234, "base_version": "10" }
 ```
 
-**Preparar upload:**
+Respostas: `{ "status": "upload_required", "upload_token": "<uuid>", "expires_at": "..." }`, ou `{ "status": "already_exists", "new_version": "10" }`, ou HTTP 409 em conflito.
 
 ```
-POST /sync/v1/vaults/:vaultId/prepare-put
+PUT /api/agent/vaults/:vaultId/files/uploads/:uploadToken
+Content-Type: text/plain; charset=utf-8
+```
+
+Corpo: texto UTF-8 do ficheiro.
+
+```
+POST /api/agent/vaults/:vaultId/files/commit-put
 ```
 
 ```json
-{ "path": "a.md", "hash": "sha256:...", "size": 1234, "baseVersion": 10 }
+{ "upload_token": "<uuid>" }
 ```
 
-**Upload blob:**
+**Upsert directo (ainda suportado):** `POST .../files/upsert` com `path`, `content`, `base_version`.
 
-```
-PUT /sync/v1/uploads/:uploadToken
-```
+**Rename:** `POST .../files/rename` com `from_path`, `to_path`, `base_version`.
 
-**Confirmar commit:**
+**Manifest diff (planeamento):** `POST .../files/manifest-diff` com `{ "entries": [ { "path", "hash", "version" } ] }`.
 
-```
-POST /sync/v1/vaults/:vaultId/commit-put
-```
+### Web (browser)
 
-**Deletar:**
+Mesmas rotas sob `/api/vaults/:vaultId/files/...` (com escrita apenas quando o vault pertence ao utilizador).
 
-```
-POST /sync/v1/vaults/:vaultId/delete
-```
+### Nota sobre `/sync/v1/...`
 
-**Renomear:**
-
-```
-POST /sync/v1/vaults/:vaultId/rename
-```
+O prefixo conceptual `/sync/v1` no resto deste documento corresponde semanticamente a estes endpoints; nao e uma rota separada no servidor.
 
 ---
 
@@ -635,12 +642,15 @@ Conteudo criptografado (ou comprimido + criptografado). Armazenamento em disco, 
 
 | Area | Ficheiro | Notas |
 |------|----------|-------|
-| Sync engine (Ubuntu) | [`apps/opensync-ubuntu/src/engine.ts`](../../apps/opensync-ubuntu/src/engine.ts) | Watcher + poller + merge + retry 409. Base para refactoring. |
-| Merge textual | [`packages/sync/src/merge.ts`](../../packages/sync/src/merge.ts) | `mergeTextPreserveBoth`, `lineDiffChangeRatio`. Evoluir para 3-way. |
-| Sync web (incremental) | [`apps/web/src/lib/vault-incremental-sync.ts`](../../apps/web/src/lib/vault-incremental-sync.ts) | Upsert com 409 + merge. |
+| Sync engine (Ubuntu) | [`apps/opensync-ubuntu/src/engine.ts`](../../apps/opensync-ubuntu/src/engine.ts) | Watcher, SSE + poll, merge + retry 409, **cópia de conflito** quando merge esgota, **`SuppressedWrites`** antes de gravar remoto, ordem **pull → manifest → journal → fila → full reconcile**. |
+| SQLite local (Ubuntu) | [`apps/opensync-ubuntu/src/db.ts`](../../apps/opensync-ubuntu/src/db.ts) | `files_state`, `change_journal` (migracao `user_version`), `appendChangeJournal`, `markJournalProcessedForPath`. |
+| Pacote partilhado | [`packages/sync/src/suppressed-writes.ts`](../../packages/sync/src/suppressed-writes.ts), [`conflict-path.ts`](../../packages/sync/src/conflict-path.ts), [`sync-engine-types.ts`](../../packages/sync/src/sync-engine-types.ts), [`merge.ts`](../../packages/sync/src/merge.ts) (`mergeTextThreeWayLite`) | Loop suppression, nomes de ficheiro de conflito, tipos do contrato v2, merge 3-way leve para reutilizacao (web/agent). |
+| Sync web (incremental) | [`apps/web/src/lib/vault-incremental-sync.ts`](../../apps/web/src/lib/vault-incremental-sync.ts) | Upsert com 409 + merge (pode adoptar `mergeTextThreeWayLite` quando houver base). |
 | PRD | [`docs/PRDs/opensync_prd_FULL.md`](../PRDs/opensync_prd_FULL.md) | API-first, `last_synced_hash` ja existe. |
 
-**Evolucao:** refactoring para introduzir journal, manifest store, transport layer abstracto, fileId estavel; novos endpoints de API (prepare-put, commit-put, rename); modelo remoto com file_versions e sync_log.
+**Ainda por fazer (conforme plano):** endpoints `prepare-put` / `commit-put` / `rename` dedicados; `fileId` estavel no servidor (hoje o path e a chave em `vault_files`); manifest diff num POST; modelo `file_versions` separado em Postgres; E2EE.
+
+**Evolucao:** continuar a refinar transport abstracto na API Nest (sem quebrar `POST .../files/upsert` actual) e alinhar web + Ubuntu ao mesmo contrato de conflito.
 
 ---
 

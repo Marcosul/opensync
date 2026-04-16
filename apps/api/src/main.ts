@@ -28,6 +28,14 @@ async function bootstrap() {
   );
 
   const fastify = app.getHttpAdapter().getInstance();
+  // PUT de corpo UTF-8 em prepare-put → commit (sync-engine v2)
+  fastify.addContentTypeParser(
+    'text/plain',
+    { parseAs: 'string' },
+    (_req, body: string, done) => {
+      done(null, body);
+    },
+  );
   fastify.get('/', async (_req, reply) => {
     console.log(
       `${colors.magenta}🏠 Alguém acessou a raiz (GET /) — redirecionando mentalmente para /docs ✨${colors.reset}`,

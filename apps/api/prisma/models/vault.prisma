@@ -15,8 +15,9 @@ model Vault {
   commits   Commit[]
   fileLinks        FileLink[]
   auditLogs        AuditLog[]
-  vaultFiles       VaultFile[]
-  vaultFileChanges VaultFileChange[]
+  vaultFiles                VaultFile[]
+  vaultFileChanges          VaultFileChange[]
+  vaultFileUploadsPending   VaultFileUploadPending[]
   giteaMirrorState VaultGiteaMirrorState?
   vaultGraph       VaultGraph?
 
