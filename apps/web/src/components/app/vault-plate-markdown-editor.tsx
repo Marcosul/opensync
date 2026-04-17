@@ -28,9 +28,18 @@ import { cn } from "@/lib/utils";
 
 const OPENSYNC_WS_TYPE = "opensync-ws";
 
+/**
+ * O remark/mdast escapa espaços U+0020 “ambíguos” (p.ex. início de parágrafo após um heading)
+ * como `&#x20;` ou `&#32;`, o que polui o `.md` no disco. Normalizamos para espaço literal.
+ */
+function decodeAsciiSpaceCharRefs(md: string): string {
+  return md.replace(/&#x0*20;/gi, " ").replace(/&#0*32;/g, " ");
+}
+
 /** `[[id]]` → link Markdown para o importador tratar como hiperligação. */
 export function preprocessWikiLinksForPlate(source: string): string {
-  return source.replace(/\[\[([^\]]+)\]\]/g, (_, id: string) => {
+  const cleaned = decodeAsciiSpaceCharRefs(source);
+  return cleaned.replace(/\[\[([^\]]+)\]\]/g, (_, id: string) => {
     return `[${id}](wikilink:${encodeURIComponent(id)})`;
   });
 }
@@ -44,7 +53,7 @@ export function postprocessWikiLinksFromPlate(md: string): string {
 }
 
 function normalizeVaultMarkdown(md: string): string {
-  return md.replace(/\r\n/g, "\n").trimEnd();
+  return decodeAsciiSpaceCharRefs(md.replace(/\r\n/g, "\n")).trimEnd();
 }
 
 /** Plate → Markdown (GFM) via {@link https://platejs.org/docs/markdown MarkdownPlugin}. */
