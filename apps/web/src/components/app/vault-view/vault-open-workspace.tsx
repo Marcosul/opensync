@@ -1946,13 +1946,16 @@ export function VaultOpenWorkspace({
   }, [vaultId, router]);
 
   const restoreFromCommit = useCallback(
-    async (commit: string) => {
-      if (!isBackendSyncVaultId(vaultId)) return;
+    async (
+      commit: string,
+    ): Promise<
+      | { ok: true; short: string; importedFiles: number }
+      | { ok: false; message: string }
+    > => {
+      if (!isBackendSyncVaultId(vaultId)) {
+        return { ok: false, message: "Este cofre não usa sync com o servidor." };
+      }
       const short = commit.slice(0, 12);
-      const confirmed = window.confirm(
-        `Restaurar o vault para o commit ${short}? O estado atual remoto sera substituido.`,
-      );
-      if (!confirmed) return;
       setIsRestoringCommit(true);
       try {
         const result = await apiRequest<{
@@ -1964,14 +1967,11 @@ export function VaultOpenWorkspace({
           body: { commit },
         });
         await scheduleGitTreeRefresh(vaultId, activeVaultMeta);
-        setVersionHistoryPanelOpen(false);
-        window.alert(
-          `Restauracao concluida a partir de ${short}. ${result.importedFiles} ficheiros restaurados.`,
-        );
+        return { ok: true, short, importedFiles: result.importedFiles };
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Falha ao restaurar commit.";
-        window.alert(message);
+        return { ok: false, message };
       } finally {
         setIsRestoringCommit(false);
       }
@@ -2765,6 +2765,7 @@ export function VaultOpenWorkspace({
               onCollapsedChange={setVersionHistoryPanelCollapsed}
               onRequestClose={() => setVersionHistoryPanelOpen(false)}
               onRestoreCommit={restoreFromCommit}
+              onRestoreSuccessDismiss={() => setVersionHistoryPanelOpen(false)}
               isRestoring={isRestoringCommit}
             />
           </aside>

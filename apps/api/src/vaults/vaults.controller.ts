@@ -176,6 +176,30 @@ export class VaultsController {
     return { commits };
   }
 
+  /**
+   * Diff de um commit (query `sha`) — preferido pelo web; evita segmentos dinâmicos
+   * aninhados (`commits/:sha/diff`) que alguns proxies / stacks devolvem como 404.
+   */
+  @Get(':id/git/commit-diff')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async getGitCommitDiffByQuery(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+    @Query('sha') shaRaw?: string,
+  ) {
+    const uid = this.requireUserId(userId);
+    const sha = shaRaw?.trim();
+    if (!sha) {
+      throw new BadRequestException('Query sha e obrigatoria');
+    }
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    return this.vaultFiles.getRepoCommitDiff(vault.giteaRepo, sha);
+  }
+
   @Get(':id/git/commits/:sha/diff')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })

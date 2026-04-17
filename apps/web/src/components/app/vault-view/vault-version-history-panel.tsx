@@ -7,6 +7,11 @@ import { apiRequest } from "@/api/rest/generic";
 import { fetchVaultGitCommitDiff } from "@/lib/vault-git-client";
 import { cn } from "@/lib/utils";
 
+import {
+  VaultVersionHistoryRestoreDialog,
+  type VaultRestoreCommitResult,
+} from "./vault-version-history-restore-dialog";
+
 export type VaultCommitRow = {
   sha: string;
   message: string;
@@ -29,7 +34,9 @@ type Props = {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   onRequestClose: () => void;
-  onRestoreCommit: (sha: string) => Promise<void>;
+  onRestoreCommit: (sha: string) => Promise<VaultRestoreCommitResult>;
+  /** Após sucesso, quando o utilizador fecha o diálogo (fecha o painel lateral). */
+  onRestoreSuccessDismiss: () => void;
   isRestoring: boolean;
 };
 
@@ -39,8 +46,10 @@ export function VaultVersionHistoryPanel({
   onCollapsedChange,
   onRequestClose,
   onRestoreCommit,
+  onRestoreSuccessDismiss,
   isRestoring,
 }: Props) {
+  const [restoreDialogSha, setRestoreDialogSha] = useState<string | null>(null);
   const [commits, setCommits] = useState<VaultCommitRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -59,6 +68,7 @@ export function VaultVersionHistoryPanel({
     setPatch(null);
     setPatchTruncated(false);
     setDiffError(null);
+    setRestoreDialogSha(null);
     (async () => {
       try {
         const result = await apiRequest<{ commits: VaultCommitRow[] }>(
@@ -244,14 +254,14 @@ export function VaultVersionHistoryPanel({
           <div className="shrink-0 border-t border-border p-2">
             <button
               type="button"
-              disabled={!selectedSha || isRestoring || diffLoading}
+              disabled={!selectedSha || isRestoring || diffLoading || restoreDialogSha !== null}
               onClick={() => {
-                if (selectedSha) void onRestoreCommit(selectedSha);
+                if (selectedSha) setRestoreDialogSha(selectedSha);
               }}
               className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-2 py-2 font-mono text-xs font-medium text-primary-foreground disabled:pointer-events-none disabled:opacity-40"
             >
               {isRestoring ? (
-                <Loader2 className="size-3.5 animate-spin shrink-0" aria-hidden />
+                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
               ) : (
                 <RotateCcw className="size-3.5 shrink-0" aria-hidden />
               )}
@@ -260,6 +270,13 @@ export function VaultVersionHistoryPanel({
           </div>
         </>
       ) : null}
+
+      <VaultVersionHistoryRestoreDialog
+        commitSha={restoreDialogSha}
+        onCommitShaChange={setRestoreDialogSha}
+        restore={onRestoreCommit}
+        onRestoreSuccessDismiss={onRestoreSuccessDismiss}
+      />
     </div>
   );
 }

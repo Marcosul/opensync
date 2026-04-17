@@ -42,8 +42,9 @@ export async function fetchVaultGitCommitDiff(
   sha: string,
   opts?: { signal?: AbortSignal },
 ): Promise<{ patch: string; truncated: boolean }> {
+  const q = new URLSearchParams({ sha: sha.trim() });
   return apiRequest(
-    `/api/vaults/${encodeURIComponent(vaultId)}/git/commits/${encodeURIComponent(sha.trim())}/diff`,
+    `/api/vaults/${encodeURIComponent(vaultId)}/git/commit-diff?${q.toString()}`,
     { signal: opts?.signal },
   );
 }

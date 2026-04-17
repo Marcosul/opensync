@@ -4,15 +4,17 @@ import { backendRequest } from "@/app/api/_lib/backend-api";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
 export async function GET(
-  _request: Request,
-  ctx: { params: Promise<{ id: string; sha: string }> },
+  request: Request,
+  ctx: { params: Promise<{ id: string }> },
 ) {
-  const { id, sha } = await ctx.params;
+  const { id } = await ctx.params;
   if (!id?.trim()) {
     return NextResponse.json({ error: "Vault id invalido" }, { status: 400 });
   }
-  if (!sha?.trim()) {
-    return NextResponse.json({ error: "Commit sha invalido" }, { status: 400 });
+  const url = new URL(request.url);
+  const sha = url.searchParams.get("sha")?.trim();
+  if (!sha) {
+    return NextResponse.json({ error: "Query sha e obrigatoria" }, { status: 400 });
   }
   const supabase = await createSupabaseServerClient();
   const {
@@ -23,8 +25,9 @@ export async function GET(
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
   }
   try {
+    const qs = `?sha=${encodeURIComponent(sha)}`;
     const result = await backendRequest<{ patch: string; truncated: boolean }>(
-      `/vaults/${encodeURIComponent(id)}/git/commits/${encodeURIComponent(sha.trim())}/diff`,
+      `/vaults/${encodeURIComponent(id)}/git/commit-diff${qs}`,
       user,
       { method: "GET" },
     );
