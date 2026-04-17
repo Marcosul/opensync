@@ -9,6 +9,8 @@ export type ClientUiSettings = {
   backlinksPanelWidth: number;
   /** Largura do painel de chat de agente (modo editor), quando aberto. */
   agentChatPanelWidth: number;
+  /** Largura do painel de histórico de versões (Gitea), quando expandido. */
+  versionHistoryPanelWidth: number;
   /** Mesmos valores que `UserSettings["baseTheme"]` — no JSON fica como `theme`. */
   theme: UserSettings["baseTheme"];
 };
@@ -25,10 +27,15 @@ const DEFAULT_AGENT_CHAT_PANEL_WIDTH = 360;
 export const AGENT_CHAT_PANEL_MIN_WIDTH = 280;
 export const AGENT_CHAT_PANEL_MAX_WIDTH = 640;
 
+const DEFAULT_VERSION_HISTORY_PANEL_WIDTH = 320;
+export const VERSION_HISTORY_PANEL_MIN_WIDTH = 260;
+export const VERSION_HISTORY_PANEL_MAX_WIDTH = 560;
+
 export const defaultClientUiSettings: ClientUiSettings = {
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   backlinksPanelWidth: DEFAULT_BACKLINKS_PANEL_WIDTH,
   agentChatPanelWidth: DEFAULT_AGENT_CHAT_PANEL_WIDTH,
+  versionHistoryPanelWidth: DEFAULT_VERSION_HISTORY_PANEL_WIDTH,
   theme: "system",
 };
 
@@ -47,6 +54,12 @@ export function clampBacklinksPanelWidth(n: number): number {
 export function clampAgentChatPanelWidth(n: number): number {
   return Math.round(
     Math.min(AGENT_CHAT_PANEL_MAX_WIDTH, Math.max(AGENT_CHAT_PANEL_MIN_WIDTH, n)),
+  );
+}
+
+export function clampVersionHistoryPanelWidth(n: number): number {
+  return Math.round(
+    Math.min(VERSION_HISTORY_PANEL_MAX_WIDTH, Math.max(VERSION_HISTORY_PANEL_MIN_WIDTH, n)),
   );
 }
 
@@ -79,8 +92,19 @@ export function loadClientUiSettings(): ClientUiSettings {
       typeof agentChatRaw === "number" && Number.isFinite(agentChatRaw)
         ? clampAgentChatPanelWidth(agentChatRaw)
         : defaultClientUiSettings.agentChatPanelWidth;
+    const versionHistoryRaw = o.versionHistoryPanelWidth;
+    const versionHistoryPanelWidth =
+      typeof versionHistoryRaw === "number" && Number.isFinite(versionHistoryRaw)
+        ? clampVersionHistoryPanelWidth(versionHistoryRaw)
+        : defaultClientUiSettings.versionHistoryPanelWidth;
     const theme = isBaseTheme(o.theme) ? o.theme : defaultClientUiSettings.theme;
-    return { sidebarWidth, backlinksPanelWidth, agentChatPanelWidth, theme };
+    return {
+      sidebarWidth,
+      backlinksPanelWidth,
+      agentChatPanelWidth,
+      versionHistoryPanelWidth,
+      theme,
+    };
   } catch {
     return { ...defaultClientUiSettings };
   }
@@ -109,6 +133,17 @@ export function patchClientUiSettings(partial: Partial<ClientUiSettings>): void 
     typeof partial.agentChatPanelWidth === "number" && Number.isFinite(partial.agentChatPanelWidth)
       ? clampAgentChatPanelWidth(partial.agentChatPanelWidth)
       : prev.agentChatPanelWidth;
+  const versionHistoryPanelWidth =
+    typeof partial.versionHistoryPanelWidth === "number" &&
+    Number.isFinite(partial.versionHistoryPanelWidth)
+      ? clampVersionHistoryPanelWidth(partial.versionHistoryPanelWidth)
+      : prev.versionHistoryPanelWidth;
   const theme = partial.theme !== undefined && isBaseTheme(partial.theme) ? partial.theme : prev.theme;
-  saveClientUiSettings({ sidebarWidth, backlinksPanelWidth, agentChatPanelWidth, theme });
+  saveClientUiSettings({
+    sidebarWidth,
+    backlinksPanelWidth,
+    agentChatPanelWidth,
+    versionHistoryPanelWidth,
+    theme,
+  });
 }

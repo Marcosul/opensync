@@ -32,6 +32,9 @@ export const VAULT_READ_MAX_BLOB_BYTES = 1024 * 1024;
 /** Máximo de entradas devolvidas por `git/tree`. */
 export const VAULT_READ_MAX_TREE_ENTRIES = 5000;
 
+/** Tamanho máximo do patch UTF-8 em `diffRepoCommit` (resposta API). */
+export const VAULT_COMMIT_DIFF_MAX_BYTES = 512 * 1024;
+
 /** Tamanho máximo de cada `write()` ao gravar um ficheiro no clone do mirror (UTF-8 em Buffer). */
 export const VAULT_MIRROR_DISK_WRITE_CHUNK_BYTES = 512 * 1024;
 
@@ -570,6 +573,71 @@ export class VaultGitSyncService {
         `${colors.red}❌ [restore] falha ao listar commits${colors.reset} repo=${repoFullName} err=${hint}`,
       );
       throw new BadGatewayException(`Falha ao listar commits no Gitea: ${hint}`);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+        /* ignore */
+      });
+    }
+  }
+
+  /**
+   * Patch unificado do commit (mensagem + diff), clone raso alinhado a `listRepoCommits`.
+   */
+  async diffRepoCommit(
+    repoFullName: string,
+    commitSha: string,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    const sha = commitSha.trim();
+    if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+      throw new BadRequestException('commit sha invalido');
+    }
+    const cloneUrl = this.gitea.buildAuthenticatedCloneUrl(repoFullName);
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'opensync-vault-diff-commit-'));
+    try {
+      const git = simpleGit({ baseDir: tmpRoot });
+      await git.clone(cloneUrl, '.', ['--depth', '100']);
+      let raw: string;
+      try {
+        raw = await git.raw(['show', '--no-color', '--pretty=medium', sha]);
+      } catch (err) {
+        const hint = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `${colors.red}❌ [diff] git show falhou${colors.reset} repo=${repoFullName} sha=${sha.slice(0, 12)} err=${hint}`,
+        );
+        throw new BadGatewayException(
+          `Nao foi possivel obter o diff deste commit (repo raso ou commit desconhecido): ${hint}`,
+        );
+      }
+      if (raw.includes('\0')) {
+        throw new BadRequestException('Diff contem dados binarios nao suportados');
+      }
+      const bytes = Buffer.byteLength(raw, 'utf8');
+      if (bytes <= VAULT_COMMIT_DIFF_MAX_BYTES) {
+        this.logger.log(
+          `${colors.cyan}📎 [diff] patch${colors.reset} repo=${repoFullName} sha=${sha.slice(0, 12)} bytes=${bytes} truncated=false`,
+        );
+        return { patch: raw, truncated: false };
+      }
+      const suffix = '\n\n[... diff truncado pelo servidor ...]\n';
+      const maxBody = VAULT_COMMIT_DIFF_MAX_BYTES - Buffer.byteLength(suffix, 'utf8');
+      let cut = raw;
+      while (Buffer.byteLength(cut, 'utf8') > maxBody) {
+        cut = cut.slice(0, Math.floor(cut.length * 0.92));
+      }
+      cut = cut + suffix;
+      this.logger.log(
+        `${colors.yellow}📎 [diff] patch truncado${colors.reset} repo=${repoFullName} sha=${sha.slice(0, 12)} origBytes=${bytes}`,
+      );
+      return { patch: cut, truncated: true };
+    } catch (err) {
+      if (err instanceof BadRequestException || err instanceof BadGatewayException) {
+        throw err;
+      }
+      const hint = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${colors.red}❌ [diff] falha inesperada${colors.reset} repo=${repoFullName} err=${hint}`,
+      );
+      throw new BadGatewayException(`Falha ao calcular diff no Gitea: ${hint}`);
     } finally {
       await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
         /* ignore */

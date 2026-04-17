@@ -37,6 +37,17 @@ export async function fetchVaultAllContents(
   );
 }
 
+export async function fetchVaultGitCommitDiff(
+  vaultId: string,
+  sha: string,
+  opts?: { signal?: AbortSignal },
+): Promise<{ patch: string; truncated: boolean }> {
+  return apiRequest(
+    `/api/vaults/${encodeURIComponent(vaultId)}/git/commits/${encodeURIComponent(sha.trim())}/diff`,
+    { signal: opts?.signal },
+  );
+}
+
 export async function fetchPublicVaultGitTree(
   token: string,
   opts?: { ref?: string; signal?: AbortSignal },

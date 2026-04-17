@@ -176,6 +176,22 @@ export class VaultsController {
     return { commits };
   }
 
+  @Get(':id/git/commits/:sha/diff')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async getGitCommitDiff(
+    @Param('id') id: string,
+    @Param('sha') sha: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    return this.vaultFiles.getRepoCommitDiff(vault.giteaRepo, sha);
+  }
+
   @Post(':id/git/restore')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

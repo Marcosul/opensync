@@ -1155,6 +1155,13 @@ export class VaultFilesService {
     return this.vaultGitSync.listRepoCommits(giteaRepo, limit);
   }
 
+  async getRepoCommitDiff(
+    giteaRepo: string,
+    commitSha: string,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    return this.vaultGitSync.diffRepoCommit(giteaRepo, commitSha);
+  }
+
   async restoreSnapshotFromRepoCommit(
     vaultId: string,
     giteaRepo: string,

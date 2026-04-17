@@ -12,13 +12,13 @@ import {
   ChevronDown,
   FileCode2,
   FileDown,
+  History,
   Link2,
   ListX,
   Loader2,
   MoreVertical,
   PanelLeft,
   Plus,
-  RotateCcw,
   Share2,
 } from "lucide-react";
 import Link from "next/link";
@@ -117,6 +117,8 @@ import {
 } from "@/lib/client-ui-settings";
 import { VaultAgentChatPanel } from "./vault-agent-chat-panel";
 import { VaultAgentChatResizeHandle } from "./vault-agent-chat-resize-handle";
+import { VaultVersionHistoryPanel } from "./vault-version-history-panel";
+import { VaultVersionHistoryResizeHandle } from "./vault-version-history-resize-handle";
 import { findDirTreePathByRelativePath } from "@/lib/vault-url-explorer";
 import {
   downloadVaultTextFile,
@@ -1216,12 +1218,12 @@ export function VaultOpenWorkspace({
   const [agentChatPanelWidth, setAgentChatPanelWidth] = useState(
     defaultClientUiSettings.agentChatPanelWidth,
   );
-  const [isCommitListLoading, setIsCommitListLoading] = useState(false);
   const [isRestoringCommit, setIsRestoringCommit] = useState(false);
-  const [recoverCommitsOpen, setRecoverCommitsOpen] = useState(false);
-  const [recoverCommits, setRecoverCommits] = useState<
-    Array<{ sha: string; message: string; authorName: string; authoredAt: string }>
-  >([]);
+  const [versionHistoryPanelOpen, setVersionHistoryPanelOpen] = useState(false);
+  const [versionHistoryPanelCollapsed, setVersionHistoryPanelCollapsed] = useState(false);
+  const [versionHistoryPanelWidth, setVersionHistoryPanelWidth] = useState(
+    defaultClientUiSettings.versionHistoryPanelWidth,
+  );
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
   const [editorSourceMode, setEditorSourceMode] = useState(false);
@@ -1313,17 +1315,21 @@ export function VaultOpenWorkspace({
     setExplorerSidebarWidth(clientUi.sidebarWidth);
     setBacklinksPanelWidth(clientUi.backlinksPanelWidth);
     setAgentChatPanelWidth(clientUi.agentChatPanelWidth);
+    setVersionHistoryPanelWidth(clientUi.versionHistoryPanelWidth);
   }, []);
 
   useEffect(() => {
     setBacklinksPanelOpen(false);
     setAgentChatPanelOpen(false);
+    setVersionHistoryPanelOpen(false);
+    setVersionHistoryPanelCollapsed(false);
   }, [vaultId]);
 
   useEffect(() => {
     if (viewMode === "graph") {
       setBacklinksPanelOpen(false);
       setAgentChatPanelOpen(false);
+      setVersionHistoryPanelOpen(false);
     }
   }, [viewMode]);
 
@@ -1939,24 +1945,6 @@ export function VaultOpenWorkspace({
     }
   }, [vaultId, router]);
 
-  const openRecoverCommits = useCallback(async () => {
-    if (!isBackendSyncVaultId(vaultId)) return;
-    setIsCommitListLoading(true);
-    try {
-      const result = await apiRequest<{
-        commits: Array<{ sha: string; message: string; authorName: string; authoredAt: string }>;
-      }>(`/api/vaults/${encodeURIComponent(vaultId)}/git/commits?limit=20`);
-      setRecoverCommits(result.commits);
-      setRecoverCommitsOpen(true);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Falha ao carregar commits.";
-      window.alert(message);
-    } finally {
-      setIsCommitListLoading(false);
-    }
-  }, [vaultId]);
-
   const restoreFromCommit = useCallback(
     async (commit: string) => {
       if (!isBackendSyncVaultId(vaultId)) return;
@@ -1976,7 +1964,7 @@ export function VaultOpenWorkspace({
           body: { commit },
         });
         await scheduleGitTreeRefresh(vaultId, activeVaultMeta);
-        setRecoverCommitsOpen(false);
+        setVersionHistoryPanelOpen(false);
         window.alert(
           `Restauracao concluida a partir de ${short}. ${result.importedFiles} ficheiros restaurados.`,
         );
@@ -2510,19 +2498,27 @@ export function VaultOpenWorkspace({
           {isBackendSyncVaultId(vaultId) ? (
             <button
               type="button"
-              title="Recuperar de um commit (Gitea)"
-              onClick={() => {
-                void openRecoverCommits();
-              }}
-              disabled={isCommitListLoading || isRestoringCommit}
-              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-              aria-label="Recuperar de commit"
-            >
-              {isCommitListLoading || isRestoringCommit ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RotateCcw className="size-4" />
+              title={
+                versionHistoryPanelOpen
+                  ? "Fechar histórico de versões (Gitea)"
+                  : "Abrir histórico de versões (Gitea)"
+              }
+              onClick={() => setVersionHistoryPanelOpen((o) => !o)}
+              disabled={isRestoringCommit}
+              aria-expanded={versionHistoryPanelOpen}
+              aria-controls="vault-version-history-panel"
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
+                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                versionHistoryPanelOpen && "bg-muted text-foreground",
               )}
+            >
+              {isRestoringCommit ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <History className="size-3.5 shrink-0" aria-hidden />
+              )}
+              <span className="hidden sm:inline">Versões</span>
             </button>
           ) : null}
           <Menu.Root>
@@ -2741,6 +2737,39 @@ export function VaultOpenWorkspace({
           <TagsPanel topTags={topTags} onSelect={browseSelectFile} />
         </aside>
       ) : null}
+      {/* Histórico Gitea: à direita do editor, antes de backlinks/agente */}
+      {viewMode === "editor" && versionHistoryPanelOpen ? (
+        <>
+          {!versionHistoryPanelCollapsed ? (
+            <VaultVersionHistoryResizeHandle
+              panelWidth={versionHistoryPanelWidth}
+              onPanelWidthChange={setVersionHistoryPanelWidth}
+              onResizeEnd={(w) => {
+                setVersionHistoryPanelWidth(w);
+                patchClientUiSettings({ versionHistoryPanelWidth: w });
+              }}
+            />
+          ) : null}
+          <aside
+            id="vault-version-history-panel"
+            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+            style={{
+              width: versionHistoryPanelCollapsed ? 44 : versionHistoryPanelWidth,
+            }}
+            role="complementary"
+            aria-label="Histórico de versões Gitea"
+          >
+            <VaultVersionHistoryPanel
+              vaultId={vaultId}
+              collapsed={versionHistoryPanelCollapsed}
+              onCollapsedChange={setVersionHistoryPanelCollapsed}
+              onRequestClose={() => setVersionHistoryPanelOpen(false)}
+              onRestoreCommit={restoreFromCommit}
+              isRestoring={isRestoringCommit}
+            />
+          </aside>
+        </>
+      ) : null}
       {viewMode === "editor" && backlinksPanelOpen ? (
         <>
           <VaultBacklinksResizeHandle
@@ -2822,50 +2851,6 @@ export function VaultOpenWorkspace({
         onCancel={() => setExplorerDeleteItems(null)}
         onConfirm={confirmExplorerDeleteFromDialog}
       />
-      {recoverCommitsOpen ? (
-        <div className="absolute inset-0 z-[260] flex items-center justify-center bg-background/60 p-4">
-          <div className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="font-mono text-sm font-semibold text-foreground">
-                Recuperar por commit (Gitea)
-              </h3>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => setRecoverCommitsOpen(false)}
-                disabled={isRestoringCommit}
-              >
-                Fechar
-              </button>
-            </div>
-            <div className="max-h-[60vh] overflow-y-auto p-2">
-              {recoverCommits.length === 0 ? (
-                <p className="px-2 py-4 text-sm text-muted-foreground">
-                  Nenhum commit encontrado para este vault.
-                </p>
-              ) : (
-                recoverCommits.map((c) => (
-                  <button
-                    key={c.sha}
-                    type="button"
-                    onClick={() => {
-                      void restoreFromCommit(c.sha);
-                    }}
-                    disabled={isRestoringCommit}
-                    className="mb-1 w-full rounded-md border border-border px-3 py-2 text-left hover:bg-muted disabled:pointer-events-none disabled:opacity-60"
-                  >
-                    <p className="font-mono text-xs text-foreground">{c.sha.slice(0, 12)}</p>
-                    <p className="truncate text-sm text-foreground">{c.message}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {c.authorName} - {new Date(c.authoredAt).toLocaleString()}
-                    </p>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
