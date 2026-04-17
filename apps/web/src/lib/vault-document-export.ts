@@ -24,7 +24,14 @@ export function downloadVaultTextFile(fileName: string, content: string): void {
 }
 
 function downloadPdfBytes(fileName: string, bytes: Uint8Array): void {
-  const blob = new Blob([bytes], { type: "application/pdf" });
+  const backing = bytes.buffer;
+  const body: BlobPart =
+    backing instanceof ArrayBuffer
+      ? bytes.byteOffset === 0 && bytes.byteLength === backing.byteLength
+        ? backing
+        : backing.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      : new Uint8Array(bytes);
+  const blob = new Blob([body], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
