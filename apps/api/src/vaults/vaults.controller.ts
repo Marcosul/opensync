@@ -194,6 +194,25 @@ export class VaultsController {
   }
 
   /**
+   * Retorna conteúdo de todos os ficheiros em uma única query — usado pelo web para carregamento instantâneo do vault.
+   * Não aciona backfill Gitea; assume que o Postgres já está atualizado pelo app local de sincronização.
+   */
+  @Get(':id/files/all-contents')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async getAllContents(
+    @Param('id') id: string,
+    @Headers('x-opensync-user-id') userId: string | undefined,
+  ) {
+    const uid = this.requireUserId(userId);
+    const vault = await this.vaultsService.getVaultForUser(uid, id.trim());
+    if (!vault) {
+      throw new NotFoundException('Vault não encontrado');
+    }
+    return this.vaultFiles.getAllContents(vault.id);
+  }
+
+  /**
    * Leitura explícita da tabela `vault_files` (Postgres) — útil para confirmar persistência após POST /sync.
    * Mesma origem que `git/blob`; resposta inclui metadados para inspeção rápida (curl / ferramentas).
    */

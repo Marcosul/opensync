@@ -32,6 +32,9 @@ import {
   useReducer,
   useRef,
   useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
 } from "react";
 import type { Query } from "@tanstack/react-query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -62,6 +65,7 @@ import {
   addFolderToParent,
   addNoteToParent,
   collectDocIdsFromTree,
+  deleteDirectory,
   deleteExplorerItems,
   duplicateFile,
   findAncestorDirPathsForDoc,
@@ -81,7 +85,7 @@ import {
   mockDocToMarkdown,
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
-import { fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
+import { fetchVaultAllContents, fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
 import { connectVaultSse } from "@/lib/vault-sse-client";
 import {
   fetchVaultGitBlobQueryFn,
@@ -171,6 +175,41 @@ export type VaultOpenWorkspaceProps = {
   onActiveVaultIdChange: (id: string) => void;
   removeVault: (id: string) => Promise<void>;
 };
+
+function applyBulkContentsToNoteContents(
+  files: { path: string; content: string }[],
+  lazyGitDirtyDocIdsRef: MutableRefObject<Set<string>>,
+  noteContentsRef: MutableRefObject<Record<string, string>>,
+  lazyPersistedNoteContentsRef: MutableRefObject<Record<string, string>>,
+  setNoteContents: Dispatch<SetStateAction<Record<string, string>>>,
+  blobsSnapshotCommitRef: MutableRefObject<string | null>,
+  lastBlobFetchRef: MutableRefObject<{ tab: string; commit: string | null } | null>,
+  uiLatestRef: MutableRefObject<VaultUiState>,
+  commitShort: string,
+): void {
+  const updates: Record<string, string> = {};
+  for (const file of files) {
+    if (!lazyGitDirtyDocIdsRef.current.has(file.path)) {
+      updates[file.path] = file.content;
+    }
+  }
+  if (Object.keys(updates).length === 0) return;
+  setNoteContents((prev) => {
+    const next = { ...prev };
+    for (const [k, v] of Object.entries(updates)) {
+      if (lazyGitDirtyDocIdsRef.current.has(k)) continue;
+      next[k] = v;
+    }
+    noteContentsRef.current = next;
+    lazyPersistedNoteContentsRef.current = next;
+    return next;
+  });
+  blobsSnapshotCommitRef.current = commitShort;
+  const tab = uiLatestRef.current.activeTabId;
+  if (tab && updates[tab] !== undefined) {
+    lastBlobFetchRef.current = { tab, commit: commitShort };
+  }
+}
 
 export function VaultOpenWorkspace({
   vaultId,
@@ -364,7 +403,10 @@ export function VaultOpenWorkspace({
     gitTreeAbortRef.current = ac;
     void (async () => {
       try {
-        const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+        const [data, allContents] = await Promise.all([
+          fetchVaultGitTree(vaultId, { signal: ac.signal }),
+          fetchVaultAllContents(vaultId, { signal: ac.signal }).catch(() => null),
+        ]);
         if (ac.signal.aborted) return;
         const remotePaths = data.entries.map((e) => e.path);
         const remoteTail = data.commitHash.trim();
@@ -403,17 +445,31 @@ export function VaultOpenWorkspace({
         lastBlobFetchRef.current = null;
         lazyGitBlobsSnapshotCommitRef.current = null;
         lazyGitDirtyDocIdsRef.current.clear();
-        await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
-          queryClient,
-          noteContentsRef,
-          lazyGitDirtyDocIdsRef,
-          setNoteContents,
-          uiLatestRef,
-          lastBlobFetchRef,
-          blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
-          commitShort: remoteTail,
-          forceBlobRefetch,
-        });
+        if (allContents && allContents.files.length > 0 && !ac.signal.aborted) {
+          applyBulkContentsToNoteContents(
+            allContents.files,
+            lazyGitDirtyDocIdsRef,
+            noteContentsRef,
+            lazyPersistedNoteContentsRef,
+            setNoteContents,
+            lazyGitBlobsSnapshotCommitRef,
+            lastBlobFetchRef,
+            uiLatestRef,
+            remoteTail,
+          );
+        } else {
+          await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+            queryClient,
+            noteContentsRef,
+            lazyGitDirtyDocIdsRef,
+            setNoteContents,
+            uiLatestRef,
+            lastBlobFetchRef,
+            blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
+            commitShort: remoteTail,
+            forceBlobRefetch,
+          });
+        }
       } catch {
         /* arvore local mantem-se; commit ja veio do push */
       }
@@ -657,7 +713,10 @@ export function VaultOpenWorkspace({
       gitTreeAbortRef.current = ac;
       void (async () => {
         try {
-          const data = await fetchVaultGitTree(vaultId, { signal: ac.signal });
+          const [data, allContents] = await Promise.all([
+            fetchVaultGitTree(vaultId, { signal: ac.signal }),
+            fetchVaultAllContents(vaultId, { signal: ac.signal }).catch(() => null),
+          ]);
           if (ac.signal.aborted) return;
           const remoteTail = data.commitHash.trim();
           setLastGiteaCommitHash(remoteTail);
@@ -707,17 +766,31 @@ export function VaultOpenWorkspace({
           lastLazyGitTreeCommitShortRef.current = remoteTail;
           lastBlobFetchRef.current = null;
           lazyGitBlobsSnapshotCommitRef.current = null;
-          await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
-            queryClient,
-            noteContentsRef,
-            lazyGitDirtyDocIdsRef,
-            setNoteContents,
-            uiLatestRef,
-            lastBlobFetchRef,
-            blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
-            commitShort: remoteTail,
-            forceBlobRefetch,
-          });
+          if (allContents && allContents.files.length > 0 && !ac.signal.aborted) {
+            applyBulkContentsToNoteContents(
+              allContents.files,
+              lazyGitDirtyDocIdsRef,
+              noteContentsRef,
+              lazyPersistedNoteContentsRef,
+              setNoteContents,
+              lazyGitBlobsSnapshotCommitRef,
+              lastBlobFetchRef,
+              uiLatestRef,
+              remoteTail,
+            );
+          } else {
+            await prefetchLazyGitVaultBlobs(vaultId, remotePaths, ac.signal, {
+              queryClient,
+              noteContentsRef,
+              lazyGitDirtyDocIdsRef,
+              setNoteContents,
+              uiLatestRef,
+              lastBlobFetchRef,
+              blobsSnapshotCommitRef: lazyGitBlobsSnapshotCommitRef,
+              commitShort: remoteTail,
+              forceBlobRefetch,
+            });
+          }
         } catch {
           /* mantem snapshot local */
         }
@@ -1649,6 +1722,62 @@ export function VaultOpenWorkspace({
   }, []);
 
   const bumpExplorerTree = useCallback(() => setExplorerTreeNonce((n) => n + 1), []);
+
+  const handleDeleteAgentFile = useCallback(
+    async (docId: string) => {
+      if (treeRoot.type !== "dir") return;
+      const r = deleteExplorerItems(treeRoot, [{ kind: "file", docId }]);
+      if (!r.ok) throw new Error(r.reason);
+      setTreeRoot(r.root);
+      dispatchUi({ type: "closeMany", ids: r.closedDocIds });
+      setNoteContents((prev) => {
+        const next = { ...prev };
+        for (const id of r.closedDocIds) delete next[id];
+        return next;
+      });
+      bumpExplorerTree();
+      if (usesLazyGitRemote(vaultId, activeVaultMeta)) bumpLazyGitTreeDirtyForPush();
+      else if (isBackendSyncVaultId(vaultId)) bumpFullSnapshotDirtyForPush();
+    },
+    [treeRoot, vaultId, activeVaultMeta, bumpExplorerTree, bumpLazyGitTreeDirtyForPush, bumpFullSnapshotDirtyForPush],
+  );
+
+  const handleAgentFolderOp = useCallback(
+    async (op: { kind: "mkdir" | "rmdir" | "rename"; path?: string; from?: string; to?: string }) => {
+      if (treeRoot.type !== "dir") return;
+      if (op.kind === "mkdir" && op.path) {
+        const segments = op.path.split("/");
+        const folderName = segments.pop() ?? "nova-pasta";
+        const parentPath = segments.join("/") || treeRoot.name;
+        const r = addFolderToParent(treeRoot, parentPath, folderName);
+        if (!r.ok) throw new Error(r.reason);
+        setTreeRoot(r.root);
+      } else if (op.kind === "rmdir" && op.path) {
+        const r = deleteExplorerItems(treeRoot, [{ kind: "folder", path: op.path }]);
+        if (!r.ok) throw new Error(r.reason);
+        setTreeRoot(r.root);
+        dispatchUi({ type: "closeMany", ids: r.closedDocIds });
+        setNoteContents((prev) => {
+          const next = { ...prev };
+          for (const id of r.closedDocIds) delete next[id];
+          return next;
+        });
+      } else if (op.kind === "rename" && op.from && op.to) {
+        const toSegments = op.to.split("/");
+        const newName = toSegments.pop() ?? op.to;
+        const r = renameDirectory(treeRoot, op.from, newName);
+        if (!r.ok) throw new Error(r.reason);
+        setTreeRoot(r.root);
+        migrateDocPrefixes(r.docPrefixFrom, r.docPrefixTo);
+      } else {
+        return;
+      }
+      bumpExplorerTree();
+      if (usesLazyGitRemote(vaultId, activeVaultMeta)) bumpLazyGitTreeDirtyForPush();
+      else if (isBackendSyncVaultId(vaultId)) bumpFullSnapshotDirtyForPush();
+    },
+    [treeRoot, vaultId, activeVaultMeta, migrateDocPrefixes, bumpExplorerTree, bumpLazyGitTreeDirtyForPush, bumpFullSnapshotDirtyForPush],
+  );
 
   const openExplorerDeleteDialog = useCallback((items: ExplorerItemRef[]) => {
     if (items.length === 0) return;
@@ -2668,6 +2797,8 @@ export function VaultOpenWorkspace({
               noteContents={noteContents}
               onRequestClose={() => setAgentChatPanelOpen(false)}
               onApplyFileEdit={handleApplyAgentFileEdit}
+              onDeleteFile={handleDeleteAgentFile}
+              onFolderOp={handleAgentFolderOp}
             />
           </aside>
         </>

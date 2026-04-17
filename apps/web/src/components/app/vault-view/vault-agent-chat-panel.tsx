@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, File, FilePen, FilePlus2, Folder, GitCompare, Plus, Send, Settings, Trash2, X } from "lucide-react";
+import { Bot, Check, File, FilePen, FilePlus2, Folder, FolderPlus, GitCompare, Plus, Send, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { collectDocIdsFromTree, findDir } from "@/components/app/vault-tree-ops";
@@ -37,6 +37,11 @@ type PendingDelete = {
   confirmed?: boolean;
 };
 
+type PendingFolderOp =
+  | { kind: "mkdir"; path: string; confirmed?: boolean }
+  | { kind: "rmdir"; path: string; confirmed?: boolean }
+  | { kind: "rename"; from: string; to: string; confirmed?: boolean };
+
 type ContextEntry = {
   id: string;
   label: string;
@@ -51,6 +56,7 @@ type Props = {
   onRequestClose: () => void;
   onApplyFileEdit: (docId: string, content: string) => Promise<void>;
   onDeleteFile: (docId: string) => Promise<void>;
+  onFolderOp: (op: PendingFolderOp) => Promise<void>;
 };
 
 let _msgIdCounter = 0;
@@ -96,6 +102,7 @@ async function readStreamedText(
 type ParsedOperations = {
   edits: ApplicableEdit[];
   deletes: PendingDelete[];
+  folderOps: PendingFolderOp[];
 };
 
 function parseAgentOperations(
@@ -106,6 +113,7 @@ function parseAgentOperations(
 ): ParsedOperations {
   const edits: ApplicableEdit[] = [];
   const deletes: PendingDelete[] = [];
+  const folderOps: PendingFolderOp[] = [];
   const seenDocIds = new Set<string>();
 
   const regex = /```([^\n`]*)\n([\s\S]*?)```/g;
@@ -114,13 +122,9 @@ function parseAgentOperations(
     const lang = match[1].trim();
     const content = match[2];
 
-    // DELETE block: content has one file path per line
+    // DELETE block: one file path per line
     if (lang === "DELETE") {
-      const paths = content
-        .split("\n")
-        .map((p) => p.trim())
-        .filter(Boolean);
-      for (const path of paths) {
+      for (const path of content.split("\n").map((p) => p.trim()).filter(Boolean)) {
         if (!seenDocIds.has(path) && contextDocIds.has(path)) {
           seenDocIds.add(path);
           deletes.push({
@@ -133,7 +137,28 @@ function parseAgentOperations(
       continue;
     }
 
-    // Edit (existing file) or Create (new file within folder context)
+    // FOLDER-OP block: CREATE path | DELETE path | RENAME from → to
+    if (lang === "FOLDER-OP") {
+      for (const line of content.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        const mkdirMatch = /^CREATE\s+(.+)$/.exec(line);
+        const rmdirMatch = /^DELETE\s+(.+)$/.exec(line);
+        const renameMatch = /^RENAME\s+(.+?)\s*→\s*(.+)$/.exec(line);
+        if (mkdirMatch) {
+          folderOps.push({ kind: "mkdir", path: mkdirMatch[1].trim() });
+        } else if (rmdirMatch) {
+          folderOps.push({ kind: "rmdir", path: rmdirMatch[1].trim() });
+        } else if (renameMatch) {
+          folderOps.push({
+            kind: "rename",
+            from: renameMatch[1].trim(),
+            to: renameMatch[2].trim(),
+          });
+        }
+      }
+      continue;
+    }
+
+    // Edit (existing file) or Create (new file within a folder context)
     if (!lang || seenDocIds.has(lang)) continue;
     const isExistingFile = contextDocIds.has(lang);
     const isNewInFolder =
@@ -150,7 +175,7 @@ function parseAgentOperations(
     });
   }
 
-  return { edits, deletes };
+  return { edits, deletes, folderOps };
 }
 
 export function VaultAgentChatPanel({
@@ -160,6 +185,7 @@ export function VaultAgentChatPanel({
   onRequestClose,
   onApplyFileEdit,
   onDeleteFile,
+  onFolderOp,
 }: Props) {
   const [credentials, setCredentials] = useState<AgentChatCredentials | null>(
     () => loadAgentChatSettings().credentials,
@@ -172,6 +198,7 @@ export function VaultAgentChatPanel({
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingEdits, setPendingEdits] = useState<Record<string, ApplicableEdit[]>>({});
   const [pendingDeletes, setPendingDeletes] = useState<Record<string, PendingDelete[]>>({});
+  const [pendingFolderOps, setPendingFolderOps] = useState<Record<string, PendingFolderOp[]>>({});
   const [diffOpenEdits, setDiffOpenEdits] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef(0);
@@ -309,7 +336,7 @@ export function VaultAgentChatPanel({
               noteContents[id] ?? fetchedContentRef.current[id] ?? "",
             ]),
           );
-          const { edits, deletes } = parseAgentOperations(
+          const { edits, deletes, folderOps } = parseAgentOperations(
             msg.content,
             contextDocIds,
             folderPrefixes,
@@ -317,6 +344,7 @@ export function VaultAgentChatPanel({
           );
           if (edits.length > 0) setPendingEdits((pe) => ({ ...pe, [assistantId]: edits }));
           if (deletes.length > 0) setPendingDeletes((pd) => ({ ...pd, [assistantId]: deletes }));
+          if (folderOps.length > 0) setPendingFolderOps((pf) => ({ ...pf, [assistantId]: folderOps }));
           return prev;
         });
       }
@@ -396,6 +424,7 @@ export function VaultAgentChatPanel({
     setIsLoading(false);
     setPendingEdits({});
     setPendingDeletes({});
+    setPendingFolderOps({});
     setDiffOpenEdits({});
   }
 
@@ -407,6 +436,22 @@ export function VaultAgentChatPanel({
         [msgId]: (pd[msgId] ?? []).map((d) =>
           d.docId === del.docId ? { ...d, confirmed: true } : d,
         ),
+      }));
+    } catch {
+      // silently ignore — user can retry
+    }
+  }
+
+  async function handleConfirmFolderOp(msgId: string, op: PendingFolderOp) {
+    const opKey = op.kind === "rename" ? `${op.from}→${op.to}` : op.path;
+    try {
+      await onFolderOp(op);
+      setPendingFolderOps((pf) => ({
+        ...pf,
+        [msgId]: (pf[msgId] ?? []).map((o) => {
+          const k = o.kind === "rename" ? `${o.from}→${o.to}` : o.path;
+          return k === opKey ? { ...o, confirmed: true } : o;
+        }),
       }));
     } catch {
       // silently ignore — user can retry
@@ -634,6 +679,158 @@ export function VaultAgentChatPanel({
                                       proposed={edit.content}
                                       filename={edit.filename}
                                     />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+
+                        {/* Pending deletes */}
+                        {msg.role === "assistant" && pendingDeletes[msg.id]?.length ? (
+                          <div className="mt-2 flex flex-col gap-1.5 border-t border-border/40 pt-2">
+                            {pendingDeletes[msg.id].map((del) => {
+                              const diffKey = `del:${msg.id}:${del.docId}`;
+                              const diffOpen = diffOpenEdits[diffKey] ?? false;
+                              return (
+                                <div key={del.docId} className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleConfirmDelete(msg.id, del)}
+                                      disabled={del.confirmed}
+                                      className={cn(
+                                        "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
+                                        del.confirmed
+                                          ? "bg-muted/60 text-muted-foreground line-through"
+                                          : "bg-destructive/10 text-destructive hover:bg-destructive/20",
+                                        "disabled:pointer-events-none",
+                                      )}
+                                    >
+                                      {del.confirmed ? (
+                                        <Check className="size-3 shrink-0" />
+                                      ) : (
+                                        <Trash2 className="size-3 shrink-0" />
+                                      )}
+                                      <span className="truncate">
+                                        {del.confirmed
+                                          ? `${del.filename} deletado`
+                                          : `Deletar ${del.filename}`}
+                                      </span>
+                                    </button>
+                                    {!del.confirmed && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDiffOpenEdits((prev) => ({
+                                            ...prev,
+                                            [diffKey]: !diffOpen,
+                                          }))
+                                        }
+                                        title={diffOpen ? "Ocultar conteúdo" : "Ver conteúdo"}
+                                        aria-pressed={diffOpen}
+                                        className={cn(
+                                          "flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-medium transition-colors",
+                                          diffOpen
+                                            ? "bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                        )}
+                                      >
+                                        <GitCompare className="size-3" />
+                                        <span>Diff</span>
+                                        <span
+                                          className={cn(
+                                            "inline-block size-1.5 rounded-full transition-colors",
+                                            diffOpen ? "bg-orange-500" : "bg-muted-foreground/40",
+                                          )}
+                                        />
+                                      </button>
+                                    )}
+                                    {!del.confirmed && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPendingDeletes((pd) => ({
+                                            ...pd,
+                                            [msg.id]: (pd[msg.id] ?? []).filter(
+                                              (d) => d.docId !== del.docId,
+                                            ),
+                                          }))
+                                        }
+                                        title="Descartar"
+                                        className="flex shrink-0 items-center justify-center rounded-md p-1 text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+                                      >
+                                        <X className="size-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  {diffOpen && !del.confirmed && (
+                                    <AgentDiffView
+                                      original={del.originalContent}
+                                      proposed=""
+                                      filename={del.filename}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+
+                        {/* Pending folder operations */}
+                        {msg.role === "assistant" && pendingFolderOps[msg.id]?.length ? (
+                          <div className="mt-2 flex flex-col gap-1.5 border-t border-border/40 pt-2">
+                            {pendingFolderOps[msg.id].map((op, idx) => {
+                              const opLabel =
+                                op.kind === "mkdir"
+                                  ? `Criar pasta ${op.path.split("/").pop()}`
+                                  : op.kind === "rmdir"
+                                    ? `Deletar pasta ${op.path.split("/").pop()}`
+                                    : `Renomear ${op.from.split("/").pop()} → ${op.to.split("/").pop()}`;
+                              const isConfirmed = op.confirmed;
+                              return (
+                                <div key={idx} className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleConfirmFolderOp(msg.id, op)}
+                                    disabled={isConfirmed}
+                                    className={cn(
+                                      "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
+                                      isConfirmed
+                                        ? "bg-muted/60 text-muted-foreground"
+                                        : op.kind === "rmdir"
+                                          ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                                          : op.kind === "rename"
+                                            ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20"
+                                            : "bg-primary/10 text-primary hover:bg-primary/20",
+                                      "disabled:pointer-events-none",
+                                    )}
+                                  >
+                                    {isConfirmed ? (
+                                      <Check className="size-3 shrink-0" />
+                                    ) : op.kind === "rmdir" ? (
+                                      <Trash2 className="size-3 shrink-0" />
+                                    ) : (
+                                      <FolderPlus className="size-3 shrink-0" />
+                                    )}
+                                    <span className="truncate">
+                                      {isConfirmed ? `${opLabel} (concluído)` : opLabel}
+                                    </span>
+                                  </button>
+                                  {!isConfirmed && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPendingFolderOps((pf) => ({
+                                          ...pf,
+                                          [msg.id]: (pf[msg.id] ?? []).filter((_, i) => i !== idx),
+                                        }))
+                                      }
+                                      title="Descartar"
+                                      className="flex shrink-0 items-center justify-center rounded-md p-1 text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+                                    >
+                                      <X className="size-3" />
+                                    </button>
                                   )}
                                 </div>
                               );

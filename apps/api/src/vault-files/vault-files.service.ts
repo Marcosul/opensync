@@ -74,6 +74,8 @@ export type ChangeRowOut = {
 @Injectable()
 export class VaultFilesService {
   private readonly logger = new Logger(VaultFilesService.name);
+  /** Vaults confirmados com linhas em vault_files — elimina COUNT redundante por blob. */
+  private readonly _knownNonEmptyVaultIds = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -102,6 +104,28 @@ export class VaultFilesService {
       throw new BadRequestException('Vault excede 5000 ficheiros');
     }
     return { commitHash: maxId === 0n ? '0' : String(maxId), entries };
+  }
+
+  /** Retorna conteúdo completo de todos os ficheiros em uma única query — usado no carregamento inicial do vault. */
+  async getAllContents(vaultId: string): Promise<{
+    commitHash: string;
+    files: { path: string; content: string; version: string }[];
+  }> {
+    const maxId = await this.maxChangeId(vaultId);
+    const rows = await this.prisma.vaultFile.findMany({
+      where: { vaultId, deletedAt: null },
+      select: { path: true, content: true, version: true, sizeBytes: true },
+    });
+    const files = rows
+      .filter((r) => (r.sizeBytes ?? 0) <= VAULT_READ_MAX_BLOB_BYTES)
+      .map((r) => ({
+        path: r.path,
+        content: sanitizeOpenSyncArtifactContent(r.content ?? ''),
+        version: String(r.version),
+      }));
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    if (rows.length > 0) this._knownNonEmptyVaultIds.add(vaultId);
+    return { commitHash: maxId === 0n ? '0' : String(maxId), files };
   }
 
   async getContent(
@@ -1053,9 +1077,13 @@ export class VaultFilesService {
 
   /** Primeira abertura: copia estado do Gitea para Postgres se ainda vazio. */
   async backfillFromGiteaIfEmpty(vaultId: string, giteaRepo: string): Promise<void> {
+    if (this._knownNonEmptyVaultIds.has(vaultId)) return;
     /** Qualquer linha em vault_files (mesmo soft-deleted) indica que já não é “primeiro uso” — evita re-backfill apagar tudo. */
     const anyRow = await this.prisma.vaultFile.count({ where: { vaultId } });
-    if (anyRow > 0) return;
+    if (anyRow > 0) {
+      this._knownNonEmptyVaultIds.add(vaultId);
+      return;
+    }
 
     const { entries } = await this.vaultGitSync.readRepoTree(giteaRepo);
     if (entries.length === 0) return;
@@ -1079,6 +1107,7 @@ export class VaultFilesService {
     if (Object.keys(files).length === 0) return;
 
     await this.applyTrustedSnapshot(vaultId, files);
+    this._knownNonEmptyVaultIds.add(vaultId);
     this.logger.log(
       `${colors.green}📥 Backfill Gitea→Postgres${colors.reset} vault=${vaultId} files=${Object.keys(files).length}`,
     );

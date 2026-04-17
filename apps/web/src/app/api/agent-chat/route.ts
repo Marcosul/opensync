@@ -131,12 +131,34 @@ export async function POST(request: Request) {
   const contextEntries = Array.isArray(context) ? (context as AgentChatContext[]) : [];
   const allMessages = Array.isArray(messages) ? (messages as AgentChatMessage[]) : [];
 
+  const fileOpsInstructions = `
+
+File and folder operations you can perform — use these exact formats in your response:
+
+**Edit or create a file** (full content required):
+\`\`\`path/to/file.md
+complete file content here
+\`\`\`
+
+**Delete files** (one path per line):
+\`\`\`DELETE
+path/to/file.md
+\`\`\`
+
+**Folder operations** (one operation per line):
+\`\`\`FOLDER-OP
+CREATE path/to/new-folder
+DELETE path/to/folder
+RENAME path/to/old-name → path/to/new-name
+\`\`\`
+
+Use the exact file paths from the <file path="..."> attributes. For new files, use a path within the provided folder context.`;
+
   const systemContent =
     contextEntries.length > 0
       ? contextEntries
           .map((c) => `<file path="${c.path}">\n${c.content}\n</file>`)
-          .join("\n\n") +
-        "\n\nWhen editing a file from context, respond with the complete updated content in a fenced code block whose opening fence uses the exact file path (from the <file path=\"...\"> attribute) as the language identifier. Only include files you are actually modifying."
+          .join("\n\n") + fileOpsInstructions
       : null;
 
   const forwardMessages: AgentChatMessage[] = systemContent

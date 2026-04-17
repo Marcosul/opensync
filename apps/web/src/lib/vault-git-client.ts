@@ -25,6 +25,18 @@ export async function fetchVaultGitBlob(
   );
 }
 
+export type VaultAllContentsEntry = { path: string; content: string; version: string };
+
+export async function fetchVaultAllContents(
+  vaultId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<{ commitHash: string; files: VaultAllContentsEntry[] }> {
+  return apiRequest(
+    `/api/vaults/${encodeURIComponent(vaultId)}/files/all-contents`,
+    { signal: opts?.signal },
+  );
+}
+
 export async function fetchPublicVaultGitTree(
   token: string,
   opts?: { ref?: string; signal?: AbortSignal },
