@@ -77,11 +77,32 @@ export class VaultFilesService {
   /** Vaults confirmados com linhas em vault_files — elimina COUNT redundante por blob. */
   private readonly _knownNonEmptyVaultIds = new Set<string>();
 
+  /**
+   * Fila por vault: `applyTrustedSnapshot` e backfill Gitea→Postgres são transacções longas.
+   * Pedidos paralelos (ex.: muitos GET git/blob antes do Postgres ter dados) esgotavam o pool (P2024).
+   */
+  private readonly _vaultHeavyWriteTail = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly vaultGitSync: VaultGitSyncService,
     private readonly vaultSse: VaultSseService,
   ) {}
+
+  /** Serializa snapshots / backfill do mesmo vault para libertar uma única conexão de cada vez. */
+  private runVaultHeavyWriteSerialized<T>(vaultId: string, task: () => Promise<T>): Promise<T> {
+    const prev = this._vaultHeavyWriteTail.get(vaultId) ?? Promise.resolve();
+    const gated = prev.catch(() => undefined);
+    const result = gated.then(() => task());
+    this._vaultHeavyWriteTail.set(
+      vaultId,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
+  }
 
   async listTree(vaultId: string): Promise<{
     commitHash: string;
@@ -846,6 +867,16 @@ export class VaultFilesService {
     vaultId: string,
     files: Record<string, string>,
   ): Promise<{ ok: true; commitHash: string }> {
+    return this.runVaultHeavyWriteSerialized(vaultId, () =>
+      this.applyTrustedSnapshotCore(vaultId, files),
+    );
+  }
+
+  /** Núcleo do snapshot; invocar apenas via `applyTrustedSnapshot` ou dentro de `runVaultHeavyWriteSerialized`. */
+  private async applyTrustedSnapshotCore(
+    vaultId: string,
+    files: Record<string, string>,
+  ): Promise<{ ok: true; commitHash: string }> {
     const isEmptyPayload =
       files === null ||
       typeof files !== 'object' ||
@@ -1078,39 +1109,43 @@ export class VaultFilesService {
   /** Primeira abertura: copia estado do Gitea para Postgres se ainda vazio. */
   async backfillFromGiteaIfEmpty(vaultId: string, giteaRepo: string): Promise<void> {
     if (this._knownNonEmptyVaultIds.has(vaultId)) return;
-    /** Qualquer linha em vault_files (mesmo soft-deleted) indica que já não é “primeiro uso” — evita re-backfill apagar tudo. */
-    const anyRow = await this.prisma.vaultFile.count({ where: { vaultId } });
-    if (anyRow > 0) {
-      this._knownNonEmptyVaultIds.add(vaultId);
-      return;
-    }
 
-    const { entries } = await this.vaultGitSync.readRepoTree(giteaRepo);
-    if (entries.length === 0) return;
-    if (entries.length > VAULT_READ_MAX_TREE_ENTRIES) {
-      this.logger.warn(
-        `${colors.yellow}⚠️ Backfill skip: demasiados ficheiros${colors.reset} vault=${vaultId}`,
-      );
-      return;
-    }
-
-    const files: Record<string, string> = {};
-    for (const e of entries) {
-      if (e.path.includes('.git/')) continue;
-      try {
-        const { content } = await this.vaultGitSync.readRepoBlob(giteaRepo, e.path);
-        files[e.path] = content;
-      } catch {
-        /* skip unreadable */
+    await this.runVaultHeavyWriteSerialized(vaultId, async () => {
+      if (this._knownNonEmptyVaultIds.has(vaultId)) return;
+      /** Qualquer linha em vault_files (mesmo soft-deleted) indica que já não é “primeiro uso” — evita re-backfill apagar tudo. */
+      const anyRow = await this.prisma.vaultFile.count({ where: { vaultId } });
+      if (anyRow > 0) {
+        this._knownNonEmptyVaultIds.add(vaultId);
+        return;
       }
-    }
-    if (Object.keys(files).length === 0) return;
 
-    await this.applyTrustedSnapshot(vaultId, files);
-    this._knownNonEmptyVaultIds.add(vaultId);
-    this.logger.log(
-      `${colors.green}📥 Backfill Gitea→Postgres${colors.reset} vault=${vaultId} files=${Object.keys(files).length}`,
-    );
+      const { entries } = await this.vaultGitSync.readRepoTree(giteaRepo);
+      if (entries.length === 0) return;
+      if (entries.length > VAULT_READ_MAX_TREE_ENTRIES) {
+        this.logger.warn(
+          `${colors.yellow}⚠️ Backfill skip: demasiados ficheiros${colors.reset} vault=${vaultId}`,
+        );
+        return;
+      }
+
+      const files: Record<string, string> = {};
+      for (const e of entries) {
+        if (e.path.includes('.git/')) continue;
+        try {
+          const { content } = await this.vaultGitSync.readRepoBlob(giteaRepo, e.path);
+          files[e.path] = content;
+        } catch {
+          /* skip unreadable */
+        }
+      }
+      if (Object.keys(files).length === 0) return;
+
+      await this.applyTrustedSnapshotCore(vaultId, files);
+      this._knownNonEmptyVaultIds.add(vaultId);
+      this.logger.log(
+        `${colors.green}📥 Backfill Gitea→Postgres${colors.reset} vault=${vaultId} files=${Object.keys(files).length}`,
+      );
+    });
   }
 
   async listRepoCommitsForRestore(
