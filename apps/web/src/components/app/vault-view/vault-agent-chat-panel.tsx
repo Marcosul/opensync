@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, File, FilePen, Folder, Plus, Send, Settings, Trash2, X } from "lucide-react";
+import { Bot, Check, File, FilePen, FilePlus2, Folder, GitCompare, Plus, Send, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { collectDocIdsFromTree, findDir } from "@/components/app/vault-tree-ops";
@@ -12,6 +12,7 @@ import {
 } from "@/lib/agent-chat-settings";
 import { cn } from "@/lib/utils";
 
+import { AgentDiffView } from "./vault-agent-diff-view";
 import { VaultAgentChatSettingsDialog } from "./vault-agent-chat-settings-dialog";
 
 type ChatMessage = {
@@ -24,7 +25,16 @@ type ApplicableEdit = {
   docId: string;
   filename: string;
   content: string;
+  original: string;
+  isNew?: boolean;
   applied?: boolean;
+};
+
+type PendingDelete = {
+  docId: string;
+  filename: string;
+  originalContent: string;
+  confirmed?: boolean;
 };
 
 type ContextEntry = {
@@ -40,6 +50,7 @@ type Props = {
   noteContents: Record<string, string>;
   onRequestClose: () => void;
   onApplyFileEdit: (docId: string, content: string) => Promise<void>;
+  onDeleteFile: (docId: string) => Promise<void>;
 };
 
 let _msgIdCounter = 0;
@@ -82,22 +93,64 @@ async function readStreamedText(
   }
 }
 
-function parseApplicableEdits(
+type ParsedOperations = {
+  edits: ApplicableEdit[];
+  deletes: PendingDelete[];
+};
+
+function parseAgentOperations(
   messageContent: string,
   contextDocIds: Set<string>,
-): ApplicableEdit[] {
+  folderPrefixes: string[],
+  originalContents: Record<string, string>,
+): ParsedOperations {
   const edits: ApplicableEdit[] = [];
-  const regex = /```([^\n`]+)\n([\s\S]*?)```/g;
+  const deletes: PendingDelete[] = [];
+  const seenDocIds = new Set<string>();
+
+  const regex = /```([^\n`]*)\n([\s\S]*?)```/g;
   let match;
   while ((match = regex.exec(messageContent)) !== null) {
     const lang = match[1].trim();
     const content = match[2];
-    if (contextDocIds.has(lang)) {
-      const filename = lang.split("/").pop() ?? lang;
-      edits.push({ docId: lang, filename, content });
+
+    // DELETE block: content has one file path per line
+    if (lang === "DELETE") {
+      const paths = content
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      for (const path of paths) {
+        if (!seenDocIds.has(path) && contextDocIds.has(path)) {
+          seenDocIds.add(path);
+          deletes.push({
+            docId: path,
+            filename: path.split("/").pop() ?? path,
+            originalContent: originalContents[path] ?? "",
+          });
+        }
+      }
+      continue;
     }
+
+    // Edit (existing file) or Create (new file within folder context)
+    if (!lang || seenDocIds.has(lang)) continue;
+    const isExistingFile = contextDocIds.has(lang);
+    const isNewInFolder =
+      !isExistingFile && folderPrefixes.some((p) => lang.startsWith(p + "/"));
+    if (!isExistingFile && !isNewInFolder) continue;
+
+    seenDocIds.add(lang);
+    edits.push({
+      docId: lang,
+      filename: lang.split("/").pop() ?? lang,
+      content,
+      original: originalContents[lang] ?? "",
+      isNew: !isExistingFile,
+    });
   }
-  return edits;
+
+  return { edits, deletes };
 }
 
 export function VaultAgentChatPanel({
@@ -106,6 +159,7 @@ export function VaultAgentChatPanel({
   noteContents,
   onRequestClose,
   onApplyFileEdit,
+  onDeleteFile,
 }: Props) {
   const [credentials, setCredentials] = useState<AgentChatCredentials | null>(
     () => loadAgentChatSettings().credentials,
@@ -117,6 +171,8 @@ export function VaultAgentChatPanel({
   const [contextEntries, setContextEntries] = useState<ContextEntry[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pendingEdits, setPendingEdits] = useState<Record<string, ApplicableEdit[]>>({});
+  const [pendingDeletes, setPendingDeletes] = useState<Record<string, PendingDelete[]>>({});
+  const [diffOpenEdits, setDiffOpenEdits] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dragCounterRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -238,17 +294,29 @@ export function VaultAgentChatPanel({
           return prev;
         });
 
-        // Parse editable code blocks from assistant response
+        // Parse file operations from assistant response
         setMessages((prev) => {
           const msg = prev.find((m) => m.id === assistantId);
           if (!msg || !msg.content) return prev;
-          const contextDocIds = new Set(
-            contextEntries.flatMap((e) => e.docIds),
+          const contextDocIds = new Set(contextEntries.flatMap((e) => e.docIds));
+          const folderPrefixes = contextEntries
+            .filter((e) => e.isFolder)
+            .map((e) => e.id);
+          const allDocIds = [...contextDocIds, ...folderPrefixes];
+          const originalContents = Object.fromEntries(
+            allDocIds.map((id) => [
+              id,
+              noteContents[id] ?? fetchedContentRef.current[id] ?? "",
+            ]),
           );
-          const edits = parseApplicableEdits(msg.content, contextDocIds);
-          if (edits.length > 0) {
-            setPendingEdits((pe) => ({ ...pe, [assistantId]: edits }));
-          }
+          const { edits, deletes } = parseAgentOperations(
+            msg.content,
+            contextDocIds,
+            folderPrefixes,
+            originalContents,
+          );
+          if (edits.length > 0) setPendingEdits((pe) => ({ ...pe, [assistantId]: edits }));
+          if (deletes.length > 0) setPendingDeletes((pd) => ({ ...pd, [assistantId]: deletes }));
           return prev;
         });
       }
@@ -327,6 +395,22 @@ export function VaultAgentChatPanel({
     setContextEntries([]);
     setIsLoading(false);
     setPendingEdits({});
+    setPendingDeletes({});
+    setDiffOpenEdits({});
+  }
+
+  async function handleConfirmDelete(msgId: string, del: PendingDelete) {
+    try {
+      await onDeleteFile(del.docId);
+      setPendingDeletes((pd) => ({
+        ...pd,
+        [msgId]: (pd[msgId] ?? []).map((d) =>
+          d.docId === del.docId ? { ...d, confirmed: true } : d,
+        ),
+      }));
+    } catch {
+      // silently ignore — user can retry
+    }
   }
 
   async function handleApplyEdit(msgId: string, edit: ApplicableEdit) {
@@ -455,33 +539,105 @@ export function VaultAgentChatPanel({
                             <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
                           </span>
                         )}
-                        {/* Apply edit buttons */}
+                        {/* Apply edit buttons + diff toggle */}
                         {msg.role === "assistant" && pendingEdits[msg.id]?.length ? (
-                          <div className="mt-2 flex flex-col gap-1 border-t border-border/40 pt-2">
-                            {pendingEdits[msg.id].map((edit) => (
-                              <button
-                                key={edit.docId}
-                                type="button"
-                                onClick={() => void handleApplyEdit(msg.id, edit)}
-                                disabled={edit.applied}
-                                className={cn(
-                                  "flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
-                                  edit.applied
-                                    ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                    : "bg-primary/10 text-primary hover:bg-primary/20",
-                                  "disabled:pointer-events-none",
-                                )}
-                              >
-                                {edit.applied ? (
-                                  <Check className="size-3" />
-                                ) : (
-                                  <FilePen className="size-3" />
-                                )}
-                                {edit.applied
-                                  ? `${edit.filename} aplicado`
-                                  : `Aplicar edição em ${edit.filename}`}
-                              </button>
-                            ))}
+                          <div className="mt-2 flex flex-col gap-1.5 border-t border-border/40 pt-2">
+                            {pendingEdits[msg.id].map((edit) => {
+                              const diffKey = `${msg.id}:${edit.docId}`;
+                              const diffOpen = diffOpenEdits[diffKey] ?? false;
+                              return (
+                                <div key={edit.docId} className="flex flex-col gap-1">
+                                  {/* Action row */}
+                                  <div className="flex items-center gap-1">
+                                    {/* Apply / applied */}
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleApplyEdit(msg.id, edit)}
+                                      disabled={edit.applied}
+                                      className={cn(
+                                        "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
+                                        edit.applied
+                                          ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                          : "bg-primary/10 text-primary hover:bg-primary/20",
+                                        "disabled:pointer-events-none",
+                                      )}
+                                    >
+                                      {edit.applied ? (
+                                        <Check className="size-3 shrink-0" />
+                                      ) : edit.isNew ? (
+                                        <FilePlus2 className="size-3 shrink-0" />
+                                      ) : (
+                                        <FilePen className="size-3 shrink-0" />
+                                      )}
+                                      <span className="truncate">
+                                        {edit.applied
+                                          ? `${edit.filename} ${edit.isNew ? "criado" : "aplicado"}`
+                                          : edit.isNew
+                                            ? `Criar ${edit.filename}`
+                                            : `Aplicar em ${edit.filename}`}
+                                      </span>
+                                    </button>
+                                    {/* Diff toggle switch */}
+                                    {!edit.applied && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDiffOpenEdits((prev) => ({
+                                            ...prev,
+                                            [diffKey]: !diffOpen,
+                                          }))
+                                        }
+                                        title={diffOpen ? "Ocultar diff" : "Ver diff"}
+                                        aria-pressed={diffOpen}
+                                        className={cn(
+                                          "flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-medium transition-colors",
+                                          diffOpen
+                                            ? "bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                        )}
+                                      >
+                                        <GitCompare className="size-3" />
+                                        <span>Diff</span>
+                                        {/* pill indicator */}
+                                        <span
+                                          className={cn(
+                                            "inline-block size-1.5 rounded-full transition-colors",
+                                            diffOpen ? "bg-orange-500" : "bg-muted-foreground/40",
+                                          )}
+                                        />
+                                      </button>
+                                    )}
+                                    {/* Discard */}
+                                    {!edit.applied && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPendingEdits((pe) => ({
+                                            ...pe,
+                                            [msg.id]: (pe[msg.id] ?? []).filter(
+                                              (e) => e.docId !== edit.docId,
+                                            ),
+                                          }))
+                                        }
+                                        title="Descartar"
+                                        aria-label={`Descartar edição de ${edit.filename}`}
+                                        className="flex shrink-0 items-center justify-center rounded-md p-1 text-muted-foreground/60 hover:bg-muted hover:text-destructive"
+                                      >
+                                        <X className="size-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  {/* Diff view */}
+                                  {diffOpen && !edit.applied && (
+                                    <AgentDiffView
+                                      original={edit.original}
+                                      proposed={edit.content}
+                                      filename={edit.filename}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : null}
                       </div>
