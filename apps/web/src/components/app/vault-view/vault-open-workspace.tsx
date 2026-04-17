@@ -2795,6 +2795,7 @@ export function VaultOpenWorkspace({
               vaultId={vaultId}
               treeChildren={treeChildren}
               noteContents={noteContents}
+              activeDocId={vaultPageQuery.file ?? null}
               onRequestClose={() => setAgentChatPanelOpen(false)}
               onApplyFileEdit={handleApplyAgentFileEdit}
               onDeleteFile={handleDeleteAgentFile}

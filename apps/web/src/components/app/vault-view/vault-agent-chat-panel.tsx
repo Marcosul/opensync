@@ -53,6 +53,8 @@ type Props = {
   vaultId: string;
   treeChildren: TreeEntry[];
   noteContents: Record<string, string>;
+  /** When set, a single parsed edit for this path is applied automatically after the stream. */
+  activeDocId?: string | null;
   onRequestClose: () => void;
   onApplyFileEdit: (docId: string, content: string) => Promise<void>;
   onDeleteFile: (docId: string) => Promise<void>;
@@ -104,6 +106,29 @@ type ParsedOperations = {
   deletes: PendingDelete[];
   folderOps: PendingFolderOp[];
 };
+
+const FENCE_LANG_MARKDOWN_ALIASES = new Set(["markdown", "md", "text"]);
+
+function resolveContextPathForFenceLang(
+  lang: string,
+  contextDocIds: Set<string>,
+  folderPrefixes: string[],
+): { docId: string; isNew: boolean } | null {
+  if (contextDocIds.has(lang)) {
+    return { docId: lang, isNew: false };
+  }
+  const basenameHits = [...contextDocIds].filter(
+    (p) => (p.split("/").pop() ?? p) === lang,
+  );
+  if (basenameHits.length === 1) {
+    return { docId: basenameHits[0]!, isNew: false };
+  }
+  const isNewInFolder = folderPrefixes.some((p) => lang.startsWith(p + "/"));
+  if (isNewInFolder) {
+    return { docId: lang, isNew: true };
+  }
+  return null;
+}
 
 function parseAgentOperations(
   messageContent: string,
@@ -159,20 +184,43 @@ function parseAgentOperations(
     }
 
     // Edit (existing file) or Create (new file within a folder context)
-    if (!lang || seenDocIds.has(lang)) continue;
-    const isExistingFile = contextDocIds.has(lang);
-    const isNewInFolder =
-      !isExistingFile && folderPrefixes.some((p) => lang.startsWith(p + "/"));
-    if (!isExistingFile && !isNewInFolder) continue;
+    if (!lang) continue;
+    const resolved = resolveContextPathForFenceLang(lang, contextDocIds, folderPrefixes);
+    if (!resolved) continue;
+    if (seenDocIds.has(resolved.docId)) continue;
 
-    seenDocIds.add(lang);
+    seenDocIds.add(resolved.docId);
     edits.push({
-      docId: lang,
-      filename: lang.split("/").pop() ?? lang,
+      docId: resolved.docId,
+      filename: resolved.docId.split("/").pop() ?? resolved.docId,
       content,
-      original: originalContents[lang] ?? "",
-      isNew: !isExistingFile,
+      original: originalContents[resolved.docId] ?? "",
+      isNew: resolved.isNew,
     });
+  }
+
+  // Models often use ```markdown for a single attached file — map when unambiguous.
+  if (edits.length === 0 && contextDocIds.size === 1) {
+    const onlyDoc = [...contextDocIds][0]!;
+    const fallbackRegex = /```([^\n`]*)\n([\s\S]*?)```/g;
+    while ((match = fallbackRegex.exec(messageContent)) !== null) {
+      const langRaw = match[1].trim();
+      const langLower = langRaw.toLowerCase();
+      const body = match[2];
+      if (langRaw === "DELETE" || langRaw === "FOLDER-OP") continue;
+      const isAliasFence =
+        FENCE_LANG_MARKDOWN_ALIASES.has(langLower) ||
+        (langRaw === "" && body.trim().length > 0);
+      if (!isAliasFence) continue;
+      edits.push({
+        docId: onlyDoc,
+        filename: onlyDoc.split("/").pop() ?? onlyDoc,
+        content: body,
+        original: originalContents[onlyDoc] ?? "",
+        isNew: false,
+      });
+      break;
+    }
   }
 
   return { edits, deletes, folderOps };
@@ -182,6 +230,7 @@ export function VaultAgentChatPanel({
   vaultId,
   treeChildren,
   noteContents,
+  activeDocId = null,
   onRequestClose,
   onApplyFileEdit,
   onDeleteFile,
@@ -205,6 +254,8 @@ export function VaultAgentChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   /** Cache local para conteúdo buscado on-demand (lazy git: blobs não carregados). */
   const fetchedContentRef = useRef<Record<string, string>>({});
+  /** Texto completo do último assistente em stream (parse pós-stream). */
+  const assistantStreamAccumulatorRef = useRef("");
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -223,7 +274,7 @@ export function VaultAgentChatPanel({
    */
   async function resolveFileContent(docId: string): Promise<string> {
     const cached = noteContents[docId];
-    if (cached !== undefined && cached.length > 0) return cached;
+    if (cached !== undefined) return cached;
     const localCache = fetchedContentRef.current[docId];
     if (localCache !== undefined) return localCache;
     try {
@@ -246,7 +297,7 @@ export function VaultAgentChatPanel({
     for (const { docIds } of entries) {
       for (const docId of docIds) {
         const content = await resolveFileContent(docId);
-        if (content.length > 0) results.push({ path: docId, content });
+        results.push({ path: docId, content });
       }
     }
     return results;
@@ -268,6 +319,7 @@ export function VaultAgentChatPanel({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    assistantStreamAccumulatorRef.current = "";
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -301,6 +353,7 @@ export function VaultAgentChatPanel({
 
       if (res.body) {
         await readStreamedText(res.body, (delta) => {
+          assistantStreamAccumulatorRef.current += delta;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: m.content + delta } : m,
@@ -308,45 +361,56 @@ export function VaultAgentChatPanel({
           );
         });
 
+        const streamed = assistantStreamAccumulatorRef.current;
+
         // After stream, check if assistant message is empty
-        setMessages((prev) => {
-          const msg = prev.find((m) => m.id === assistantId);
-          if (msg && msg.content === "") {
-            return prev.map((m) =>
+        if (streamed === "") {
+          setMessages((prev) =>
+            prev.map((m) =>
               m.id === assistantId
                 ? { ...m, content: "⚠ Gateway não retornou conteúdo de texto." }
                 : m,
-            );
-          }
-          return prev;
-        });
+            ),
+          );
+        }
 
         // Parse file operations from assistant response
-        setMessages((prev) => {
-          const msg = prev.find((m) => m.id === assistantId);
-          if (!msg || !msg.content) return prev;
-          const contextDocIds = new Set(contextEntries.flatMap((e) => e.docIds));
-          const folderPrefixes = contextEntries
-            .filter((e) => e.isFolder)
-            .map((e) => e.id);
-          const allDocIds = [...contextDocIds, ...folderPrefixes];
-          const originalContents = Object.fromEntries(
-            allDocIds.map((id) => [
-              id,
-              noteContents[id] ?? fetchedContentRef.current[id] ?? "",
-            ]),
-          );
-          const { edits, deletes, folderOps } = parseAgentOperations(
-            msg.content,
-            contextDocIds,
-            folderPrefixes,
-            originalContents,
-          );
-          if (edits.length > 0) setPendingEdits((pe) => ({ ...pe, [assistantId]: edits }));
-          if (deletes.length > 0) setPendingDeletes((pd) => ({ ...pd, [assistantId]: deletes }));
-          if (folderOps.length > 0) setPendingFolderOps((pf) => ({ ...pf, [assistantId]: folderOps }));
-          return prev;
-        });
+        const contextDocIds = new Set(contextEntries.flatMap((e) => e.docIds));
+        const folderPrefixes = contextEntries
+          .filter((e) => e.isFolder)
+          .map((e) => e.id);
+        const allDocIds = [...contextDocIds, ...folderPrefixes];
+        const originalContents = Object.fromEntries(
+          allDocIds.map((id) => [
+            id,
+            noteContents[id] ?? fetchedContentRef.current[id] ?? "",
+          ]),
+        );
+        const { edits, deletes, folderOps } = parseAgentOperations(
+          streamed,
+          contextDocIds,
+          folderPrefixes,
+          originalContents,
+        );
+
+        let editsForUi = edits;
+        if (
+          edits.length === 1 &&
+          activeDocId &&
+          edits[0]!.docId === activeDocId
+        ) {
+          const e0 = edits[0]!;
+          try {
+            await onApplyFileEdit(e0.docId, e0.content);
+            editsForUi = [{ ...e0, applied: true }];
+          } catch {
+            /* mantém edição pendente para o utilizador tentar "Aplicar" */
+          }
+        }
+
+        if (editsForUi.length > 0) setPendingEdits((pe) => ({ ...pe, [assistantId]: editsForUi }));
+        if (deletes.length > 0) setPendingDeletes((pd) => ({ ...pd, [assistantId]: deletes }));
+        if (folderOps.length > 0) setPendingFolderOps((pf) => ({ ...pf, [assistantId]: folderOps }));
       }
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
@@ -551,6 +615,11 @@ export function VaultAgentChatPanel({
                     Envie uma mensagem para começar.
                     <br />
                     Arraste arquivos para adicionar contexto.
+                    <br />
+                    <span className="text-muted-foreground/50">
+                      O agente mostra &quot;Aplicar&quot; quando a resposta traz um bloco de código com o
+                      caminho do ficheiro na primeira linha (o mesmo path do contexto).
+                    </span>
                   </p>
                 </div>
               ) : (

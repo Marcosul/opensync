@@ -133,11 +133,17 @@ export async function POST(request: Request) {
 
   const fileOpsInstructions = `
 
-File and folder operations you can perform — use these exact formats in your response:
+File and folder operations — the client only detects changes when you use these exact fenced formats.
 
-**Edit or create a file** (full content required):
-\`\`\`path/to/file.md
-complete file content here
+**Replace or create a file** (full file body required inside the fence):
+- The opening fence MUST be three backticks, then the file path on the same line, then a newline, then the entire file content, then closing backticks.
+- The path MUST match a <file path="..."> attribute character-for-character (same slashes and casing). Do NOT use \`\`\`markdown, \`\`\`md, \`\`\`txt, or any other label for an existing attached file — those will NOT apply.
+- When the user asks to rewrite, replace, or update an attached file, put the new file in ONE such block. You may add a short sentence before or after the block, but the complete new file must be inside the path-labeled fence.
+
+Example for an attached file literally named README.md:
+\`\`\`README.md
+# My project
+Short description here.
 \`\`\`
 
 **Delete files** (one path per line):
@@ -152,7 +158,7 @@ DELETE path/to/folder
 RENAME path/to/old-name → path/to/new-name
 \`\`\`
 
-Use the exact file paths from the <file path="..."> attributes. For new files, use a path within the provided folder context.`;
+For new files not yet in context, use a path under a folder that appears in the context.`;
 
   const systemContent =
     contextEntries.length > 0
