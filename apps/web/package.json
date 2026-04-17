@@ -79,6 +79,7 @@
     "d3-zoom": "^3.0.0",
     "date-fns": "^4.1.0",
     "dedent": "1.0.0",
+    "diff": "7.0.0",
     "html2canvas-pro": "^2.0.2",
     "lodash": "^4.18.1",
     "lowlight": "^3.3.0",

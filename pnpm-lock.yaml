@@ -358,6 +358,9 @@ importers:
       dedent:
         specifier: 1.0.0
         version: 1.0.0
+      diff:
+        specifier: 7.0.0
+        version: 7.0.0
       html2canvas-pro:
         specifier: ^2.0.2
         version: 2.0.2
