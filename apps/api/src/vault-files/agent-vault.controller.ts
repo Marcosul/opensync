@@ -18,6 +18,7 @@ import { PrismaService } from '../common/prisma.service';
 import { resolveVaultWithAgentBearer } from '../common/agent-vault.resolve';
 import { VaultFilesService } from './vault-files.service';
 import { VaultSseService } from './vault-sse.service';
+import { VaultMcpService } from './vault-mcp.service';
 import type { VaultSseEvent } from '../contracts/vault-sse-event';
 
 @Controller('agent/vaults')
@@ -27,6 +28,7 @@ export class AgentVaultController {
     private readonly prisma: PrismaService,
     private readonly vaultFiles: VaultFilesService,
     private readonly vaultSse: VaultSseService,
+    private readonly vaultMcp: VaultMcpService,
   ) {}
 
   /**
@@ -272,5 +274,31 @@ export class AgentVaultController {
       throw new BadRequestException('Query path obrigatoria');
     }
     return this.vaultFiles.getContent(vaultId.trim(), filePath);
+  }
+
+  /** MCP Streamable HTTP transport — POST (requests JSON-RPC). */
+  @Post(':vaultId/mcp')
+  @SkipThrottle()
+  async mcpPost(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Req() req: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    await this.vaultMcp.handlePost(vaultId.trim(), req.raw, reply.raw, req.body);
+  }
+
+  /** MCP Streamable HTTP transport — GET (SSE stream para server-initiated messages). */
+  @Get(':vaultId/mcp')
+  @SkipThrottle()
+  async mcpGet(
+    @Param('vaultId') vaultId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Req() req: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await resolveVaultWithAgentBearer(this.prisma, vaultId.trim(), authorization);
+    await this.vaultMcp.handleGet(vaultId.trim(), req.raw, reply.raw);
   }
 }

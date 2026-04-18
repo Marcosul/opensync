@@ -11,6 +11,8 @@ export type ClientUiSettings = {
   agentChatPanelWidth: number;
   /** Largura do painel de histórico de versões (Gitea), quando expandido. */
   versionHistoryPanelWidth: number;
+  /** Largura do painel de conexão MCP (modo editor), quando aberto. */
+  mcpConnectPanelWidth: number;
   /** Mesmos valores que `UserSettings["baseTheme"]` — no JSON fica como `theme`. */
   theme: UserSettings["baseTheme"];
 };
@@ -31,11 +33,16 @@ const DEFAULT_VERSION_HISTORY_PANEL_WIDTH = 320;
 export const VERSION_HISTORY_PANEL_MIN_WIDTH = 260;
 export const VERSION_HISTORY_PANEL_MAX_WIDTH = 560;
 
+const DEFAULT_MCP_CONNECT_PANEL_WIDTH = 300;
+export const MCP_CONNECT_PANEL_MIN_WIDTH = 260;
+export const MCP_CONNECT_PANEL_MAX_WIDTH = 520;
+
 export const defaultClientUiSettings: ClientUiSettings = {
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   backlinksPanelWidth: DEFAULT_BACKLINKS_PANEL_WIDTH,
   agentChatPanelWidth: DEFAULT_AGENT_CHAT_PANEL_WIDTH,
   versionHistoryPanelWidth: DEFAULT_VERSION_HISTORY_PANEL_WIDTH,
+  mcpConnectPanelWidth: DEFAULT_MCP_CONNECT_PANEL_WIDTH,
   theme: "system",
 };
 
@@ -60,6 +67,12 @@ export function clampAgentChatPanelWidth(n: number): number {
 export function clampVersionHistoryPanelWidth(n: number): number {
   return Math.round(
     Math.min(VERSION_HISTORY_PANEL_MAX_WIDTH, Math.max(VERSION_HISTORY_PANEL_MIN_WIDTH, n)),
+  );
+}
+
+export function clampMcpConnectPanelWidth(n: number): number {
+  return Math.round(
+    Math.min(MCP_CONNECT_PANEL_MAX_WIDTH, Math.max(MCP_CONNECT_PANEL_MIN_WIDTH, n)),
   );
 }
 
@@ -97,12 +110,18 @@ export function loadClientUiSettings(): ClientUiSettings {
       typeof versionHistoryRaw === "number" && Number.isFinite(versionHistoryRaw)
         ? clampVersionHistoryPanelWidth(versionHistoryRaw)
         : defaultClientUiSettings.versionHistoryPanelWidth;
+    const mcpConnectRaw = o.mcpConnectPanelWidth;
+    const mcpConnectPanelWidth =
+      typeof mcpConnectRaw === "number" && Number.isFinite(mcpConnectRaw)
+        ? clampMcpConnectPanelWidth(mcpConnectRaw)
+        : defaultClientUiSettings.mcpConnectPanelWidth;
     const theme = isBaseTheme(o.theme) ? o.theme : defaultClientUiSettings.theme;
     return {
       sidebarWidth,
       backlinksPanelWidth,
       agentChatPanelWidth,
       versionHistoryPanelWidth,
+      mcpConnectPanelWidth,
       theme,
     };
   } catch {
@@ -138,12 +157,18 @@ export function patchClientUiSettings(partial: Partial<ClientUiSettings>): void 
     Number.isFinite(partial.versionHistoryPanelWidth)
       ? clampVersionHistoryPanelWidth(partial.versionHistoryPanelWidth)
       : prev.versionHistoryPanelWidth;
+  const mcpConnectPanelWidth =
+    typeof partial.mcpConnectPanelWidth === "number" &&
+    Number.isFinite(partial.mcpConnectPanelWidth)
+      ? clampMcpConnectPanelWidth(partial.mcpConnectPanelWidth)
+      : prev.mcpConnectPanelWidth;
   const theme = partial.theme !== undefined && isBaseTheme(partial.theme) ? partial.theme : prev.theme;
   saveClientUiSettings({
     sidebarWidth,
     backlinksPanelWidth,
     agentChatPanelWidth,
     versionHistoryPanelWidth,
+    mcpConnectPanelWidth,
     theme,
   });
 }

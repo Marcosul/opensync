@@ -4,12 +4,13 @@ import { SyncModule } from '../sync/sync.module';
 import { AgentVaultController } from './agent-vault.controller';
 import { VaultFilesService } from './vault-files.service';
 import { VaultGiteaMirrorService } from './vault-gitea-mirror.service';
+import { VaultMcpService } from './vault-mcp.service';
 import { VaultSseService } from './vault-sse.service';
 
 @Module({
   imports: [PrismaModule, SyncModule],
   controllers: [AgentVaultController],
-  providers: [VaultFilesService, VaultGiteaMirrorService, VaultSseService],
+  providers: [VaultFilesService, VaultGiteaMirrorService, VaultSseService, VaultMcpService],
   exports: [VaultFilesService, VaultSseService],
 })
 export class VaultFilesModule {}

@@ -18,6 +18,7 @@ import {
   Loader2,
   MoreVertical,
   PanelLeft,
+  Plug,
   Plus,
   Share2,
 } from "lucide-react";
@@ -111,10 +112,12 @@ import {
 } from "@/lib/vault-sync-flatten";
 import { isVaultPlainTextDocId } from "@/lib/vault-doc-kind";
 import {
+  clampMcpConnectPanelWidth,
   defaultClientUiSettings,
   loadClientUiSettings,
   patchClientUiSettings,
 } from "@/lib/client-ui-settings";
+import { getPublicApiBaseUrlForClient } from "@/lib/opensync-public-urls";
 import { VaultAgentChatPanel } from "./vault-agent-chat-panel";
 import { VaultAgentChatResizeHandle } from "./vault-agent-chat-resize-handle";
 import { VaultVersionHistoryPanel } from "./vault-version-history-panel";
@@ -129,6 +132,8 @@ import { cn } from "@/lib/utils";
 
 import { BacklinksPanel } from "./vault-backlinks-panel";
 import { VaultBacklinksResizeHandle } from "./vault-backlinks-resize-handle";
+import { VaultMcpConnectPanel } from "./vault-mcp-connect-panel";
+import { VaultMcpConnectResizeHandle } from "./vault-mcp-connect-resize-handle";
 import { DOC_BY_ID } from "./doc-registry";
 import {
   LAZY_OPEN_TAB_PREFETCH_CONCURRENCY,
@@ -1223,6 +1228,10 @@ export function VaultOpenWorkspace({
   const [versionHistoryPanelCollapsed, setVersionHistoryPanelCollapsed] = useState(false);
   const [versionHistoryPanelWidth, setVersionHistoryPanelWidth] = useState(
     defaultClientUiSettings.versionHistoryPanelWidth,
+  );
+  const [mcpConnectPanelOpen, setMcpConnectPanelOpen] = useState(false);
+  const [mcpConnectPanelWidth, setMcpConnectPanelWidth] = useState(
+    () => clampMcpConnectPanelWidth(loadClientUiSettings().mcpConnectPanelWidth),
   );
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>("default");
@@ -2486,6 +2495,23 @@ export function VaultOpenWorkspace({
               <span className="hidden sm:inline">Agente</span>
             </button>
           ) : null}
+          {viewMode === "editor" ? (
+            <button
+              type="button"
+              onClick={() => setMcpConnectPanelOpen((o) => !o)}
+              title={mcpConnectPanelOpen ? "Fechar painel MCP" : "Conectar via MCP"}
+              aria-expanded={mcpConnectPanelOpen}
+              aria-controls="vault-mcp-connect-panel"
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
+                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                mcpConnectPanelOpen && "bg-muted text-foreground",
+              )}
+            >
+              <Plug className="size-3.5 shrink-0" aria-hidden />
+              <span className="hidden sm:inline">MCP</span>
+            </button>
+          ) : null}
           <button
             type="button"
             title="Nova nota (nova aba)"
@@ -2830,6 +2856,31 @@ export function VaultOpenWorkspace({
               onApplyFileEdit={handleApplyAgentFileEdit}
               onDeleteFile={handleDeleteAgentFile}
               onFolderOp={handleAgentFolderOp}
+            />
+          </aside>
+        </>
+      ) : null}
+      {viewMode === "editor" && mcpConnectPanelOpen ? (
+        <>
+          <VaultMcpConnectResizeHandle
+            panelWidth={mcpConnectPanelWidth}
+            onPanelWidthChange={setMcpConnectPanelWidth}
+            onResizeEnd={(w) => {
+              setMcpConnectPanelWidth(w);
+              patchClientUiSettings({ mcpConnectPanelWidth: w });
+            }}
+          />
+          <aside
+            id="vault-mcp-connect-panel"
+            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+            style={{ width: mcpConnectPanelWidth }}
+            role="complementary"
+            aria-label="Conexão MCP"
+          >
+            <VaultMcpConnectPanel
+              vaultId={vaultId}
+              apiBaseUrl={getPublicApiBaseUrlForClient()}
+              onRequestClose={() => setMcpConnectPanelOpen(false)}
             />
           </aside>
         </>

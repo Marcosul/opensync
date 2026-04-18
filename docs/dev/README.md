@@ -23,6 +23,12 @@
 | [gitea-supabase-postgres.md](./gitea-supabase-postgres.md) | Configuração do Gitea usando PostgreSQL do Supabase para escala |
 | [supabase-rls-implementation.md](./supabase-rls-implementation.md) | RLS: `anon`/`authenticated`/`service_role`, tabelas OpenSync vs Gitea, onde está o SQL, checklist |
 
+## Billing e assinaturas
+
+| Documento | Conteúdo |
+|-----------|----------|
+| [billing-stripe-subscription-plan.md](./billing-stripe-subscription-plan.md) | Plano de implementação Stripe: tiers free/plus/pro/business/enterprise, preços, webhooks, Prisma, API, web, referência ao SuperSquad. |
+
 ## Implementação no código (referência rápida)
 
 | Área | Onde |
