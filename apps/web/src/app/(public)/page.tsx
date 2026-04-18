@@ -26,8 +26,8 @@ function PublicHomeContent() {
   const { messages } = useHomeI18n();
   return (
     <div className="min-h-screen bg-[#F9F9F7]">
-      <header className="mx-auto flex w-full max-w-[1360px] items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
-        <LandingBrandMark className="min-w-0 shrink" />
+      <header className="mx-auto flex w-full max-w-[1360px] flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-4 lg:px-8">
+        <LandingBrandMark className="min-w-0 shrink-0" />
         <div className="hidden items-center gap-5 md:flex">
           <Link href="#features" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
             {messages.nav.features}
@@ -36,17 +36,25 @@ function PublicHomeContent() {
             {messages.nav.pricing}
           </Link>
         </div>
-        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          <LanguageDropdown />
-          <Link
-            href="/sign-in"
-            className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "text-sm sm:text-base")}
-          >
-            {messages.nav.signIn}
-          </Link>
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 lg:ml-auto lg:flex-nowrap">
+          <div className="flex items-center justify-end gap-2 sm:gap-3">
+            <LanguageDropdown />
+            <Link
+              href="/sign-in"
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "lg" }),
+                "shrink-0 text-sm sm:text-base",
+              )}
+            >
+              {messages.nav.signIn}
+            </Link>
+          </div>
           <Link
             href="/sign-up"
-            className={cn(buttonVariants({ variant: "default", size: "lg" }), "text-sm sm:text-base")}
+            className={cn(
+              buttonVariants({ variant: "default", size: "lg" }),
+              "w-full shrink-0 text-center text-sm sm:w-auto sm:text-base",
+            )}
           >
             {messages.nav.createAgent}
           </Link>

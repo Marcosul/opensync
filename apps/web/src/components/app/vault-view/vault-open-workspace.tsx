@@ -12,6 +12,7 @@ import {
   ChevronDown,
   FileCode2,
   FileDown,
+  FolderOpen,
   History,
   Link2,
   ListX,
@@ -21,6 +22,7 @@ import {
   Plug,
   Plus,
   Share2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -86,6 +88,7 @@ import {
   mockDocToMarkdown,
   type TreeEntry,
 } from "@/components/marketing/openclaw-workspace-mock";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { fetchVaultAllContents, fetchVaultGitBlob, fetchVaultGitTree } from "@/lib/vault-git-client";
 import { connectVaultSse } from "@/lib/vault-sse-client";
 import {
@@ -1212,9 +1215,23 @@ export function VaultOpenWorkspace({
       : null;
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isVaultLgUp = useMediaQuery("(min-width: 1024px)", false);
+  const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [mobilePlateToolbarHost, setMobilePlateToolbarHost] = useState<HTMLElement | null>(null);
+  const mobileToolbarHostRef = useCallback((el: HTMLDivElement | null) => {
+    setMobilePlateToolbarHost(el);
+  }, []);
   const [explorerSidebarWidth, setExplorerSidebarWidth] = useState(
     defaultClientUiSettings.sidebarWidth,
   );
+
+  useEffect(() => {
+    if (!isVaultLgUp) return;
+    setMobileExplorerOpen(false);
+    setMobileActionsOpen(false);
+    setMobilePlateToolbarHost(null);
+  }, [isVaultLgUp]);
   const [backlinksPanelOpen, setBacklinksPanelOpen] = useState(false);
   const [backlinksPanelWidth, setBacklinksPanelWidth] = useState(
     defaultClientUiSettings.backlinksPanelWidth,
@@ -1995,6 +2012,13 @@ export function VaultOpenWorkspace({
     [treeChildren, activeTabId],
   );
 
+  const mobileVaultChromeTitle = useMemo(() => {
+    if (activeTabId) {
+      return findFileNameForDocId(treeChildren, activeTabId) ?? activeTabId;
+    }
+    return activeVaultMeta?.name ?? "Cofre";
+  }, [activeTabId, treeChildren, activeVaultMeta?.name]);
+
   const activeExportFileLabel = useMemo(() => {
     if (!activeTabId) return "";
     return resolveVaultExportFileName(
@@ -2310,7 +2334,8 @@ export function VaultOpenWorkspace({
           contentVisible ? "opacity-100" : "opacity-0 pointer-events-none",
         )}
       >
-        {sidebarCollapsed ? (
+        {isVaultLgUp ? (
+          sidebarCollapsed ? (
             <div className="flex w-8 shrink-0 flex-col border-r border-border bg-sidebar/30 py-1">
               <button
                 type="button"
@@ -2430,11 +2455,170 @@ export function VaultOpenWorkspace({
                 }}
               />
             </div>
-        )}
+          )
+        ) : null}
+
+        {!isVaultLgUp && mobileExplorerOpen ? (
+          <div
+            className="fixed inset-0 z-[100] flex justify-start lg:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Explorador de ficheiros"
+          >
+            <div className="flex h-full w-[min(100%,22rem)] max-w-[min(100vw,22rem)] shrink-0 flex-col border-r border-border bg-background shadow-xl">
+              <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+                <span className="truncate text-sm font-medium">Explorador</span>
+                <button
+                  type="button"
+                  onClick={() => setMobileExplorerOpen(false)}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Fechar explorador"
+                >
+                  <X className="size-5" aria-hidden />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-hidden bg-sidebar/30">
+                <FileTree
+                  treeRootLabel={rootExplorerLabel}
+                  treeRootPath={treeRoot.type === "dir" ? treeRoot.path : "openclaw-root"}
+                  treeChildren={treeChildren}
+                  selectedId={activeTabId || null}
+                  onSelect={(id) => {
+                    browseSelectFile(id);
+                    setMobileExplorerOpen(false);
+                  }}
+                  expandedPaths={expandedPaths}
+                  onToggleDir={(path) =>
+                    setExpandedPaths((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(path)) next.delete(path);
+                      else next.add(path);
+                      return next;
+                    })
+                  }
+                  folderSearch={folderSearch}
+                  onFolderSearchChange={setFolderSearch}
+                  bookmarks={bookmarks}
+                  onOpenBookmark={(b) => {
+                    if (b.kind === "file") {
+                      browseSelectFile(b.docId);
+                      setMobileExplorerOpen(false);
+                    } else {
+                      setFolderSearch(null);
+                      setRevealTarget({ type: "folder", path: b.path });
+                      setExpandedPaths((p) => new Set([...p, ...treePathAncestors(b.path), b.path]));
+                    }
+                  }}
+                  onRemoveBookmark={(b) => {
+                    setBookmarks((prev) =>
+                      prev.filter((x) =>
+                        b.kind === "file"
+                          ? !(x.kind === "file" && x.docId === b.docId)
+                          : !(x.kind === "folder" && x.path === b.path),
+                      ),
+                    );
+                  }}
+                  revealTarget={revealTarget}
+                  onRevealHandled={clearRevealTarget}
+                  onExplorerCommand={handleExplorerCommand}
+                  vaultMetas={vaultMetas}
+                  activeVaultId={vaultId}
+                  activeVaultName={activeVaultMeta?.name ?? "cofre"}
+                  vaultPathTooltip={activeVaultMeta?.pathLabel ?? ""}
+                  vaultStatsLine={vaultStatsLine}
+                  onSelectVault={switchVault}
+                  onOpenManageVaults={() => setManageVaultsOpen(true)}
+                  sidebarMode={sidebarMode}
+                  onSidebarModeChange={setSidebarMode}
+                  treeSortOrder={treeSortOrder}
+                  onCycleSort={cycleTreeSort}
+                  onQuickNewNote={quickNewNoteFromToolbar}
+                  onQuickNewFolder={quickNewFolderFromToolbar}
+                  onCollapseAllFolders={collapseAllFolders}
+                  onCollapseSidebar={() => setMobileExplorerOpen(false)}
+                  explorerInlineRename={explorerInlineRename}
+                  onExplorerRenameDraftChange={setExplorerRenameDraft}
+                  onExplorerRenameCommit={commitExplorerInlineRename}
+                  onExplorerRenameCancel={cancelExplorerInlineRename}
+                  skipExplorerRenameBlurCommitRef={skipExplorerRenameBlurCommitRef}
+                  explorerTreeNonce={explorerTreeNonce}
+                  vaultTreeRoot={treeRoot}
+                  onOpenExplorerDeleteDialog={openExplorerDeleteDialog}
+                  onMoveExplorerItemsToFolder={performExplorerMoveToFolder}
+                  onExplorerNewNote={() =>
+                    handleExplorerCommand({ type: "new-note", parentTreePath: defaultNewItemParent })
+                  }
+                  onExplorerNewFolder={() =>
+                    handleExplorerCommand({ type: "new-folder", parentTreePath: defaultNewItemParent })
+                  }
+                  onExplorerRenameRow={(row) => {
+                    if (row.kind === "file") {
+                      openExplorerInlineRename({
+                        kind: "file",
+                        docId: row.docId,
+                        parentTreePath: row.parentTreePath,
+                        draft: row.name,
+                        initialName: row.name,
+                      });
+                    } else {
+                      openExplorerInlineRename({
+                        kind: "folder",
+                        treePath: row.path,
+                        draft: row.name,
+                        initialName: row.name,
+                      });
+                    }
+                  }}
+                  giteaSyncSpinningDocId={
+                    isBackendSyncVaultId(vaultId) && giteaSyncStatus === "syncing"
+                      ? (activeTabId ?? null)
+                      : undefined
+                  }
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              className="min-h-0 min-w-0 flex-1 bg-black/45"
+              aria-label="Fechar explorador"
+              onClick={() => setMobileExplorerOpen(false)}
+            />
+          </div>
+        ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card/40 px-2 lg:hidden">
+          <button
+            type="button"
+            onClick={() => {
+              setMobileExplorerOpen(true);
+              setMobileActionsOpen(false);
+            }}
+            className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted"
+            aria-label="Abrir explorador"
+          >
+            <FolderOpen className="size-5" aria-hidden />
+          </button>
+          <p
+            className="min-w-0 flex-1 truncate text-center text-xs font-medium text-foreground"
+            title={mobileVaultChromeTitle}
+          >
+            {mobileVaultChromeTitle}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setMobileActionsOpen(true);
+              setMobileExplorerOpen(false);
+            }}
+            className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted"
+            aria-label="Abrir ações"
+          >
+            <MoreVertical className="size-5" aria-hidden />
+          </button>
+        </div>
+        <div className="hidden h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1 lg:flex">
           {isBackendSyncVaultId(vaultId) && (
             <Link
               href={`/vault/${encodeURIComponent(vaultId)}/graph`}
@@ -2717,6 +2901,8 @@ export function VaultOpenWorkspace({
               sourceMode={editorSourceMode}
               onSourceModeChange={setEditorSourceMode}
               plainTextDocument
+              plateToolbarPortalContainer={mobilePlateToolbarHost}
+              suppressPlateToolbarUnlessPortaled={!isVaultLgUp}
             />
           </div>
         ) : (
@@ -2749,6 +2935,8 @@ export function VaultOpenWorkspace({
               onSourceModeChange={setEditorSourceMode}
               plainTextDocument={false}
               edgeToEdgeScroll
+              plateToolbarPortalContainer={mobilePlateToolbarHost}
+              suppressPlateToolbarUnlessPortaled={!isVaultLgUp}
             />
           </div>
         )}
@@ -2887,6 +3075,227 @@ export function VaultOpenWorkspace({
       ) : null}
       </div>
       </div>
+
+      {!isVaultLgUp && mobileActionsOpen ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[105] bg-black/50 lg:hidden"
+            aria-label="Fechar painel de ações"
+            onClick={() => setMobileActionsOpen(false)}
+          />
+          <div
+            className="fixed inset-y-0 right-0 z-[110] flex w-[min(100vw,22rem)] max-w-full flex-col border-l border-border bg-background shadow-2xl lg:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ações do editor"
+          >
+            <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+              <span className="text-sm font-medium">Ações</span>
+              <button
+                type="button"
+                onClick={() => setMobileActionsOpen(false)}
+                className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Fechar painel de ações"
+              >
+                <X className="size-5" aria-hidden />
+              </button>
+            </div>
+            <div
+              ref={mobileToolbarHostRef}
+              className="vault-mobile-toolbar-host min-h-[3.25rem] shrink-0 overflow-x-auto border-b border-border bg-muted/20 px-2 py-2"
+            />
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href="/dashboard"
+                  onClick={() => setMobileActionsOpen(false)}
+                  className={cn(
+                    "flex items-center justify-center rounded-lg border border-border bg-background px-2 py-2.5 text-center text-xs font-medium hover:bg-muted",
+                  )}
+                >
+                  Vaults
+                </Link>
+                <Link
+                  href="/settings"
+                  onClick={() => setMobileActionsOpen(false)}
+                  className={cn(
+                    "flex items-center justify-center rounded-lg border border-border bg-background px-2 py-2.5 text-center text-xs font-medium hover:bg-muted",
+                  )}
+                >
+                  Configurações
+                </Link>
+              </div>
+              {isBackendSyncVaultId(vaultId) ? (
+                <Link
+                  href={`/vault/${encodeURIComponent(vaultId)}/graph`}
+                  onClick={() => setMobileActionsOpen(false)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm font-medium hover:bg-muted"
+                >
+                  <Share2 className="size-4 shrink-0" aria-hidden />
+                  Grafo API
+                </Link>
+              ) : null}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Abas</p>
+                <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-border/60 p-1">
+                  {openTabs.length === 0 ? (
+                    <p className="px-2 py-2 text-xs text-muted-foreground">Nenhuma aba aberta</p>
+                  ) : (
+                    openTabs.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => {
+                          activateTab(id);
+                          setMobileActionsOpen(false);
+                        }}
+                        className={cn(
+                          "truncate rounded-md px-2 py-2 text-left font-mono text-xs transition-colors hover:bg-muted",
+                          viewMode === "editor" && activeTabId === id && "bg-muted font-medium text-foreground",
+                        )}
+                      >
+                        {id}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    quickNewNoteFromToolbar();
+                    setMobileActionsOpen(false);
+                  }}
+                  className="flex w-full items-center justify-center rounded-lg border border-border bg-background px-3 py-2.5 text-sm font-medium hover:bg-muted"
+                >
+                  <Plus className="mr-2 size-4 shrink-0" aria-hidden />
+                  Nova nota
+                </button>
+                {viewMode === "editor" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setBacklinksPanelOpen((o) => !o)}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
+                        backlinksPanelOpen
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border bg-background hover:bg-muted",
+                      )}
+                    >
+                      Backlinks
+                      <span className="text-xs text-muted-foreground">
+                        {backlinksPanelOpen ? "Aberto" : "Fechado"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAgentChatPanelOpen((o) => !o)}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
+                        agentChatPanelOpen
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border bg-background hover:bg-muted",
+                      )}
+                    >
+                      Agente
+                      <span className="text-xs text-muted-foreground">
+                        {agentChatPanelOpen ? "Aberto" : "Fechado"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMcpConnectPanelOpen((o) => !o)}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
+                        mcpConnectPanelOpen
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-border bg-background hover:bg-muted",
+                      )}
+                    >
+                      MCP
+                      <span className="text-xs text-muted-foreground">
+                        {mcpConnectPanelOpen ? "Aberto" : "Fechado"}
+                      </span>
+                    </button>
+                  </>
+                ) : null}
+                {isBackendSyncVaultId(vaultId) ? (
+                  <button
+                    type="button"
+                    onClick={() => setVersionHistoryPanelOpen((o) => !o)}
+                    disabled={isRestoringCommit}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium disabled:opacity-50",
+                      versionHistoryPanelOpen
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-border bg-background hover:bg-muted",
+                    )}
+                  >
+                    Versões (Gitea)
+                    <span className="text-xs text-muted-foreground">
+                      {versionHistoryPanelOpen ? "Aberto" : "Fechado"}
+                    </span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeAllTabs}
+                  disabled={openTabs.length === 0}
+                  className="flex w-full items-center justify-center rounded-lg border border-destructive/30 bg-background px-3 py-2.5 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  Fechar todas as abas
+                </button>
+              </div>
+              {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
+                <div className="flex flex-col gap-2 border-t border-border pt-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Exportar</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void exportActiveDocumentPdf();
+                    }}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-left text-sm hover:bg-muted"
+                  >
+                    PDF (A4)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportActiveDocumentOriginal}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-left text-sm hover:bg-muted"
+                  >
+                    Formato original
+                  </button>
+                  {!isVaultPlainTextDocId(activeTabId) ? (
+                    <button
+                      type="button"
+                      onClick={toggleEditorSourceMode}
+                      className={cn(
+                        "w-full rounded-lg border px-3 py-2.5 text-sm font-medium",
+                        editorSourceMode ? "border-primary/40 bg-muted" : "border-border bg-background hover:bg-muted",
+                      )}
+                    >
+                      {editorSourceMode ? "Modo fonte (Markdown)" : "Modo blocos (rich text)"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openGraph();
+                      setMobileActionsOpen(false);
+                    }}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm hover:bg-muted"
+                  >
+                    Abrir grafo (vista interna)
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : null}
 
       <VaultManageDialog
         open={manageVaultsOpen}

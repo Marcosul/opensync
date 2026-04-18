@@ -12,7 +12,8 @@ import { YjsPlugin } from "@platejs/yjs/react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent } from "react";
 import type { PlateEditor } from "platejs/react";
 import { Plate, usePlateEditor } from "platejs/react";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { WebsocketProvider } from "y-websocket";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
@@ -185,6 +186,13 @@ export type VaultPlateMarkdownEditorProps = {
   onChange: (next: string) => void;
   onSelectFile: (id: string) => void;
   className?: string;
+  /** Quando definido, a barra de formatação é renderizada neste elemento (ex.: painel móvel de ações). */
+  toolbarPortalContainer?: HTMLElement | null;
+  /**
+   * Se true e não houver `toolbarPortalContainer`, a barra não é mostrada no documento
+   * (útil no telemóvel até o utilizador abrir o painel de ações).
+   */
+  suppressToolbarUnlessPortaled?: boolean;
   collaboration?: {
     enabled: boolean;
     roomId: string;
@@ -203,6 +211,8 @@ export function VaultPlateMarkdownEditor({
   onChange,
   onSelectFile,
   className,
+  toolbarPortalContainer,
+  suppressToolbarUnlessPortaled = false,
   collaboration,
 }: VaultPlateMarkdownEditorProps) {
   ensureOpensyncWsProviderRegistered();
@@ -333,6 +343,8 @@ export function VaultPlateMarkdownEditor({
     [onChange],
   );
 
+  const toolbarUi = useMemo((): ReactNode => <VaultPlateToolbar />, []);
+
   const onWikiPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const t = event.target;
@@ -363,9 +375,20 @@ export function VaultPlateMarkdownEditor({
           }}
         >
           <div className="overflow-visible rounded-none bg-transparent">
-            <div className="vault-plate-md-reveal-toolbar will-change-[transform,opacity]">
-              <VaultPlateToolbar />
-            </div>
+            {toolbarPortalContainer
+              ? createPortal(
+                  <div className="vault-plate-md-reveal-toolbar flex flex-wrap gap-1 border-b border-border/60 bg-muted/20 p-2 will-change-[transform,opacity]">
+                    {toolbarUi}
+                  </div>,
+                  toolbarPortalContainer,
+                )
+              : suppressToolbarUnlessPortaled
+                ? null
+                : (
+                    <div className="vault-plate-md-reveal-toolbar will-change-[transform,opacity]">
+                      {toolbarUi}
+                    </div>
+                  )}
             <EditorContainer
               variant="pageScroll"
               data-vault-pdf-export-root=""

@@ -22,8 +22,8 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-in-out",
-        collapsed ? "w-12" : "w-[220px]"
+        "hidden flex-shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-in-out lg:flex",
+        collapsed ? "w-12" : "w-[220px]",
       )}
     >
       {/* Header: toggle + logo */}
