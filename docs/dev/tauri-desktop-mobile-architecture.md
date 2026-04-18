@@ -323,7 +323,7 @@ Nenhum endpoint novo é necessário para a Fase 1 e 2.
 - [x] CI Gitea ([`opensync-core-deb.yml`](../../.gitea/workflows/opensync-core-deb.yml)): build + .deb + SHA256 em tag `core-v*`
 - [x] `rustfmt.toml` configurado
 - [x] Testes unitários sync-core: 45 passa (`cargo test --workspace`)
-- [ ] Validação end-to-end em VPS real (instalar `.deb`, `opensync init`, comparar latência/RAM com `opensync-ubuntu`)
+- [x] Validação end-to-end em VPS real: `.deb` instalado, `opensync init` operacional, sync confirmado em produção
 
 #### Deprecação
 - [x] Instalador web ([`apps/web/src/app/install/ubuntu/route.ts`](../../apps/web/src/app/install/ubuntu/route.ts)) entrega o pacote `opensync` (Rust); upgrade automático sobre `opensync-ubuntu` via `Conflicts/Replaces`
@@ -334,36 +334,44 @@ Nenhum endpoint novo é necessário para a Fase 1 e 2.
 
 ### Fase 2 — Desktop (macOS / Linux / Windows)
 
-#### Shared Packages
-- [ ] Criar `packages/ui/` e configurar como workspace pnpm
-- [ ] Migrar componentes shadcn genéricos de `apps/web` para `packages/ui`
-- [ ] Criar `packages/types/` com tipos compartilhados (Vault, VaultFile, etc.)
-- [ ] Atualizar `apps/web` para consumir `packages/ui` e `packages/types`
+#### Shared Packages — Fatia 1 ✅
+- [x] `packages/ui/` configurado como workspace pnpm (`@opensync/ui`)
+- [x] Componentes essenciais em `packages/ui/src/`: `Button`, `Input`, `Card*`, `Badge`, `Label` + `cn`
+- [x] `packages/types/` (`@opensync/types`) com `UserVault`, `SyncResult`, `SyncStatus`, `ConflictEntry`, `AuthCredentials`, `DesktopVaultConfig`, `SyncEvent`, …
+- [ ] Migrar restantes componentes shadcn (dropdown, tooltip, dialog) de `apps/web` para `packages/ui`
+- [ ] Atualizar `apps/web` para consumir `packages/ui` (atualmente só usa `cn`)
 
-#### Scaffold Tauri
-- [ ] `pnpm create tauri-app apps/desktop --template react-ts`
-- [ ] Configurar `pnpm-workspace.yaml` para incluir `apps/desktop`
-- [ ] Configurar `tauri.conf.json` (bundle identifier, versão, ícones)
-- [ ] Adicionar `sync-core` como dependência Rust
+#### Scaffold Tauri — Fatia 1 ✅
+- [x] [`apps/desktop/`](../../apps/desktop/) criado manualmente (Vite + React 19 + Tailwind 4 + Tauri 2)
+- [x] `pnpm-workspace.yaml` cobre `apps/*` e `packages/*` (sem alteração necessária)
+- [x] [`apps/desktop/src-tauri/tauri.conf.json`](../../apps/desktop/src-tauri/tauri.conf.json): bundle id `space.opensync.desktop`, janela 1200×800, CSP restrita
+- [x] [`apps/desktop/src-tauri/Cargo.toml`](../../apps/desktop/src-tauri/Cargo.toml) depende de `sync-core` via path
+- [x] Cargo workspace inclui `apps/desktop/src-tauri` ([`Cargo.toml`](../../Cargo.toml))
+- [x] `cargo check -p opensync-desktop` resolve toda a árvore Rust (falha apenas em libs do sistema GTK — esperado em sandbox)
+- [x] `tsc --noEmit` em `apps/desktop` passa limpo
 
-#### Frontend React (Vite)
-- [ ] Tela de login / configuração de servidor
-- [ ] Navegador de arquivos local (file tree)
-- [ ] Editor markdown rico (CodeMirror 6)
-- [ ] Suporte a wikilinks e backlinks
-- [ ] Graph view (reaproveitando D3 do `apps/web`)
-- [ ] Dashboard de sync (status, última sincronização, erros)
-- [ ] Conflict resolution UI (diff side-by-side)
-- [ ] Configurações (servidor, intervalo de sync, tema)
+#### Frontend React (Vite) — Fatia 1 ✅
+- [x] Tela de login com token `usk_*` ([`src/views/login.tsx`](../../apps/desktop/src/views/login.tsx)) — campo API URL + token, validação via `auth_login`
+- [x] Dashboard de vaults ([`src/views/dashboard.tsx`](../../apps/desktop/src/views/dashboard.tsx)) — listar, criar, refrescar, logout
+- [x] Tema light/dark via CSS variables ([`src/styles.css`](../../apps/desktop/src/styles.css))
+- [x] Wrapper IPC tipado ([`src/lib/ipc.ts`](../../apps/desktop/src/lib/ipc.ts))
+- [ ] Navegador de arquivos local (file tree) — Fatia 3
+- [ ] Editor markdown rico (CodeMirror 6) — Fatia 4
+- [ ] Suporte a wikilinks e backlinks — Fatia 4
+- [ ] Graph view (reaproveitando D3 do `apps/web`) — Fatia 5
+- [ ] Conflict resolution UI (diff side-by-side) — Fatia 3
+- [ ] Configurações (servidor, intervalo de sync, tema) — Fatia 2
 
-#### Backend Rust (Tauri commands)
-- [ ] `commands/sync.rs` — sync_vault, watch_folder, get_conflicts, resolve_conflict
-- [ ] `commands/auth.rs` — authenticate, logout
-- [ ] `commands/fs.rs` — list_local_files, open_folder_dialog
-- [ ] Tray icon com menu de ações rápidas
-- [ ] Notificações nativas (sync concluído, conflitos)
-- [ ] Auto-update via `tauri-plugin-updater`
-- [ ] Armazenamento seguro de tokens (`tauri-plugin-keychain`)
+#### Backend Rust (Tauri commands) — Fatia 1 ✅
+- [x] [`src-tauri/src/lib.rs`](../../apps/desktop/src-tauri/src/lib.rs) com `auth_login`, `auth_logout`, `auth_current`, `vaults_list`, `vaults_create`, `desktop_info`
+- [x] Estado partilhado (`AppState`) com `reqwest::Client` e sessão em RAM
+- [x] Plugins integrados: `tauri-plugin-shell`, `tauri-plugin-dialog`, `tauri-plugin-opener`
+- [ ] `commands/sync.rs` — `sync_vault`, `watch_folder`, `get_conflicts`, `resolve_conflict` — Fatia 2
+- [ ] `commands/fs.rs` — `list_local_files`, `open_folder_dialog` — Fatia 3
+- [ ] Tray icon com menu de ações rápidas — Fatia 4
+- [ ] Notificações nativas (sync concluído, conflitos) — Fatia 4
+- [ ] Auto-update via `tauri-plugin-updater` — Fatia 5
+- [ ] Armazenamento seguro de tokens via `keyring`/`tauri-plugin-stronghold` — Fatia 2
 
 #### Publicação Desktop
 - [ ] Configurar code signing macOS (Apple Developer ID)

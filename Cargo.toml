@@ -2,6 +2,7 @@
 members = [
     "crates/sync-core",
     "apps/core",
+    "apps/desktop/src-tauri",
 ]
 resolver = "2"
 

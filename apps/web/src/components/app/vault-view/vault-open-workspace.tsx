@@ -31,7 +31,6 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   startTransition,
   useCallback,
@@ -120,6 +119,7 @@ import {
   usesLazyGitRemote,
 } from "@/lib/vault-sync-flatten";
 import { isVaultPlainTextDocId } from "@/lib/vault-doc-kind";
+import { isWhitespaceOnlyVaultMarkdown } from "@/lib/vault-markdown-normalize";
 import {
   clampMcpConnectPanelWidth,
   defaultClientUiSettings,
@@ -138,6 +138,7 @@ import {
   resolveVaultExportFileName,
 } from "@/lib/vault-document-export";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 import { BacklinksPanel } from "./vault-backlinks-panel";
@@ -162,6 +163,7 @@ import { VaultExplorerDeleteConfirmDialog } from "./vault-explorer-delete-dialog
 import { FileTab } from "./vault-file-tab";
 import { VaultExplorerSidebarResizeHandle } from "./vault-explorer-sidebar-resize-handle";
 import { FileTree } from "./vault-file-tree";
+import { VaultApiGraphPanel } from "./vault-api-graph-panel";
 import { FullGraph } from "./vault-full-graph";
 import { TagsPanel } from "./vault-tags-panel";
 import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-reducer";
@@ -248,8 +250,6 @@ export function VaultOpenWorkspace({
   onActiveVaultIdChange,
   removeVault,
 }: VaultOpenWorkspaceProps) {
-  const router = useRouter();
-
   type PendingPrefixMigration = { from: string; to: string };
   const applyPrefixMigrationsToContents = useCallback(
     (
@@ -396,6 +396,36 @@ export function VaultOpenWorkspace({
     setFullSnapshotDirtyEpoch((e) => e + 1);
   }, []);
 
+  /**
+   * Mantém `noteContentsRef` alinhado com cada tecla antes de qualquer `await` (sync/debounce).
+   * Sem isto, o POST /sync ou o merge blob→estado podiam ler texto antigo e sobrescrever o que o Plate já emitiu.
+   */
+  const commitActiveTabNoteChange = useCallback(
+    (next: string) => {
+      const tabId = uiLatestRef.current.activeTabId;
+      if (!tabId) return;
+      /**
+       * Defesa extra (lazy-Git): o Plate podia emitir só ruído (vazio / whitespace) antes de
+       * existir corpo em `noteContentsRef`, marcando dirty e impedindo o merge blob→estado de reidratar.
+       */
+      if (
+        usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current) &&
+        isWhitespaceOnlyVaultMarkdown(next) &&
+        noteContentsRef.current[tabId] === undefined
+      ) {
+        return;
+      }
+      if (usesLazyGitRemote(vaultIdRef.current, activeVaultMetaRef.current)) {
+        markLazyGitDirtyDoc(tabId);
+      } else if (isBackendSyncVaultId(vaultIdRef.current)) {
+        setFullSnapshotDirtyEpoch((e) => e + 1);
+      }
+      noteContentsRef.current = { ...noteContentsRef.current, [tabId]: next };
+      setNoteContents((prev) => ({ ...prev, [tabId]: next }));
+    },
+    [markLazyGitDirtyDoc],
+  );
+
   const handleApplyAgentFileEdit = useCallback(
     async (docId: string, content: string) => {
       await fetch(`/api/vaults/${encodeURIComponent(vaultId)}/files/upsert`, {
@@ -405,6 +435,7 @@ export function VaultOpenWorkspace({
       }).then((r) => {
         if (!r.ok) throw new Error(`Falha ao salvar ${docId}`);
       });
+      noteContentsRef.current = { ...noteContentsRef.current, [docId]: content };
       setNoteContents((prev) => ({ ...prev, [docId]: content }));
       markLazyGitDirtyDoc(docId);
       if (isBackendSyncVaultId(vaultId) && !usesLazyGitRemote(vaultId, activeVaultMeta)) {
@@ -472,7 +503,6 @@ export function VaultOpenWorkspace({
         lastLazyGitTreeCommitShortRef.current = remoteTail;
         lastBlobFetchRef.current = null;
         lazyGitBlobsSnapshotCommitRef.current = null;
-        lazyGitDirtyDocIdsRef.current.clear();
         if (allContents && allContents.files.length > 0 && !ac.signal.aborted) {
           applyBulkContentsToNoteContents(
             allContents.files,
@@ -710,9 +740,22 @@ export function VaultOpenWorkspace({
         setLastGiteaCommitHash(remoteTail);
         remoteTailPollSeenRef.current = remoteTail;
         pendingPrefixMigrationsRef.current = [];
-        lazyGitDirtyDocIdsRef.current.clear();
+        {
+          const refSnap = noteContentsRef.current;
+          const stillDirty = new Set<string>();
+          for (const id of lazyGitDirtyDocIdsRef.current) {
+            if (refSnap[id] !== preSyncNoteSnapshot[id]) {
+              stillDirty.add(id);
+            }
+          }
+          lazyGitDirtyDocIdsRef.current = stillDirty;
+          if (stillDirty.size === 0) {
+            clearVaultGitPendingSyncPaths(vaultId);
+          } else {
+            writeVaultGitPendingSyncPaths(vaultId, [...stillDirty]);
+          }
+        }
         lazyGitTreeDirtyRef.current = false;
-        clearVaultGitPendingSyncPaths(vaultId);
         syncDirtyStartAtRef.current = null;
         if (!usesLazyGitRemote(vaultId, activeVaultMetaRef.current)) {
           setFullSnapshotDirtyEpoch(0);
@@ -1477,11 +1520,7 @@ export function VaultOpenWorkspace({
 
     if (viewGraph && !file && !folder) {
       appliedUrlTargetRef.current = urlTargetKey;
-      if (isBackendSyncVaultId(vaultId)) {
-        router.replace(`/vault/${encodeURIComponent(vaultId)}/graph`);
-      } else {
-        dispatchUi({ type: "showGraph" });
-      }
+      dispatchUi({ type: "showGraph" });
       setUrlSyncReady(true);
       return;
     }
@@ -1536,7 +1575,7 @@ export function VaultOpenWorkspace({
         setUrlSyncReady(true);
       }
     }
-  }, [urlTargetKey, treeDocIdsKey, dispatchUi, vaultId, router, activeVaultMeta]);
+  }, [urlTargetKey, treeDocIdsKey, dispatchUi, vaultId, activeVaultMeta]);
 
   useEffect(() => {
     if (urlSyncReady) return;
@@ -1977,12 +2016,8 @@ export function VaultOpenWorkspace({
   }, []);
 
   const openGraph = useCallback(() => {
-    if (isBackendSyncVaultId(vaultId)) {
-      router.push(`/vault/${encodeURIComponent(vaultId)}/graph`);
-    } else {
-      dispatchUi({ type: "showGraph" });
-    }
-  }, [vaultId, router]);
+    dispatchUi({ type: "showGraph" });
+  }, []);
 
   const restoreFromCommit = useCallback(
     async (
@@ -2698,19 +2733,22 @@ export function VaultOpenWorkspace({
           </button>
         </div>
         <div className="hidden h-9 shrink-0 items-center gap-0.5 border-b border-border bg-card/30 px-1 lg:flex">
-          {isBackendSyncVaultId(vaultId) && (
+          {isBackendSyncVaultId(vaultId) ? (
             <Link
-              href={`/vault/${encodeURIComponent(vaultId)}/graph`}
+              href={`/vault?vaultId=${encodeURIComponent(vaultId)}&view=graph`}
               title="Grafo do vault (API)"
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs transition-colors",
-                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                "flex max-w-[min(200px,40vw)] shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-xs transition-colors",
+                "focus-visible:ring-2 focus-visible:ring-primary/40",
+                viewMode === "graph"
+                  ? "border-sidebar-border/60 bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
               )}
             >
-              <Share2 className="size-3.5" />
+              <Share2 className="size-3.5 shrink-0" />
               Grafo API
             </Link>
-          )}
+          ) : null}
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5 [scrollbar-width:thin]">
             {openTabs.map((id) => (
               <FileTab
@@ -2725,90 +2763,96 @@ export function VaultOpenWorkspace({
             ))}
           </div>
           {viewMode === "editor" ? (
-            <button
-              type="button"
-              onClick={() => setBacklinksPanelOpen((o) => !o)}
-              title={backlinksPanelOpen ? "Fechar painel de backlinks" : "Abrir painel de backlinks"}
-              aria-expanded={backlinksPanelOpen}
-              aria-controls="vault-backlinks-panel"
-              className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
-                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                backlinksPanelOpen && "bg-muted text-foreground",
-              )}
-            >
-              <Link2 className="size-3.5 shrink-0" aria-hidden />
-              <span className="hidden sm:inline">Backlinks</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setBacklinksPanelOpen((o) => !o)}
+                aria-expanded={backlinksPanelOpen}
+                aria-controls="vault-backlinks-panel"
+                aria-label={backlinksPanelOpen ? "Fechar painel de backlinks" : "Abrir painel de backlinks"}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-colors",
+                  "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                  backlinksPanelOpen && "bg-muted text-foreground",
+                )}
+              >
+                <Link2 className="size-4 shrink-0" aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>Backlinks</TooltipContent>
+            </Tooltip>
           ) : null}
           {viewMode === "editor" ? (
-            <button
-              type="button"
-              onClick={() => setAgentChatPanelOpen((o) => !o)}
-              title={agentChatPanelOpen ? "Fechar painel do agente" : "Abrir chat do agente"}
-              aria-expanded={agentChatPanelOpen}
-              aria-controls="vault-agent-chat-panel"
-              className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
-                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                agentChatPanelOpen && "bg-muted text-foreground",
-              )}
-            >
-              <Bot className="size-3.5 shrink-0" aria-hidden />
-              <span className="hidden sm:inline">Agente</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setAgentChatPanelOpen((o) => !o)}
+                aria-expanded={agentChatPanelOpen}
+                aria-controls="vault-agent-chat-panel"
+                aria-label={agentChatPanelOpen ? "Fechar painel do agente" : "Abrir chat do agente"}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-colors",
+                  "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                  agentChatPanelOpen && "bg-muted text-foreground",
+                )}
+              >
+                <Bot className="size-4 shrink-0" aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>Agente</TooltipContent>
+            </Tooltip>
           ) : null}
           {viewMode === "editor" ? (
-            <button
-              type="button"
-              onClick={() => setMcpConnectPanelOpen((o) => !o)}
-              title={mcpConnectPanelOpen ? "Fechar painel MCP" : "Conectar via MCP"}
-              aria-expanded={mcpConnectPanelOpen}
-              aria-controls="vault-mcp-connect-panel"
-              className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
-                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                mcpConnectPanelOpen && "bg-muted text-foreground",
-              )}
-            >
-              <Plug className="size-3.5 shrink-0" aria-hidden />
-              <span className="hidden sm:inline">MCP</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setMcpConnectPanelOpen((o) => !o)}
+                aria-expanded={mcpConnectPanelOpen}
+                aria-controls="vault-mcp-connect-panel"
+                aria-label={mcpConnectPanelOpen ? "Fechar painel MCP" : "Conectar via MCP"}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-colors",
+                  "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                  mcpConnectPanelOpen && "bg-muted text-foreground",
+                )}
+              >
+                <Plug className="size-4 shrink-0" aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>MCP</TooltipContent>
+            </Tooltip>
           ) : null}
-          <button
-            type="button"
-            title="Nova nota (nova aba)"
-            onClick={quickNewNoteFromToolbar}
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Nova aba"
-          >
-            <Plus className="size-4" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              onClick={quickNewNoteFromToolbar}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Nova aba"
+            >
+              <Plus className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>Nova nota (nova aba)</TooltipContent>
+          </Tooltip>
           {isBackendSyncVaultId(vaultId) ? (
-            <button
-              type="button"
-              title={
-                versionHistoryPanelOpen
-                  ? "Fechar histórico de versões (Gitea)"
-                  : "Abrir histórico de versões (Gitea)"
-              }
-              onClick={() => setVersionHistoryPanelOpen((o) => !o)}
-              disabled={isRestoringCommit}
-              aria-expanded={versionHistoryPanelOpen}
-              aria-controls="vault-version-history-panel"
-              className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs transition-colors",
-                "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
-                versionHistoryPanelOpen && "bg-muted text-foreground",
-              )}
-            >
-              {isRestoringCommit ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-              ) : (
-                <History className="size-3.5 shrink-0" aria-hidden />
-              )}
-              <span className="hidden sm:inline">Versões</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setVersionHistoryPanelOpen((o) => !o)}
+                disabled={isRestoringCommit}
+                aria-expanded={versionHistoryPanelOpen}
+                aria-controls="vault-version-history-panel"
+                aria-label={
+                  versionHistoryPanelOpen
+                    ? "Fechar histórico de versões (Gitea)"
+                    : "Abrir histórico de versões (Gitea)"
+                }
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-md transition-colors",
+                  "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
+                  versionHistoryPanelOpen && "bg-muted text-foreground",
+                  "disabled:pointer-events-none disabled:opacity-40",
+                )}
+              >
+                {isRestoringCommit ? (
+                  <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                ) : (
+                  <History className="size-4 shrink-0" aria-hidden />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>Versões</TooltipContent>
+            </Tooltip>
           ) : null}
           <Menu.Root>
             <Menu.Trigger className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground data-popup-open:bg-muted">
@@ -2931,11 +2975,15 @@ export function VaultOpenWorkspace({
         </div>
 
         {viewMode === "graph" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="min-h-0 flex-1">
-              <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
+          isBackendSyncVaultId(vaultId) ? (
+            <VaultApiGraphPanel vaultId={vaultId} className="min-h-0 flex-1" />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-0 flex-1">
+                <FullGraph graph={graphData} onSelectFile={browseSelectFile} highlightId={graphHighlightId} />
+              </div>
             </div>
-          </div>
+          )
         ) : openTabs.length === 0 || !activeTabId ? (
           <div className="flex flex-1 items-center justify-center px-6 text-center font-mono text-sm text-muted-foreground">
             Nenhum arquivo aberto. Escolha um arquivo na árvore ou no grafo.
@@ -2966,14 +3014,7 @@ export function VaultOpenWorkspace({
                   ? mockDocToMarkdown(activeDoc)
                   : "")
               }
-              onChange={(next) => {
-                if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
-                  markLazyGitDirtyDoc(activeTabId);
-                } else if (isBackendSyncVaultId(vaultId)) {
-                  bumpFullSnapshotDirtyForPush();
-                }
-                setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
-              }}
+              onChange={commitActiveTabNoteChange}
               breadcrumb={editorBreadcrumb}
               onSelectFile={browseSelectFile}
               hideTopChrome
@@ -2997,14 +3038,7 @@ export function VaultOpenWorkspace({
                   ? mockDocToMarkdown(activeDoc)
                   : "")
               }
-              onChange={(next) => {
-                if (usesLazyGitRemote(vaultId, activeVaultMeta)) {
-                  markLazyGitDirtyDoc(activeTabId);
-                } else if (isBackendSyncVaultId(vaultId)) {
-                  bumpFullSnapshotDirtyForPush();
-                }
-                setNoteContents((prev) => ({ ...prev, [activeTabId]: next }));
-              }}
+              onChange={commitActiveTabNoteChange}
               breadcrumb={editorBreadcrumb}
               onSelectFile={browseSelectFile}
               hideTopChrome
@@ -3225,7 +3259,7 @@ export function VaultOpenWorkspace({
               </div>
               {isBackendSyncVaultId(vaultId) ? (
                 <Link
-                  href={`/vault/${encodeURIComponent(vaultId)}/graph`}
+                  href={`/vault?vaultId=${encodeURIComponent(vaultId)}&view=graph`}
                   onClick={() => setMobileActionsOpen(false)}
                   className={vaultMobileActionLinkLayout}
                 >

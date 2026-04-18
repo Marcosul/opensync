@@ -24,19 +24,19 @@ import {
 import { buildVaultSlashCommands, tryOpenSlashMenu, VaultPlateSlashPopover } from "@/components/app/vault-plate-slash-popover";
 import { VaultPlateToolbar } from "@/components/app/vault-plate-toolbar";
 import { Editor, EditorContainer } from "@/components/plate-ui/editor";
+import {
+  decodeAsciiSpaceCharRefs,
+  normalizeVaultMarkdownForCompare,
+} from "@/lib/vault-markdown-normalize";
 import { cn } from "@/lib/utils";
 
 const OPENSYNC_WS_TYPE = "opensync-ws";
 
 /**
+ * `[[id]]` → link Markdown para o importador tratar como hiperligação.
  * O remark/mdast escapa espaços U+0020 “ambíguos” (p.ex. início de parágrafo após um heading)
- * como `&#x20;` ou `&#32;`, o que polui o `.md` no disco. Normalizamos para espaço literal.
+ * como `&#x20;` ou `&#32;`, o que polui o `.md` no disco — normalizamos em {@link decodeAsciiSpaceCharRefs}.
  */
-function decodeAsciiSpaceCharRefs(md: string): string {
-  return md.replace(/&#x0*20;/gi, " ").replace(/&#0*32;/g, " ");
-}
-
-/** `[[id]]` → link Markdown para o importador tratar como hiperligação. */
 export function preprocessWikiLinksForPlate(source: string): string {
   const cleaned = decodeAsciiSpaceCharRefs(source);
   return cleaned.replace(/\[\[([^\]]+)\]\]/g, (_, id: string) => {
@@ -53,7 +53,18 @@ export function postprocessWikiLinksFromPlate(md: string): string {
 }
 
 function normalizeVaultMarkdown(md: string): string {
-  return decodeAsciiSpaceCharRefs(md.replace(/\r\n/g, "\n")).trimEnd();
+  return normalizeVaultMarkdownForCompare(md);
+}
+
+/**
+ * Evita que um blob/snapshot remoto ligeiramente atrasado substitua o Plate quando o utilizador
+ * já avançou no texto (o corpo local serializado prolonga o remoto normalizado).
+ */
+function looksLikeStaleRemoteBehindLocal(localMd: string, remoteMd: string): boolean {
+  const loc = normalizeVaultMarkdown(localMd);
+  const rem = normalizeVaultMarkdown(remoteMd);
+  if (loc === rem || rem.length === 0) return false;
+  return loc.length > rem.length && loc.startsWith(rem);
 }
 
 /** Plate → Markdown (GFM) via {@link https://platejs.org/docs/markdown MarkdownPlugin}. */
@@ -211,6 +222,13 @@ export function VaultPlateMarkdownEditor({
   const valueRef = useRef(value);
   valueRef.current = value;
   const lastEmittedMarkdownRef = useRef<string | null>(null);
+  /**
+   * O Plate monta com {@link EMPTY_VAULT_PLATE_DOC} e pode disparar `onValueChange` no mesmo commit
+   * **antes** do `useLayoutEffect` aplicar o `value` vindo do servidor. Isso gravava `""`, marcava o
+   * path como dirty no lazy-Git e o merge blob→`noteContents` deixava de reidratar (ficheiro apagado
+   * no remoto). Só emitimos para o pai depois de sincronizar o doc com as props.
+   */
+  const readyToEmitRef = useRef(false);
   /** Evita que `setValue` programático dispare `onValueChange` e sobrescreva o pai com serialização intermédia. */
   const suppressOnChangeRef = useRef(false);
 
@@ -280,31 +298,48 @@ export function VaultPlateMarkdownEditor({
 
   useLayoutEffect(() => {
     lastEmittedMarkdownRef.current = null;
+    readyToEmitRef.current = false;
   }, [docId]);
 
   useLayoutEffect(() => {
-    if (collabEnabled || !editor) return;
-    const incomingRaw = value ?? "";
-    const lastOut = lastEmittedMarkdownRef.current;
-    if (lastOut !== null) {
-      if (incomingRaw === lastOut) return;
-      if (normalizeVaultMarkdown(incomingRaw) === normalizeVaultMarkdown(lastOut)) return;
-    }
-    const incoming = normalizeVaultMarkdown(incomingRaw);
-    const current = vaultMarkdownFromPlate(editor);
-    if (incoming === current) return;
-    const nodes = editor.getApi(MarkdownPlugin).markdown.deserialize(preprocessWikiLinksForPlate(value ?? ""));
-    suppressOnChangeRef.current = true;
+    if (!editor) return;
+    if (collabEnabled) return;
     try {
-      editor.tf.setValue(nodes.length ? nodes : EMPTY_VAULT_PLATE_DOC);
+      const incomingRaw = value ?? "";
+      const lastOut = lastEmittedMarkdownRef.current;
+      if (lastOut !== null) {
+        if (incomingRaw === lastOut) return;
+        if (normalizeVaultMarkdown(incomingRaw) === normalizeVaultMarkdown(lastOut)) return;
+      }
+      const incoming = normalizeVaultMarkdown(incomingRaw);
+      const current = vaultMarkdownFromPlate(editor);
+      if (incoming === current) return;
+      if (lastOut !== null) {
+        const lastNorm = normalizeVaultMarkdown(lastOut);
+        const curNorm = normalizeVaultMarkdown(current);
+        if (
+          lastNorm === curNorm &&
+          looksLikeStaleRemoteBehindLocal(current, incomingRaw)
+        ) {
+          return;
+        }
+      }
+      const nodes = editor.getApi(MarkdownPlugin).markdown.deserialize(preprocessWikiLinksForPlate(value ?? ""));
+      suppressOnChangeRef.current = true;
+      try {
+        editor.tf.setValue(nodes.length ? nodes : EMPTY_VAULT_PLATE_DOC);
+      } finally {
+        suppressOnChangeRef.current = false;
+      }
     } finally {
-      suppressOnChangeRef.current = false;
+      readyToEmitRef.current = true;
     }
   }, [collabEnabled, editor, value, docId]);
 
   useLayoutEffect(() => {
     if (!collabEnabled || !editor || !collaboration) return;
     let cancelled = false;
+    readyToEmitRef.current = false;
     const initial = editor.getApi(MarkdownPlugin).markdown.deserialize(preprocessWikiLinksForPlate(valueRef.current ?? ""));
 
     void (async () => {
@@ -315,7 +350,9 @@ export function VaultPlateMarkdownEditor({
       });
       if (cancelled) {
         editor.getApi(YjsPlugin).yjs.destroy();
+        return;
       }
+      readyToEmitRef.current = true;
     })();
 
     return () => {
@@ -359,6 +396,7 @@ export function VaultPlateMarkdownEditor({
           editor={editor}
           onValueChange={({ editor: ed }) => {
             if (suppressOnChangeRef.current) return;
+            if (!readyToEmitRef.current) return;
             emitMarkdown(ed);
           }}
         >
