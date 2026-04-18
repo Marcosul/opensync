@@ -115,7 +115,7 @@ function VaultTurnIntoBlockButton() {
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 min-w-[9.75rem] shrink-0 justify-between gap-1 px-2 text-xs font-medium"
+          className="h-8 w-[6rem] min-w-0 shrink-0 justify-between gap-1 px-2 text-xs font-medium"
           onMouseDown={(e) => e.preventDefault()}
           aria-label="Converter bloco"
           aria-expanded={open}
