@@ -35,6 +35,21 @@ export function LandingFooter({ className }: { className?: string }) {
               </p>
               <ul className="mt-4 flex flex-col gap-3">
                 <li>
+                  <Link href="#problem" className={footerLinkClass}>
+                    {messages.problem.eyebrow}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="#solution" className={footerLinkClass}>
+                    {messages.solution.eyebrow}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="#how-it-works" className={footerLinkClass}>
+                    {messages.howItWorks.eyebrow}
+                  </Link>
+                </li>
+                <li>
                   <Link href="#manifest" className={footerLinkClass}>
                     {messages.manifest.eyebrow}
                   </Link>
@@ -52,6 +67,11 @@ export function LandingFooter({ className }: { className?: string }) {
                 <li>
                   <Link href="#compare" className={footerLinkClass}>
                     {messages.comparison.eyebrow}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="#faq" className={footerLinkClass}>
+                    {messages.faq.eyebrow}
                   </Link>
                 </li>
               </ul>

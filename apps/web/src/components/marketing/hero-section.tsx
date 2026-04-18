@@ -16,10 +16,10 @@ export function HeroSection() {
       className="relative flex flex-col items-center px-4 pb-16 pt-8 sm:px-6 lg:px-8 lg:pb-24 lg:pt-12"
     >
       <div className="mx-auto flex w-full max-w-[1360px] flex-col items-center text-center">
-        <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+        {/* <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
           <span className="size-1.5 rounded-full bg-primary" aria-hidden />
           {messages.hero.badge}
-        </span>
+        </span> */}
 
         <h1 className="max-w-2xl text-balance font-heading text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-[3.25rem] lg:leading-[1.1]">
           {messages.hero.titleTop}
@@ -37,17 +37,17 @@ export function HeroSection() {
           <Link
             href="/sign-up"
             className={cn(
-              buttonVariants({ variant: "outline", size: "lg" }),
-              "h-11 min-h-[44px] rounded-lg border-foreground/20 bg-background px-6 text-base font-medium shadow-none hover:bg-muted"
+              buttonVariants({ variant: "default", size: "lg" }),
+              "h-11 min-h-[44px] rounded-lg px-6 text-base font-medium",
             )}
           >
             {messages.hero.startFree}
           </Link>
           <Link
-            href="#features"
+            href="#how-it-works"
             className={cn(
-              buttonVariants({ variant: "outline", size: "lg" }),
-              "h-11 min-h-[44px] rounded-lg border-foreground/20 bg-background px-6 text-base font-medium shadow-none hover:bg-muted"
+              buttonVariants({ variant: "link", size: "lg" }),
+              "h-11 min-h-[44px] px-6 text-base font-medium shadow-none hover:bg-muted",
             )}
           >
             {messages.hero.seeHow}
@@ -59,7 +59,7 @@ export function HeroSection() {
         </div>
 
         <Link
-          href="#features"
+          href="#how-it-works"
           className="mt-12 flex size-10 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
           aria-label={messages.hero.scrollAria}
         >
@@ -81,10 +81,7 @@ export function LandingBrandMark({ className }: { className?: string }) {
         className="size-10 rounded-lg"
       />
       <div className="text-left leading-none">
-        <span className="block text-lg font-bold tracking-tight text-foreground">
-          opensync
-        </span>
-        <span className="text-sm font-normal text-muted-foreground">.space</span>
+        <span className="block text-lg font-bold tracking-tight text-foreground">opensync</span>
       </div>
     </Link>
   );

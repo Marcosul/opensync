@@ -9,7 +9,7 @@ export function ManifestSection() {
   return (
     <section
       id="manifest"
-      className="border-t border-border/60 bg-muted/30 px-4 py-16 sm:px-6 sm:py-20 lg:px-8"
+      className="scroll-mt-24 border-t border-border/60 bg-muted/30 px-4 py-16 sm:px-6 sm:py-20 lg:px-8"
     >
       <div className="mx-auto w-full max-w-[1360px]">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-16 lg:items-start">

@@ -43,6 +43,38 @@ type Messages = {
     lead: string;
     principles: Array<{ title: string; body: string }>;
   };
+  howItWorks: {
+    eyebrow: string;
+    title: string;
+    lead: string;
+    cards: Array<{ title: string; body: string }>;
+  };
+  problem: {
+    eyebrow: string;
+    title: string;
+    intro1: string;
+    intro2: string;
+    compactionTitle: string;
+    compactionBullets: string[];
+    pathsTitle: string;
+    soloLabel: string;
+    soloTitle: string;
+    soloLines: string[];
+    teamLabel: string;
+    teamTitle: string;
+    teamLines: string[];
+    islandNote: string;
+    metaphorTitle: string;
+    metaphorBody: string;
+    closing: string;
+  };
+  solution: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    lead: string;
+    bullets: string[];
+  };
   features: {
     eyebrow: string;
     title: string;
@@ -88,6 +120,12 @@ type Messages = {
     footerTotal: string;
     footnote: string;
   };
+  faq: {
+    eyebrow: string;
+    title: string;
+    lead: string;
+    items: Array<{ question: string; answer: string }>;
+  };
   footer: {
     tagline: string;
     product: string;
@@ -117,7 +155,7 @@ const BASE_EN: Messages = {
     titleAccent: "always safe. Always synced.",
     bodyPrefix: "Version control, sync, and a beautiful editor for your",
     bodySuffix: "workspace. Git-powered. Obsidian-inspired. Yours.",
-    startFree: "start free — no credit card",
+    startFree: "Start for free",
     seeHow: "see how it works ↓",
     scrollAria: "Scroll to features",
   },
@@ -128,13 +166,14 @@ const BASE_EN: Messages = {
       "We believe your agent's knowledge should be portable, versioned, and yours—not locked in a silo.",
     principles: [
       {
-        title: "Documentation first",
+        title: "Documentation-first",
         body:
-          "In the AI era, documentation structured for machines is the source of truth: it is the natural format for building agents and for organizing your knowledge base.",
+          "Documentation is engineering, not a postscript. Starting a project by writing structure—folders, READMEs, ADRs, interfaces—forces you to think in surfaces an agent can navigate: stable headings, wikilinks, and filenames beat dumping context only in chat. Markdown (.md) matters because it is human-readable, diffable in Git, and the default meal for models and tools: your spec, runbooks, and agent instructions stay one portable artifact.",
       },
       {
         title: "Git is the contract",
-        body: "Every change is a commit you can diff, branch, and roll back. Your history stays honest and inspectable.",
+        body:
+          "Every change is a commit you can diff, branch, and roll back. Your history stays honest and inspectable. You do not need to memorize Git commands—opensync runs that layer for you while you edit, sync, and roll back from the app.",
       },
       {
         title: "Markdown and YAML in the open",
@@ -148,6 +187,76 @@ const BASE_EN: Messages = {
         title: "Sync without ransom",
         body: "Fair pricing for sync, full history, and a web editor in one place—without stacking extras for basics.",
       },
+    ],
+  },
+  howItWorks: {
+    eyebrow: "How it works",
+    title: "From empty folder to synced vault in minutes",
+    lead: "Four steps: connect your workspace, let Git track changes, edit anywhere, and keep agents in sync.",
+    cards: [
+      {
+        title: "Create your vault",
+        body: "Sign up and start a vault per agent or project. Your files live in a real Git repository you control.",
+      },
+      {
+        title: "Connect & sync",
+        body: "Install the OpenClaw plugin or use the web app. Changes push and pull across devices with full history.",
+      },
+      {
+        title: "Edit with confidence",
+        body: "Use the Obsidian-style editor, wikilinks, and graph view. Every save can become a commit you can roll back.",
+      },
+      {
+        title: "Automate with agents",
+        body: "Let OpenClaw read and write the same vault—structured markdown stays the contract between humans and agents.",
+      },
+    ],
+  },
+  problem: {
+    eyebrow: "The problem",
+    title: "How do I sync my knowledge with my agents?",
+    intro1:
+      "AI agents run on instructions in .md files scattered across folders. When they rewrite their own configs, they can drift or break themselves.",
+    intro2:
+      "Meanwhile, you often want to edit those same markdown files directly—with no single place that stays true for both you and the team.",
+    compactionTitle: "Compaction eats short-term context",
+    compactionBullets: [
+      "Compaction runs → context disappears.",
+      "The agent that felt brilliant yesterday may remember nothing tomorrow.",
+      "You re-explain the same briefing—again and again.",
+    ],
+    pathsTitle: "Two real-world paths",
+    soloLabel: "Solopreneur",
+    soloTitle: "OpenClaw + Obsidian",
+    soloLines: [
+      "Personal vault, offline-first, native AI markdown.",
+      "Roughly 20 minutes of setup; strong for individuals.",
+    ],
+    teamLabel: "Team",
+    teamTitle: "OpenClaw + Git (e.g. GitHub)",
+    teamLines: [
+      "Shared versioning and traceability—agent A can see what agent B recorded.",
+      "Collective context needs collective infrastructure, not private islands.",
+    ],
+    islandNote:
+      "Obsidian is an island by design: each collaborator’s vault does not automatically connect. When the context is shared, the plumbing has to be shared too.",
+    metaphorTitle: "Like sleep for memory",
+    metaphorBody:
+      "During the day, work lands in the inbox—short-term memory. Overnight, consolidation organizes, deduplicates, and writes to long-term memory. The next morning, every agent on the team can start from yesterday’s shared knowledge.",
+    closing:
+      "The next years will separate people who operate with AI from people who only use it—the difference will be the knowledge infrastructure underneath, not the model name on the box.",
+  },
+  solution: {
+    eyebrow: "The solution",
+    title: "Built for teams",
+    subtitle: "Knowledge infrastructure, not another silo",
+    lead:
+      "opensync is Git-powered sync and editing so humans and agents share one source of truth—without everyone becoming a Git expert.",
+    bullets: [
+      "Connect vaults and workflows (including via MCP) so context isn’t trapped on one machine.",
+      "Versioning with Git under the hood: history and rollback without forcing CLI workflows on every user.",
+      "A familiar editing toolbar for people who prefer Word-like controls over raw markdown.",
+      "Chat-oriented flows so your agent can propose edits to documents while you stay in control.",
     ],
   },
   features: {
@@ -278,6 +387,38 @@ const BASE_EN: Messages = {
     footnote:
       "Pricing is indicative: Obsidian app is free; Sync, Publish, and Catalyst are separate. Notion tiers vary by seats and AI add-ons.",
   },
+  faq: {
+    eyebrow: "FAQ",
+    title: "Common questions",
+    lead: "Short answers—see the comparison table for a feature-by-feature view.",
+    items: [
+      {
+        question: "What’s opensync’s edge over Obsidian?",
+        answer:
+          "Obsidian is an excellent local editor and personal knowledge base. opensync adds team-friendly Git history, rollback, and sync in one product-shaped layer—so agents and humans can share the same markdown vault without each person living on a disconnected island.",
+      },
+      {
+        question: "What’s the differentiator vs Notion?",
+        answer:
+          "Notion is block-based and cloud-first. opensync keeps plain Markdown/YAML on disk with Git as the contract: diffable history, portable files, and workflows tuned for coding agents (OpenClaw, Claude Code) that read and write real repos.",
+      },
+      {
+        question: "Why use opensync with OpenClaw or Claude Code?",
+        answer:
+          "Your agents already think in files and commits. opensync gives them a safe, versioned vault with sync and a web editor—so automation and humans edit the same source of truth instead of duplicating context in chat only.",
+      },
+      {
+        question: "Can I use it for non-agent projects?",
+        answer:
+          "Yes. Vaults are normal Git repositories: documentation, runbooks, personal notes, or any markdown-first project benefit from the same sync, history, and editor.",
+      },
+      {
+        question: "Can I publish a knowledge base to the web?",
+        answer:
+          "You can generate a read-only public link for a vault from the dashboard, so others can browse your knowledge base on the internet without edit access—useful for docs, portfolios, or shared references.",
+      },
+    ],
+  },
   footer: {
     tagline: "Git-powered vaults and sync built for OpenClaw agents.",
     product: "Product",
@@ -299,7 +440,7 @@ const PT_BR: Messages = {
     titleAccent: "do jeito que a IA entende",
     bodyPrefix: " Crie pastas para base de conhecimento de agentes OpenClaw ou so seu negócio multimilinário.",
     bodySuffix: "Sincronize, versione e edite como um maestro.",
-    startFree: "começar grátis — sem cartão",
+    startFree: "começar grátis",
     seeHow: "ver como funciona ↓",
     scrollAria: "Ir para seção de features",
   },
@@ -309,6 +450,16 @@ const PT_BR: Messages = {
     lead:
       "Acreditamos que o conhecimento do seu agente deve ser portável, versionado e seu—não preso a um silo.",
     principles: [
+      {
+        title: "Documentation-first",
+        body:
+          "Documentar deixa de ser lembrar no fim e passa a ser engenharia de documentação: começar o projeto já escrevendo a estrutura (pastas, README, decisões, contratos) obriga a pensar em caminhos que um agente consegue seguir—títulos estáveis, wikilinks e nomes de arquivo vencem só jogar contexto no chat. Markdown (.md) é o formato certo porque é legível para humanos, comparável no Git e o formato que modelos e ferramentas mais comem com previsibilidade: spec, runbooks e instruções do agente continuam sendo um único artefato portátil.",
+      },
+      {
+        title: "Git é o contrato",
+        body:
+          "Cada mudança é um commit que você pode comparar, ramificar e desfazer. O histórico continua claro e auditável. Hoje você não precisa saber comandos Git na ponta da língua—o opensync cuida dessa camada por você enquanto você edita, sincroniza e faz rollback pelo app.",
+      },
       {
         title: "Perfeito para agentes OpenClaw",
         body: "Agentes Openclaw podem se auto-suicidar sem querer quando reescreverem configurações ruins. O opensync garante que o conhecimento do seu agente seja sempre seguro e sincronizado.",
@@ -322,10 +473,76 @@ const PT_BR: Messages = {
         title: "Formatos abertos",
         body: "Crie documentos em formatos abertos (Markdown, YAML e JSON) natualmente entendíveis por agentes, facilmente editáveis por humanos e executáveis por agentes.",
       },
+    ],
+  },
+  howItWorks: {
+    eyebrow: "Como funciona",
+    title: "Da pasta vazia ao vault sincronizado em minutos",
+    lead: "Quatro passos: conectar o workspace, deixar o Git registrar mudanças, editar em qualquer lugar e manter agentes alinhados.",
+    cards: [
       {
-        title: "Git é o contrato",
-        body: "Cada mudança é um commit que você pode comparar, ramificar e desfazer. O histórico continua claro e auditável.",
-      }
+        title: "Crie seu vault",
+        body: "Cadastre-se e abra um vault por agente ou projeto. Seus arquivos ficam em um repositório Git de verdade, seu.",
+      },
+      {
+        title: "Conecte e sincronize",
+        body: "Use o plugin OpenClaw ou o app web. Alterações sobem e descem entre dispositivos com histórico completo.",
+      },
+      {
+        title: "Edite com segurança",
+        body: "Editor no estilo Obsidian, wikilinks e graph view. Cada salvamento pode virar um commit que você desfaz quando quiser.",
+      },
+      {
+        title: "Automatize com agentes",
+        body: "OpenClaw lê e escreve o mesmo vault—Markdown estruturado continua sendo o contrato entre humanos e agentes.",
+      },
+    ],
+  },
+  problem: {
+    eyebrow: "O problema",
+    title: "Como sincronizar meu conhecimento com meus agentes?",
+    intro1:
+      "Os agentes de IA operam a partir de instruções em arquivos .md, espalhados em várias pastas. Ao atualizarem os próprios arquivos de configuração, muitas vezes se perdem.",
+    intro2:
+      "E você, humano, muitas vezes quer editar esses .md diretamente—sem um lugar único que continue verdadeiro para o time inteiro.",
+    compactionTitle: "Compaction apaga o contexto de curto prazo",
+    compactionBullets: [
+      "Roda a compaction → o contexto some.",
+      "O agente brilhante ontem pode não lembrar de nada amanhã.",
+      "Você reexplica o mesmo briefing—de novo, sempre.",
+    ],
+    pathsTitle: "Dois caminhos no mundo real",
+    soloLabel: "Solopreneur",
+    soloTitle: "OpenClaw + Obsidian",
+    soloLines: [
+      "Vault pessoal, offline-first, markdown nativo para IA.",
+      "Cerca de 20 minutos de setup; ótimo para uso individual.",
+    ],
+    teamLabel: "Time",
+    teamTitle: "OpenClaw + Git (ex.: GitHub)",
+    teamLines: [
+      "Versionamento e rastreabilidade compartilhados—o agente A enxerga o que o B registrou.",
+      "Contexto coletivo exige infraestrutura coletiva, não ilhas privadas.",
+    ],
+    islandNote:
+      "Obsidian é uma ilha por design: o vault de cada colaborador não se conecta automaticamente ao dos outros. Quando o contexto é de time, o encanamento também precisa ser de time.",
+    metaphorTitle: "Como o sono para a memória",
+    metaphorBody:
+      "De dia, o trabalho vai para a inbox—memória de curto prazo. À noite, a consolidação organiza, remove redundâncias e grava na memória longa. Na manhã seguinte, todos os agentes do time podem começar do conhecimento compartilhado do dia anterior.",
+    closing:
+      "Os próximos anos vão separar quem opera com IA de quem só usa IA—a diferença não estará no modelo, e sim na infraestrutura de conhecimento embaixo.",
+  },
+  solution: {
+    eyebrow: "A solução",
+    title: "Feito para trabalhar em equipe",
+    subtitle: "Infraestrutura de conhecimento",
+    lead:
+      "opensync é sync e edição com Git por baixo, para humanos e agentes compartilharem uma fonte da verdade—sem exigir que todo mundo vire especialista em linha de comando.",
+    bullets: [
+      "Um vault pode se conectar a outros fluxos (incluindo via MCP) para o contexto não ficar preso a uma máquina.",
+      "Versionamento com Git como infra: histórico e rollback sem obrigar todo mundo a “saber Git” no dia a dia.",
+      "Toolbar de edição familiar para quem prefere controles no estilo Word ao markdown cru.",
+      "Fluxos em chat para o agente propor edições nos documentos com você no controle.",
     ],
   },
   features: {
@@ -456,6 +673,38 @@ const PT_BR: Messages = {
     footnote:
       "Preços indicativos: app Obsidian é grátis; Sync, Publish e Catalyst são separados. Notion varia por assentos e add-ons de IA.",
   },
+  faq: {
+    eyebrow: "FAQ",
+    title: "Perguntas frequentes",
+    lead: "Respostas diretas—a tabela de comparação detalha recurso a recurso.",
+    items: [
+      {
+        question: "Qual o diferencial em relação ao Obsidian?",
+        answer:
+          "O Obsidian é um editor local e uma base de conhecimento pessoal excelentes. O opensync acrescenta histórico Git com rollback, sync e um fluxo pensado para times—para agentes e humanos partilharem o mesmo vault em Markdown sem cada pessoa ficar numa ilha desligada.",
+      },
+      {
+        question: "Qual o diferencial em relação ao Notion?",
+        answer:
+          "O Notion é baseado em blocos e centrado na nuvem. O opensync mantém Markdown/YAML simples no disco com Git como contrato: histórico comparável, ficheiros portáteis e fluxos alinhados a agentes de código (OpenClaw, Claude Code) que leem e escrevem repositórios reais.",
+      },
+      {
+        question: "Por que usar o opensync com agentes OpenClaw ou Claude Code?",
+        answer:
+          "Os seus agentes já raciocinam em ficheiros e commits. O opensync oferece um vault versionado e sincronizado, com editor web—para automação e humanos editarem a mesma fonte da verdade em vez de duplicar contexto só no chat.",
+      },
+      {
+        question: "Posso usar para organizar outros projetos?",
+        answer:
+          "Sim. Os vaults são repositórios Git normais: documentação, runbooks, notas pessoais ou qualquer projeto em Markdown ganham o mesmo sync, histórico e editor.",
+      },
+      {
+        question: "Posso publicar uma base de conhecimento na Internet?",
+        answer:
+          "Sim: no painel pode gerar um link público só de leitura para um vault, para outras pessoas consultarem a base na web sem poder editar—útil para docs, portfólios ou referências partilhadas.",
+      },
+    ],
+  },
   footer: {
     tagline: "Vaults com Git e sync pensados para agentes OpenClaw.",
     product: "Produto",
@@ -473,7 +722,7 @@ const ES: Messages = {
     titleTop: "La bóveda de tu agente,",
     titleAccent: "siempre segura. Siempre sincronizada.",
     bodyPrefix: "Control de versiones, sincronización y un editor elegante para tu",
-    startFree: "empieza gratis — sin tarjeta",
+    startFree: "empieza gratis",
     seeHow: "ver cómo funciona ↓",
     scrollAria: "Ir a funciones",
   },
@@ -528,8 +777,11 @@ const LANGUAGE_OPTIONS: Array<{ code: Locale; label: string }> = [
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-function detectInitialLocale(): Locale {
-  if (typeof window === "undefined") return "pt-BR";
+/** Locale da primeira pintura: tem de ser idêntico no servidor e no cliente (evita hydration mismatch). */
+const HOME_I18N_SSR_LOCALE: Locale = "pt-BR";
+
+/** Lê `localStorage` e `navigator` — só usar dentro de `useEffect` no cliente. */
+function readLocaleFromBrowser(): Locale {
   const saved = window.localStorage.getItem(STORAGE_KEY) as Locale | null;
   if (saved && saved in MESSAGES) return saved;
   const nav = window.navigator.language;
@@ -541,7 +793,11 @@ function detectInitialLocale(): Locale {
 }
 
 export function HomeI18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
+  const [locale, setLocale] = useState<Locale>(HOME_I18N_SSR_LOCALE);
+
+  useEffect(() => {
+    setLocale(readLocaleFromBrowser());
+  }, []);
 
   const updateLocale = useCallback((next: Locale) => {
     setLocale(next);
