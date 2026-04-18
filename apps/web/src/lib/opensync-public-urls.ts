@@ -18,13 +18,25 @@ const FALLBACK_APP_ORIGIN = "https://opensync.space";
 export const UBUNTU_INSTALL_SCRIPT_PATH = "/install/ubuntu";
 
 /**
- * Versão do pacote `.deb` em `public/releases/` (alinhado com `apps/opensync-ubuntu/package.json` e `build-deb.sh`).
+ * Versão do pacote `.deb` Rust (`apps/core`, gerado por `pnpm core:deploy`).
+ * Mantém-se em sincronia com `apps/core/Cargo.toml [package].version`.
  */
-export const UBUNTU_DEB_PACKAGE_VERSION = "0.2.5";
+export const OPENSYNC_DEB_PACKAGE_VERSION = "0.1.0";
+
+/**
+ * @deprecated Mantido para compat — usar `OPENSYNC_DEB_PACKAGE_VERSION`.
+ * O novo pacote chama-se `opensync` (Rust) e substitui `opensync-ubuntu` (Node).
+ */
+export const UBUNTU_DEB_PACKAGE_VERSION = OPENSYNC_DEB_PACKAGE_VERSION;
+
+/** Nome do ficheiro `.deb` no bucket Supabase / `public/releases/`. */
+export function getDefaultDebFilename(): string {
+  return `opensync_${OPENSYNC_DEB_PACKAGE_VERSION}_amd64.deb`;
+}
 
 /** Caminho público do `.deb` quando servido pelo próprio site (ficheiro em `apps/web/public/releases/`). */
 export function getDefaultUbuntuDebPathname(): string {
-  return `/releases/opensync-ubuntu_${UBUNTU_DEB_PACKAGE_VERSION}_amd64.deb`;
+  return `/releases/${getDefaultDebFilename()}`;
 }
 
 /** URL HTTPS do `.deb` por defeito (ficheiro em `public/releases/` no mesmo host da app). */
@@ -45,15 +57,20 @@ export function getSupabasePublicInstallerDebUrlForServer(): string {
   } catch {
     return "";
   }
-  const objectPath = `/storage/v1/object/public/installer/opensync-ubuntu_${UBUNTU_DEB_PACKAGE_VERSION}_amd64.deb`;
+  const objectPath = `/storage/v1/object/public/installer/${getDefaultDebFilename()}`;
   return `${supabase}${objectPath}`;
 }
 
 /**
- * Ordem: `OPENSYNC_UBUNTU_DEB_URL` → URL derivada do Supabase (`installer/`) → mesmo host `/releases/...`.
+ * Ordem: `OPENSYNC_DEB_URL` (novo) → `OPENSYNC_UBUNTU_DEB_URL` (legado) →
+ * URL derivada do Supabase (`installer/`) → mesmo host `/releases/...`.
  */
 export function resolveUbuntuDebDownloadUrlForServer(): string {
-  const explicit = (process.env.OPENSYNC_UBUNTU_DEB_URL ?? "").trim();
+  const explicit = (
+    process.env.OPENSYNC_DEB_URL ??
+    process.env.OPENSYNC_UBUNTU_DEB_URL ??
+    ""
+  ).trim();
   if (explicit) return explicit;
   const fromSupabase = getSupabasePublicInstallerDebUrlForServer();
   if (fromSupabase) return fromSupabase;

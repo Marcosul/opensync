@@ -1,0 +1,29 @@
+#!/bin/sh
+# OpenSync (Rust) — postinst
+# Recarrega systemd para todos os utilizadores activos sem forçar reinício
+# (deixa o utilizador correr `opensync init` ou `systemctl --user restart opensync`).
+set -e
+
+case "$1" in
+  configure)
+    if command -v loginctl >/dev/null 2>&1; then
+      for user in $(loginctl list-users --no-legend | awk '{print $2}' 2>/dev/null); do
+        uid=$(id -u "$user" 2>/dev/null || echo "")
+        [ -z "$uid" ] && continue
+        runtime_dir="/run/user/$uid"
+        [ -d "$runtime_dir" ] || continue
+        sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+          systemctl --user daemon-reload >/dev/null 2>&1 || true
+        # Se o utilizador já tinha o opensync activo, reiniciar para apanhar o binário novo.
+        if sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+             systemctl --user is-enabled --quiet opensync 2>/dev/null; then
+          sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+            systemctl --user restart opensync >/dev/null 2>&1 || true
+        fi
+      done
+    fi
+    echo "✅ OpenSync instalado. Próximo passo: opensync init"
+    ;;
+esac
+
+exit 0

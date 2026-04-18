@@ -1,0 +1,50 @@
+name: opensync-core deb
+
+on:
+  push:
+    tags:
+      - "core-v*"
+  workflow_dispatch:
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build release
+        run: cargo build --release -p opensync-core
+
+      - name: Package .deb
+        run: cargo deb -p opensync-core --no-build
+
+      - name: SHA256
+        run: |
+          cd target/debian
+          sha256sum *.deb | tee SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensync-core-deb
+          path: |
+            target/debian/*.deb
+            target/debian/SHA256SUMS

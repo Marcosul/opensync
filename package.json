@@ -22,7 +22,8 @@
     "dev:web": "pnpm exec turbo dev --filter=@opensync/web",
     "dev:api": "pnpm exec turbo dev --filter=@opensync/api",
     "deploy:api": "pnpm --filter @opensync/api run fly:deploy",
-    "opensync-ubuntu:deploy": "node ./scripts/build-opensync-ubuntu-deb.mjs"
+    "opensync-ubuntu:deploy": "node ./scripts/build-opensync-ubuntu-deb.mjs",
+    "core:deploy": "node ./scripts/build-opensync-core-deb.mjs"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

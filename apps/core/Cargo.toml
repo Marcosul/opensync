@@ -1,0 +1,39 @@
+[package]
+name        = "opensync-core"
+version     = "0.1.0"
+description = "Daemon de sincronização bidirecional OpenSync"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "opensync"
+path = "src/main.rs"
+
+[dependencies]
+sync-core             = { path = "../../crates/sync-core" }
+tokio.workspace       = true
+anyhow.workspace      = true
+clap.workspace        = true
+tracing.workspace     = true
+tracing-subscriber.workspace = true
+serde_json.workspace  = true
+reqwest.workspace     = true
+chrono.workspace      = true
+
+[package.metadata.deb]
+name                 = "opensync"
+maintainer           = "OpenSync <hello@opensync.space>"
+copyright            = "2025 OpenSync"
+extended-description = "Daemon Rust de sincronização bidirecional de vault OpenSync (substitui opensync-ubuntu)"
+depends              = "$auto"
+section              = "utils"
+priority             = "optional"
+revision             = ""
+conflicts            = "opensync-ubuntu"
+replaces             = "opensync-ubuntu"
+provides             = "opensync-ubuntu"
+maintainer-scripts   = "packaging/debian"
+assets = [
+    ["target/release/opensync", "usr/bin/opensync", "755"],
+    ["packaging/opensync.service", "lib/systemd/user/opensync.service", "644"],
+]

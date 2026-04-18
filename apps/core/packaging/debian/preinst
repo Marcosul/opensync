@@ -1,0 +1,26 @@
+#!/bin/sh
+# OpenSync (Rust) — preinst
+# Para o serviço Node antigo (opensync-ubuntu) antes de substituir o binário /usr/bin/opensync.
+set -e
+
+if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
+  # Procurar utilizadores reais com o serviço antigo a correr e parar.
+  if command -v loginctl >/dev/null 2>&1; then
+    for user in $(loginctl list-users --no-legend | awk '{print $2}' 2>/dev/null); do
+      uid=$(id -u "$user" 2>/dev/null || echo "")
+      [ -z "$uid" ] && continue
+      runtime_dir="/run/user/$uid"
+      [ -d "$runtime_dir" ] || continue
+      if sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+           systemctl --user is-active --quiet opensync-ubuntu 2>/dev/null; then
+        echo "🛑 [preinst] A parar opensync-ubuntu de $user…"
+        sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+          systemctl --user stop opensync-ubuntu >/dev/null 2>&1 || true
+        sudo -u "$user" XDG_RUNTIME_DIR="$runtime_dir" \
+          systemctl --user disable opensync-ubuntu >/dev/null 2>&1 || true
+      fi
+    done
+  fi
+fi
+
+exit 0

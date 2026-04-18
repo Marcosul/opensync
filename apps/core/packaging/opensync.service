@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenSync (sincronização de vault)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/opensync run
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

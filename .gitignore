@@ -36,3 +36,7 @@ Thumbs.db
 
 # Vercel / deploy
 .vercel/
+
+# Rust
+target/
+**/*.rs.bk
