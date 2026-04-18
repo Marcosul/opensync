@@ -10,17 +10,23 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
+  Download,
   FileCode2,
   FileDown,
+  FileText,
   FolderOpen,
   History,
+  LayoutDashboard,
   Link2,
   ListX,
   Loader2,
   MoreVertical,
+  Network,
   PanelLeft,
   Plug,
   Plus,
+  Settings,
   Share2,
   X,
 } from "lucide-react";
@@ -131,6 +137,7 @@ import {
   exportVaultEditorViewportToPdf,
   resolveVaultExportFileName,
 } from "@/lib/vault-document-export";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { BacklinksPanel } from "./vault-backlinks-panel";
@@ -160,6 +167,17 @@ import { TagsPanel } from "./vault-tags-panel";
 import { mergeVaultUiAfterGitTreeRefresh, vaultUiReducer } from "./vault-ui-reducer";
 import type { SidebarMode, TreeSortOrder } from "./explorer-tree-utils";
 import { vaultDocBreadcrumb } from "./vault-doc-breadcrumb";
+
+/** Mesma leitura visual dos botões antigos: texto `foreground`, peso médio; ícones acompanham o texto. */
+const vaultMobileActionLinkLayout =
+  "inline-flex h-auto min-h-0 w-full items-center justify-start gap-2 whitespace-normal rounded-md px-2 py-2.5 text-left text-sm font-medium leading-snug text-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&_svg]:shrink-0 [&_svg]:text-foreground";
+
+/** Painéis redimensionáveis no telemóvel (max-lg): overlay a largura total do ecrã + fundo opaco. */
+const vaultMobileResizablePanelClass =
+  "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:right-0 max-lg:z-[92] max-lg:w-full max-lg:max-w-[100dvw] max-lg:border-l-0 max-lg:bg-background max-lg:shadow-xl lg:relative lg:z-auto lg:max-w-none lg:shadow-none";
+
+/** Superfície dos painéis laterais redimensionáveis (histórico, backlinks, agente, MCP, etiquetas no grafo). */
+const vaultResizablePanelSurfaceClass = "bg-card text-card-foreground";
 
 /** Fallback poll quando SSE não está disponível. SSE é o mecanismo primário. */
 const LAZY_VAULT_REMOTE_TAIL_POLL_MS = 30_000;
@@ -1218,10 +1236,6 @@ export function VaultOpenWorkspace({
   const isVaultLgUp = useMediaQuery("(min-width: 1024px)", false);
   const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
-  const [mobilePlateToolbarHost, setMobilePlateToolbarHost] = useState<HTMLElement | null>(null);
-  const mobileToolbarHostRef = useCallback((el: HTMLDivElement | null) => {
-    setMobilePlateToolbarHost(el);
-  }, []);
   const [explorerSidebarWidth, setExplorerSidebarWidth] = useState(
     defaultClientUiSettings.sidebarWidth,
   );
@@ -1230,7 +1244,6 @@ export function VaultOpenWorkspace({
     if (!isVaultLgUp) return;
     setMobileExplorerOpen(false);
     setMobileActionsOpen(false);
-    setMobilePlateToolbarHost(null);
   }, [isVaultLgUp]);
   const [backlinksPanelOpen, setBacklinksPanelOpen] = useState(false);
   const [backlinksPanelWidth, setBacklinksPanelWidth] = useState(
@@ -2595,24 +2608,90 @@ export function VaultOpenWorkspace({
               setMobileExplorerOpen(true);
               setMobileActionsOpen(false);
             }}
-            className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted"
+            className="flex size-10 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground hover:bg-muted"
             aria-label="Abrir explorador"
           >
             <FolderOpen className="size-5" aria-hidden />
           </button>
-          <p
-            className="min-w-0 flex-1 truncate text-center text-xs font-medium text-foreground"
-            title={mobileVaultChromeTitle}
-          >
-            {mobileVaultChromeTitle}
-          </p>
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            <Menu.Root>
+              <Menu.Trigger
+                type="button"
+                className={cn(
+                  "relative flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none",
+                  "hover:bg-muted hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
+                  "[&[data-popup-open]>svg:first-of-type]:opacity-0 [&[data-popup-open]>svg:last-of-type]:opacity-100",
+                )}
+                aria-label="Abas abertas"
+                aria-haspopup="menu"
+              >
+                <ChevronRight
+                  className="pointer-events-none absolute size-4 opacity-100 transition-opacity duration-200"
+                  aria-hidden
+                />
+                <ChevronDown
+                  className="pointer-events-none absolute size-4 opacity-0 transition-opacity duration-200"
+                  aria-hidden
+                />
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner
+                  className="z-[210] outline-none"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                >
+                  <Menu.Popup
+                    className={cn(
+                      "max-h-[min(70vh,24rem)] min-w-[min(calc(100vw-2rem),18rem)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg border border-border bg-card py-1 shadow-lg",
+                      "data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
+                    )}
+                  >
+                    {openTabs.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">Nenhuma aba aberta</div>
+                    ) : (
+                      openTabs.map((id) => (
+                        <Menu.Item
+                          key={id}
+                          className={vaultChromeMenuItemClass}
+                          onClick={() => activateTab(id)}
+                        >
+                          <span className="min-w-0 flex-1 truncate font-mono text-xs" title={id}>
+                            {id}
+                          </span>
+                          {id === activeTabId && viewMode === "editor" ? (
+                            <Check className="ml-2 size-3.5 shrink-0" aria-hidden />
+                          ) : null}
+                        </Menu.Item>
+                      ))
+                    )}
+                    <Menu.Separator className="my-1 h-px bg-border" />
+                    <Menu.Item
+                      className={cn(vaultChromeMenuItemClass, "text-destructive data-highlighted:bg-destructive/10")}
+                      disabled={openTabs.length === 0}
+                      onClick={() => closeAllTabs()}
+                    >
+                      <ListX className="mr-2 size-3.5 shrink-0" aria-hidden />
+                      Fechar todas as abas
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
+            <p
+              className="min-w-0 flex-1 truncate text-left text-xs font-medium text-foreground"
+              title={mobileVaultChromeTitle}
+            >
+              {mobileVaultChromeTitle}
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => {
               setMobileActionsOpen(true);
               setMobileExplorerOpen(false);
             }}
-            className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted"
+            className="flex size-10 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground hover:bg-muted"
             aria-label="Abrir ações"
           >
             <MoreVertical className="size-5" aria-hidden />
@@ -2901,8 +2980,6 @@ export function VaultOpenWorkspace({
               sourceMode={editorSourceMode}
               onSourceModeChange={setEditorSourceMode}
               plainTextDocument
-              plateToolbarPortalContainer={mobilePlateToolbarHost}
-              suppressPlateToolbarUnlessPortaled={!isVaultLgUp}
             />
           </div>
         ) : (
@@ -2935,8 +3012,6 @@ export function VaultOpenWorkspace({
               onSourceModeChange={setEditorSourceMode}
               plainTextDocument={false}
               edgeToEdgeScroll
-              plateToolbarPortalContainer={mobilePlateToolbarHost}
-              suppressPlateToolbarUnlessPortaled={!isVaultLgUp}
             />
           </div>
         )}
@@ -2944,7 +3019,11 @@ export function VaultOpenWorkspace({
 
       {viewMode === "graph" ? (
         <aside
-          className="flex h-full min-h-0 w-[200px] shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
+          className={cn(
+            "flex h-full min-h-0 w-[200px] shrink-0 flex-col overflow-hidden border-l border-border",
+            vaultResizablePanelSurfaceClass,
+            vaultMobileResizablePanelClass,
+          )}
           role="complementary"
           aria-label="Etiquetas"
         >
@@ -2954,7 +3033,7 @@ export function VaultOpenWorkspace({
       {/* Histórico Gitea: à direita do editor, antes de backlinks/agente */}
       {viewMode === "editor" && versionHistoryPanelOpen ? (
         <>
-          {!versionHistoryPanelCollapsed ? (
+          {isVaultLgUp && !versionHistoryPanelCollapsed ? (
             <VaultVersionHistoryResizeHandle
               panelWidth={versionHistoryPanelWidth}
               onPanelWidthChange={setVersionHistoryPanelWidth}
@@ -2966,10 +3045,16 @@ export function VaultOpenWorkspace({
           ) : null}
           <aside
             id="vault-version-history-panel"
-            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
-            style={{
-              width: versionHistoryPanelCollapsed ? 44 : versionHistoryPanelWidth,
-            }}
+            className={cn(
+              "flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border",
+              vaultResizablePanelSurfaceClass,
+              vaultMobileResizablePanelClass,
+            )}
+            style={
+              isVaultLgUp
+                ? { width: versionHistoryPanelCollapsed ? 44 : versionHistoryPanelWidth }
+                : undefined
+            }
             role="complementary"
             aria-label="Histórico de versões Gitea"
           >
@@ -2987,18 +3072,24 @@ export function VaultOpenWorkspace({
       ) : null}
       {viewMode === "editor" && backlinksPanelOpen ? (
         <>
-          <VaultBacklinksResizeHandle
-            panelWidth={backlinksPanelWidth}
-            onPanelWidthChange={setBacklinksPanelWidth}
-            onResizeEnd={(w) => {
-              setBacklinksPanelWidth(w);
-              patchClientUiSettings({ backlinksPanelWidth: w });
-            }}
-          />
+          {isVaultLgUp ? (
+            <VaultBacklinksResizeHandle
+              panelWidth={backlinksPanelWidth}
+              onPanelWidthChange={setBacklinksPanelWidth}
+              onResizeEnd={(w) => {
+                setBacklinksPanelWidth(w);
+                patchClientUiSettings({ backlinksPanelWidth: w });
+              }}
+            />
+          ) : null}
           <aside
             id="vault-backlinks-panel"
-            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
-            style={{ width: backlinksPanelWidth }}
+            className={cn(
+              "flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border",
+              vaultResizablePanelSurfaceClass,
+              vaultMobileResizablePanelClass,
+            )}
+            style={isVaultLgUp ? { width: backlinksPanelWidth } : undefined}
             role="complementary"
             aria-label="Backlinks"
           >
@@ -3020,18 +3111,24 @@ export function VaultOpenWorkspace({
       ) : null}
       {viewMode === "editor" && agentChatPanelOpen ? (
         <>
-          <VaultAgentChatResizeHandle
-            panelWidth={agentChatPanelWidth}
-            onPanelWidthChange={setAgentChatPanelWidth}
-            onResizeEnd={(w) => {
-              setAgentChatPanelWidth(w);
-              patchClientUiSettings({ agentChatPanelWidth: w });
-            }}
-          />
+          {isVaultLgUp ? (
+            <VaultAgentChatResizeHandle
+              panelWidth={agentChatPanelWidth}
+              onPanelWidthChange={setAgentChatPanelWidth}
+              onResizeEnd={(w) => {
+                setAgentChatPanelWidth(w);
+                patchClientUiSettings({ agentChatPanelWidth: w });
+              }}
+            />
+          ) : null}
           <aside
             id="vault-agent-chat-panel"
-            className="relative flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
-            style={{ width: agentChatPanelWidth }}
+            className={cn(
+              "relative flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border",
+              vaultResizablePanelSurfaceClass,
+              vaultMobileResizablePanelClass,
+            )}
+            style={isVaultLgUp ? { width: agentChatPanelWidth } : undefined}
             role="complementary"
             aria-label="Chat do Agente"
           >
@@ -3050,18 +3147,24 @@ export function VaultOpenWorkspace({
       ) : null}
       {viewMode === "editor" && mcpConnectPanelOpen ? (
         <>
-          <VaultMcpConnectResizeHandle
-            panelWidth={mcpConnectPanelWidth}
-            onPanelWidthChange={setMcpConnectPanelWidth}
-            onResizeEnd={(w) => {
-              setMcpConnectPanelWidth(w);
-              patchClientUiSettings({ mcpConnectPanelWidth: w });
-            }}
-          />
+          {isVaultLgUp ? (
+            <VaultMcpConnectResizeHandle
+              panelWidth={mcpConnectPanelWidth}
+              onPanelWidthChange={setMcpConnectPanelWidth}
+              onResizeEnd={(w) => {
+                setMcpConnectPanelWidth(w);
+                patchClientUiSettings({ mcpConnectPanelWidth: w });
+              }}
+            />
+          ) : null}
           <aside
             id="vault-mcp-connect-panel"
-            className="flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar/30"
-            style={{ width: mcpConnectPanelWidth }}
+            className={cn(
+              "flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden border-l border-border",
+              vaultResizablePanelSurfaceClass,
+              vaultMobileResizablePanelClass,
+            )}
+            style={isVaultLgUp ? { width: mcpConnectPanelWidth } : undefined}
             role="complementary"
             aria-label="Conexão MCP"
           >
@@ -3101,28 +3204,22 @@ export function VaultOpenWorkspace({
                 <X className="size-5" aria-hidden />
               </button>
             </div>
-            <div
-              ref={mobileToolbarHostRef}
-              className="vault-mobile-toolbar-host min-h-[3.25rem] shrink-0 overflow-x-auto border-b border-border bg-muted/20 px-2 py-2"
-            />
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-0.5">
                 <Link
                   href="/dashboard"
                   onClick={() => setMobileActionsOpen(false)}
-                  className={cn(
-                    "flex items-center justify-center rounded-lg border border-border bg-background px-2 py-2.5 text-center text-xs font-medium hover:bg-muted",
-                  )}
+                  className={vaultMobileActionLinkLayout}
                 >
+                  <LayoutDashboard className="size-4" aria-hidden />
                   Vaults
                 </Link>
                 <Link
                   href="/settings"
                   onClick={() => setMobileActionsOpen(false)}
-                  className={cn(
-                    "flex items-center justify-center rounded-lg border border-border bg-background px-2 py-2.5 text-center text-xs font-medium hover:bg-muted",
-                  )}
+                  className={vaultMobileActionLinkLayout}
                 >
+                  <Settings className="size-4" aria-hidden />
                   Configurações
                 </Link>
               </div>
@@ -3130,166 +3227,176 @@ export function VaultOpenWorkspace({
                 <Link
                   href={`/vault/${encodeURIComponent(vaultId)}/graph`}
                   onClick={() => setMobileActionsOpen(false)}
-                  className="flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm font-medium hover:bg-muted"
+                  className={vaultMobileActionLinkLayout}
                 >
-                  <Share2 className="size-4 shrink-0" aria-hidden />
+                  <Share2 className="size-4" aria-hidden />
                   Grafo API
                 </Link>
               ) : null}
-              <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Abas</p>
-                <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-border/60 p-1">
-                  {openTabs.length === 0 ? (
-                    <p className="px-2 py-2 text-xs text-muted-foreground">Nenhuma aba aberta</p>
-                  ) : (
-                    openTabs.map((id) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => {
-                          activateTab(id);
-                          setMobileActionsOpen(false);
-                        }}
-                        className={cn(
-                          "truncate rounded-md px-2 py-2 text-left font-mono text-xs transition-colors hover:bg-muted",
-                          viewMode === "editor" && activeTabId === id && "bg-muted font-medium text-foreground",
-                        )}
-                      >
-                        {id}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <button
+              <div className="flex flex-col gap-0.5">
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     quickNewNoteFromToolbar();
                     setMobileActionsOpen(false);
                   }}
-                  className="flex w-full items-center justify-center rounded-lg border border-border bg-background px-3 py-2.5 text-sm font-medium hover:bg-muted"
+                  className={vaultMobileActionLinkLayout}
                 >
-                  <Plus className="mr-2 size-4 shrink-0" aria-hidden />
+                  <Plus className="size-4" aria-hidden />
                   Nova nota
-                </button>
+                </Button>
                 {viewMode === "editor" ? (
                   <>
-                    <button
+                    <Button
                       type="button"
-                      onClick={() => setBacklinksPanelOpen((o) => !o)}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setBacklinksPanelOpen((o) => !o);
+                        setMobileActionsOpen(false);
+                      }}
                       className={cn(
-                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
-                        backlinksPanelOpen
-                          ? "border-primary/40 bg-primary/10"
-                          : "border-border bg-background hover:bg-muted",
+                        vaultMobileActionLinkLayout,
+                        backlinksPanelOpen && "bg-muted/80 text-foreground",
                       )}
                     >
-                      Backlinks
-                      <span className="text-xs text-muted-foreground">
+                      <Link2 className="size-4" aria-hidden />
+                      <span className="min-w-0 flex-1 text-left">Backlinks</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {backlinksPanelOpen ? "Aberto" : "Fechado"}
                       </span>
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      onClick={() => setAgentChatPanelOpen((o) => !o)}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setAgentChatPanelOpen((o) => !o);
+                        setMobileActionsOpen(false);
+                      }}
                       className={cn(
-                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
-                        agentChatPanelOpen
-                          ? "border-primary/40 bg-primary/10"
-                          : "border-border bg-background hover:bg-muted",
+                        vaultMobileActionLinkLayout,
+                        agentChatPanelOpen && "bg-muted/80 text-foreground",
                       )}
                     >
-                      Agente
-                      <span className="text-xs text-muted-foreground">
+                      <Bot className="size-4" aria-hidden />
+                      <span className="min-w-0 flex-1 text-left">Agente</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {agentChatPanelOpen ? "Aberto" : "Fechado"}
                       </span>
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      onClick={() => setMcpConnectPanelOpen((o) => !o)}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setMcpConnectPanelOpen((o) => !o);
+                        setMobileActionsOpen(false);
+                      }}
                       className={cn(
-                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium",
-                        mcpConnectPanelOpen
-                          ? "border-primary/40 bg-primary/10"
-                          : "border-border bg-background hover:bg-muted",
+                        vaultMobileActionLinkLayout,
+                        mcpConnectPanelOpen && "bg-muted/80 text-foreground",
                       )}
                     >
-                      MCP
-                      <span className="text-xs text-muted-foreground">
+                      <Plug className="size-4" aria-hidden />
+                      <span className="min-w-0 flex-1 text-left">MCP</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {mcpConnectPanelOpen ? "Aberto" : "Fechado"}
                       </span>
-                    </button>
+                    </Button>
                   </>
                 ) : null}
                 {isBackendSyncVaultId(vaultId) ? (
-                  <button
+                  <Button
                     type="button"
-                    onClick={() => setVersionHistoryPanelOpen((o) => !o)}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setVersionHistoryPanelOpen((o) => !o);
+                      setMobileActionsOpen(false);
+                    }}
                     disabled={isRestoringCommit}
                     className={cn(
-                      "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium disabled:opacity-50",
-                      versionHistoryPanelOpen
-                        ? "border-primary/40 bg-primary/10"
-                        : "border-border bg-background hover:bg-muted",
+                      vaultMobileActionLinkLayout,
+                      versionHistoryPanelOpen && "bg-muted/80 text-foreground",
                     )}
                   >
-                    Versões (Gitea)
-                    <span className="text-xs text-muted-foreground">
+                    {isRestoringCommit ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    ) : (
+                      <History className="size-4" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1 text-left">Versões (Gitea)</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
                       {versionHistoryPanelOpen ? "Aberto" : "Fechado"}
                     </span>
-                  </button>
+                  </Button>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={closeAllTabs}
-                  disabled={openTabs.length === 0}
-                  className="flex w-full items-center justify-center rounded-lg border border-destructive/30 bg-background px-3 py-2.5 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  Fechar todas as abas
-                </button>
               </div>
               {viewMode === "editor" && activeTabId && !editorSubChromeLoading ? (
-                <div className="flex flex-col gap-2 border-t border-border pt-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Exportar</p>
-                  <button
+                <div className="flex flex-col gap-0.5 border-t border-border pt-3">
+                  <p className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Exportar
+                  </p>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
                       void exportActiveDocumentPdf();
+                      setMobileActionsOpen(false);
                     }}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-left text-sm hover:bg-muted"
+                    className={vaultMobileActionLinkLayout}
                   >
+                    <FileText className="size-4" aria-hidden />
                     PDF (A4)
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    onClick={exportActiveDocumentOriginal}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-left text-sm hover:bg-muted"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      exportActiveDocumentOriginal();
+                      setMobileActionsOpen(false);
+                    }}
+                    className={vaultMobileActionLinkLayout}
                   >
+                    <Download className="size-4" aria-hidden />
                     Formato original
-                  </button>
+                  </Button>
                   {!isVaultPlainTextDocId(activeTabId) ? (
-                    <button
+                    <Button
                       type="button"
-                      onClick={toggleEditorSourceMode}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        toggleEditorSourceMode();
+                        setMobileActionsOpen(false);
+                      }}
                       className={cn(
-                        "w-full rounded-lg border px-3 py-2.5 text-sm font-medium",
-                        editorSourceMode ? "border-primary/40 bg-muted" : "border-border bg-background hover:bg-muted",
+                        vaultMobileActionLinkLayout,
+                        editorSourceMode && "bg-muted/80 text-foreground",
                       )}
                     >
+                      <FileCode2 className="size-4" aria-hidden />
                       {editorSourceMode ? "Modo fonte (Markdown)" : "Modo blocos (rich text)"}
-                    </button>
+                    </Button>
                   ) : null}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
                       openGraph();
                       setMobileActionsOpen(false);
                     }}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm hover:bg-muted"
+                    className={vaultMobileActionLinkLayout}
                   >
+                    <Network className="size-4" aria-hidden />
                     Abrir grafo (vista interna)
-                  </button>
+                  </Button>
                 </div>
               ) : null}
             </div>

@@ -42,9 +42,6 @@ export type VaultNoteEditorProps = {
   edgeToEdgeScroll?: boolean;
   /** Inset à direita para Monaco/texto (painel fixo) sem `padding` no contentor — barra de scroll na borda. */
   codeEditorPaddingRight?: number;
-  /** Destino DOM opcional para a barra de formatação Plate (painel móvel). */
-  plateToolbarPortalContainer?: HTMLElement | null;
-  suppressPlateToolbarUnlessPortaled?: boolean;
 };
 
 type CollabProfile = {
@@ -101,8 +98,6 @@ export function VaultNoteEditor({
   plainTextDocument = false,
   edgeToEdgeScroll = false,
   codeEditorPaddingRight = 0,
-  plateToolbarPortalContainer,
-  suppressPlateToolbarUnlessPortaled = false,
 }: VaultNoteEditorProps) {
   const [internalSourceMode, setInternalSourceMode] = useState(false);
   const sourceMode = sourceModeProp ?? internalSourceMode;
@@ -294,8 +289,6 @@ export function VaultNoteEditor({
             value={value}
             onChange={onChange}
             onSelectFile={onSelectFile}
-            toolbarPortalContainer={plateToolbarPortalContainer}
-            suppressToolbarUnlessPortaled={suppressPlateToolbarUnlessPortaled}
             collaboration={plateCollaboration}
           />
         )}
